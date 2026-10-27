@@ -2,9 +2,11 @@
 
 Mod Fabric yang menambahkan backend Apple Metal untuk lapisan GPU `renderpearl` di Minecraft Java, dan dirancang agar tetap berjalan bersama Sodium.
 
-Status: **M1–M6**. Layar judul dan dunia singleplayer dirender lewat Metal, dengan maupun tanpa Sodium. Hasilnya nyaris identik piksel dengan OpenGL, dan di uji otomatis sekitar 3× lebih cepat (Metal + Sodium ~1270–1540 FPS vs OpenGL + Sodium ~470 FPS di M3). Detail ada di [docs/roadmap.md](docs/roadmap.md#hasil-uji-otomatis-2026-10-27). Masih eksperimental: mod yang memanggil OpenGL langsung tidak akan menggambar, dan beberapa kasus langka (triangle fan ber-index, clear sebagian) belum didukung.
+Status: **M1–M6, M7 sebagian**. Layar judul dan dunia singleplayer dirender lewat Metal, dengan maupun tanpa Sodium. Hasilnya nyaris identik piksel dengan OpenGL. Di uji otomatis pada M3, Metal + Sodium mencapai ~1600 FPS di skenario ringan dan ~1200–1450 FPS di 1920×1080 render distance 16, dibanding ~200–490 FPS untuk OpenGL + Sodium. Detail ada di [docs/roadmap.md](docs/roadmap.md#hasil-uji-otomatis-2026-10-27). Masih eksperimental: mod yang memanggil OpenGL langsung tidak akan menggambar, dan beberapa kasus langka (triangle fan ber-index, clear sebagian) belum didukung.
 
-![Dunia Minecraft 26.3 dengan Sodium, dirender dengan Metal](docs/screenshots/m6-world-sodium.png) Progres per milestone ada di [docs/roadmap.md](docs/roadmap.md), latar belakang teknis di [docs/riset-awal.md](docs/riset-awal.md).
+![Dunia Minecraft 26.3 dengan Sodium, dirender dengan Metal](docs/screenshots/m6-world-sodium.png)
+
+Progres per milestone ada di [docs/roadmap.md](docs/roadmap.md), latar belakang teknis di [docs/riset-awal.md](docs/riset-awal.md).
 
 ## Target
 
@@ -54,5 +56,8 @@ Opsi JVM:
 | `-Dmine2metal.enabled=false` | Mematikan backend Metal tanpa melepas mod |
 | `-Dmine2metal.dumpFrame=/path/frame.png` | Menyimpan frame yang dipresentasikan ke PNG (tanpa izin screen recording) |
 | `-Dmine2metal.dumpFrameIndex=N` | Nomor frame yang disimpan (default 300) |
+| `-Dmine2metal.stats=true` | Log tiap 5 detik: FPS, waktu GPU per frame, waktu CPU menunggu GPU, jumlah encoder, dan volume transfer |
+| `-Dmine2metal.passTimes=true` | Seperti `stats`, plus waktu GPU per pass (setiap pass di-commit terpisah, jadi lebih lambat) |
+| `-Dmine2metal.labels=true` | Memberi nama render encoder sesuai pass, untuk Xcode GPU capture atau Instruments (Metal System Trace) |
 
 Saat memakai `runClient`, properti bisa dioper lewat `JAVA_TOOL_OPTIONS`, misalnya `JAVA_TOOL_OPTIONS="-Dmine2metal.dumpFrame=/tmp/frame.png" ./gradlew runClient`.

@@ -6,33 +6,41 @@
 |---|---|---|
 | **M0 Skeleton** ✅ | Mixin `getBackendsToTry`, `MetalBackend`, dylib FFM, cek Metal 3, fallback ke OpenGL | Log: `Found Metal 3 device: Apple M3`, lalu `Using graphics backend OpenGL` (diverifikasi 2026-10-27, Sodium 0.9.3 ikut termuat) |
 | **M1 Device & resource** ✅ | `GpuDeviceBackend`: `DeviceInfo`/limits/features, `MTLBuffer` shared, tekstur + view (pemetaan `GpuFormat`, D24S8→D32S8), `MTLSamplerState` | Diverifikasi 2026-10-27: `Using graphics backend Metal`, semua atlas tekstur terbuat |
-| **M2 Surface** ✅ | `SDL_Metal_CreateView` → `CAMetalLayer`, PresentMode → `displaySyncEnabled`, present lewat pass fullscreen ke drawable BGRA8 | Diverifikasi: frame dipresentasikan ~57 fps (terkunci vsync); isi frame hitam karena draw belum diimplementasikan |
+| **M2 Surface** ✅ | `SDL_Metal_CreateView` → `CAMetalLayer`, PresentMode → `displaySyncEnabled`, present lewat pass fullscreen ke drawable BGRA8 | Diverifikasi: frame dipresentasikan ~57 fps (terkunci vsync) |
 | **M3 Command encoder** (sebagian) | Selesai: 1 command buffer per submit, ≤ 3 frame in-flight, transient memory (Mojang `TransientBlockAllocator`), write/copy via blit, clear penuh, fence, readback dengan callback. Belum: clear sebagian (region), timestamp, ekspansi format RGB 3 komponen | Smoke test native: clear merah → readback `255 0 0 255`; upload → readback cocok |
-| **M4 Pipeline & shader** ✅ (tanpa cache) | SPIR-V → MSL via SPIRV-Cross (MSL 3.0, flip Y vertex, uniform `i` → slot `i`, push constant slot 26, vertex buffer slot 27+), library per shader, `MTLRenderPipelineState` per format depth/stencil (dibuat saat dipakai), `MTLDepthStencilState`. Belum: cache MSL ke disk | Diverifikasi 2026-10-27: 0 pipeline gagal saat sampai layar judul |
-| **M5 Render pass** ✅ (sebagian) | Binding uniform buffer, tekstur + sampler, texel buffer, push constant, scissor, draw / drawIndexed / multiDraw / indirect (di-batch native: 1 panggilan FFM per batch), fan non-indexed → index, wireframe, cull, depth bias, present terpacu per refresh saat vsync mati. Belum: fan ber-index, multi-draw interleaved, gl_DrawID, debug group | Layar judul ([screenshot](screenshots/m5-title-screen.png)) dan dunia singleplayer tampil; selisih piksel vs OpenGL ≤ 0,22% (lihat bawah) |
-| **M6 Sodium** ✅ | Sodium 0.9.3-beta.1 berjalan di Metal lewat jalur `gl_multidraw` miliknya (multi-draw langsung dengan array terpisah, pas dengan Metal), jadi mixin `DrawBackend` tidak diperlukan. Fitur Sodium yang dicek `backendName` "OpenGL" hanya fitur khusus GL (no-error context, WGL) dan memang mati dengan benar | Dunia dengan Sodium tampil identik dengan GL ([dunia](screenshots/m6-world-sodium.png), [dari atas](screenshots/m6-world-above-sodium.png), [malam](screenshots/m6-world-night-sodium.png)) |
+| **M4 Pipeline & shader** ✅ | SPIR-V → MSL via SPIRV-Cross (MSL 3.0, flip Y vertex, uniform `i` → slot `i`, push constant slot 26, vertex buffer slot 27+), library per shader, `MTLRenderPipelineState` per format depth/stencil (dibuat saat dipakai), `MTLDepthStencilState` | 0 pipeline gagal; 204 pipeline butuh total 254 ms (SPIR-V → MSL) + 37 ms (MSL → library) di 4–8 thread, jadi cache MSL ke disk tidak diperlukan |
+| **M5 Render pass** ✅ (sebagian) | Binding uniform buffer, tekstur + sampler, texel buffer, push constant, scissor, draw / drawIndexed / multiDraw / indirect (di-batch native: 1 panggilan FFM per batch), fan non-indexed → index, wireframe, cull, depth bias, present terpacu per refresh saat vsync mati. Belum: fan ber-index, multi-draw interleaved, gl_DrawID | Layar judul ([screenshot](screenshots/m5-title-screen.png)) dan dunia singleplayer tampil; selisih piksel vs OpenGL kecil (lihat bawah) |
+| **M6 Sodium** ✅ | Sodium 0.9.3-beta.1 berjalan di Metal lewat jalur `gl_multidraw` miliknya (multi-draw langsung dengan array terpisah, pas dengan Metal), jadi mixin `DrawBackend` tidak diperlukan. Fitur Sodium yang dicek `backendName` "OpenGL" hanya fitur khusus GL (no-error context, WGL) dan memang mati dengan benar | Dunia dengan Sodium tampil identik dengan GL ([dunia](screenshots/m6-world-sodium.png), [dari atas](screenshots/m6-world-above-sodium.png), [malam](screenshots/m6-world-night-sodium.png), [jauh](screenshots/m7-world-far-sodium.png)) |
+| **M7 Performa** (sebagian) | Selesai: clear ditunda dan dilipat ke load action pass berikutnya, pass berurutan dengan attachment sama digabung dalam satu encoder, alat ukur (`-Dmine2metal.stats`, `-Dmine2metal.passTimes`, label encoder untuk Instruments). Berikutnya: kurangi blit encoder (~3/frame), `MTLResidencySet`, depth memoryless, jalur GPU-driven (ICB) | Render encoder turun 8,9 → 3,1 per frame; GPU 0,4–0,5 ms/frame di skenario berat; lihat tabel di bawah |
+| **M8 Ketahanan** | Validation layer, resize/fullscreen/device loss, toggle config, pemaketan dylib | Stabil untuk pemakai |
 
 ## Hasil uji otomatis (2026-10-27)
 
-`./gradlew runClientGameTest` membuat dunia (seed `mine2metal`, preset normal), lalu mengambil screenshot lewat jalur readback Minecraft sendiri dan mengukur FPS. Kondisi: M3, window 854×480 (Retina 1708×960), vsync mati, frame rate tanpa batas.
+`./gradlew runClientGameTest` membuat dunia (seed `mine2metal`, preset normal, mode kreatif sambil terbang), mengambil screenshot lewat jalur readback Minecraft sendiri, dan mengukur FPS rata-rata 10 detik. Mesin: MacBook Air 15" M3 (Mac15,13), macOS 27.0.1, listrik AC. Vsync mati, frame rate tanpa batas, limiter AFK dimatikan.
 
-| Konfigurasi | FPS rata-rata (10 detik) |
-|---|---|
-| Metal + Sodium | 1266 / 1540 (dua kali jalan) |
-| OpenGL + Sodium | 465 / 484 |
-| Metal tanpa Sodium | 1123 |
-| OpenGL tanpa Sodium | 293 |
+- **Ringan**: window 854×480 (Retina 1708×960), render distance default gametest, melihat ke bawah dari 40 blok di atas spawn.
+- **Berat**: window 1920×1080, render distance 16, melihat ke horizon setelah 45 detik generasi dunia.
+
+| Konfigurasi | Ringan (FPS) | Berat (FPS) |
+|---|---|---|
+| Metal + Sodium | 1625 / 1675 | 1178 / 1453 |
+| OpenGL + Sodium | 321 – 488 | 200 – 273 |
+| Metal tanpa Sodium | 1794 | 416 |
+| OpenGL tanpa Sodium | 224 | 244 |
+
+Sebelum optimasi M7, skenario berat di Metal hanya 80–150 FPS (lebih lambat dari GL). Metal System Trace menunjukkan GPU sebagian besar berada di *performance state* "Minimum": pekerjaan GPU yang terpecah (sekitar 5 pass clear terpisah dan 9 render encoder per frame) membuat governor tidak menaikkan clock. Setelah clear dilipat dan pass digabung, mode lambat itu tidak muncul lagi dalam 5 kali jalan.
 
 | Screenshot Metal vs OpenGL | Piksel berbeda > 8 level | > 48 level |
 |---|---|---|
-| Layar judul | 0,00% | 0% |
-| Dunia, titik spawn (Sodium) | 0,05% | 0% |
-| Dunia, dari atas (Sodium) | 0,22% | 0% |
-| Dunia, dari atas (tanpa Sodium) | 0,74% | 0% |
+| Dunia, dari atas (Sodium) | 0,21% | 0,00% |
+| Dunia, malam (Sodium) | 0,00% | 0,00% |
+| Dunia, jauh, RD 16 (Sodium) | 0,06% | 0,00% |
+| Dunia, dari atas (tanpa Sodium) | 0,17% | 0,00% |
+| Dunia, jauh, RD 16 (tanpa Sodium) | 0,06% | 0,02% |
 
-Catatan pengukuran: FPS menghitung frame yang dirender. Saat vsync mati, backend Metal hanya mempresentasikan satu frame per refresh layar (frame lain tetap dirender penuh tapi tidak dikirim ke compositor), karena mempresentasikan semuanya membuat `nextDrawable` memblokir dan FPS turun ke ~60. Hasil yang terlihat di layar sama: layar memang tidak bisa menampilkan lebih dari refresh rate-nya. Window gametest kecil, jadi angka ini mengukur overhead CPU/driver lebih dari GPU.
-| **M7 Performa** | Command stream batching, `MTLResidencySet`, depth memoryless, prewarm pipeline, jalur GPU-driven (ICB), profiling | Lebih cepat dari GL dan Vulkan/MoltenVK |
-| **M8 Ketahanan** | Validation layer, label debug, resize/fullscreen/device loss, toggle config, pemaketan dylib | Stabil untuk pemakai |
+Screenshot layar judul dan titik spawn bisa berbeda 0,5–2,4% karena waktu pengambilan: layar judul sedang fade-in dan Metal memuat lebih cepat, sementara di spawn rumput dan awan bergerak. Perbedaannya tidak terlihat mata.
+
+Catatan pengukuran: FPS menghitung frame yang dirender. Saat vsync mati, backend Metal hanya mempresentasikan satu frame per refresh layar (frame lain tetap dirender penuh tapi tidak dikirim ke compositor), karena mempresentasikan semuanya membuat `nextDrawable` memblokir dan FPS turun ke ~60. Hasil yang terlihat di layar sama: layar memang tidak bisa menampilkan lebih dari refresh rate-nya.
 
 ## Fitur khas Metal (setelah M5)
 

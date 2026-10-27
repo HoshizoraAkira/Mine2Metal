@@ -32,10 +32,17 @@ M2M_EXPORT int64_t m2m_context_create(int64_t device, char *error, int64_t error
 M2M_EXPORT int64_t m2m_context_max_buffer_length(int64_t ctx);
 
 // Ends any open encoder and commits the current command buffer. Returns its submit index
-// (1, 2, ...); an empty frame still gets an index so fences stay simple.
-M2M_EXPORT int64_t m2m_context_commit(int64_t ctx);
+// (1, 2, ...); an empty frame still gets an index so fences stay simple. A non-null label
+// accumulates the buffer's GPU time under that name (see m2m_context_take_label_times).
+M2M_EXPORT int64_t m2m_context_commit(int64_t ctx, const char *label);
 // Highest submit index the GPU has finished.
 M2M_EXPORT int64_t m2m_context_completed(int64_t ctx);
+// Render and blit encoders created so far, and passes that continued an existing render encoder.
+M2M_EXPORT void m2m_context_encoder_counts(int64_t ctx, int64_t *render, int64_t *blit, int64_t *merged);
+// Writes "label=seconds" lines (largest first) for labelled commits since the last call, then resets.
+M2M_EXPORT int64_t m2m_context_take_label_times(int64_t ctx, char *out, int64_t capacity);
+// Total GPU execution time of all finished command buffers, from Metal's GPU timestamps.
+M2M_EXPORT double m2m_context_gpu_seconds(int64_t ctx);
 // Blocks until submit index has finished (no-op for indices not committed yet).
 M2M_EXPORT void m2m_context_wait(int64_t ctx, int64_t index);
 
@@ -70,13 +77,15 @@ M2M_EXPORT void m2m_blit_texture_to_texture(int64_t ctx, int64_t src, int64_t ds
                                             int32_t dst_y, int32_t src_x, int32_t src_y, int32_t width,
                                             int32_t height);
 
-// Render passes: describe the attachments, then open. A pass stays open until the next
-// blit, pass, present or commit.
+// Render passes: describe the attachments, then open. Closing a pass keeps its encoder open
+// until the next blit, present, commit or incompatible pass, so consecutive passes on the same
+// attachments share one encoder and skip a store and reload of every attachment.
 
 M2M_EXPORT void m2m_pass_color(int64_t ctx, int32_t index, int64_t texture, int32_t clear, float r, float g, float b,
                                float a);
 M2M_EXPORT void m2m_pass_depth(int64_t ctx, int64_t texture, int32_t has_stencil, int32_t clear, double depth);
-M2M_EXPORT void m2m_pass_open(int64_t ctx);
+// label may be null; it names the encoder in GPU captures and traces.
+M2M_EXPORT void m2m_pass_open(int64_t ctx, const char *label);
 M2M_EXPORT void m2m_pass_close(int64_t ctx);
 
 // Pipelines

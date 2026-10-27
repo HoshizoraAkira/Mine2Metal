@@ -66,6 +66,7 @@ int64_t m2m_context_create(int64_t device_handle, char *error, int64_t error_cap
 		ctx.device = m2m_borrow(device_handle);
 		ctx.queue = [ctx.device newCommandQueue];
 		ctx.inFlight = [NSMutableArray array];
+		ctx.gpuSecondsByLabel = [NSMutableDictionary dictionary];
 		ctx.firstInFlightIndex = 1;
 		if (!ctx.queue) {
 			m2m_copy_string(error, error_capacity, @"Could not create a command queue");
@@ -118,6 +119,8 @@ void m2m_end_encoding(M2MContext *ctx) {
 	if (ctx.renderEncoder) {
 		[ctx.renderEncoder endEncoding];
 		ctx.renderEncoder = nil;
+		ctx.renderEncoderReusable = NO;
+		ctx.renderEncoderAttachments = nil;
 	}
 }
 
@@ -125,21 +128,31 @@ id<MTLBlitCommandEncoder> m2m_blit_encoder(M2MContext *ctx) {
 	if (!ctx.blitEncoder) {
 		m2m_end_encoding(ctx);
 		ctx.blitEncoder = [m2m_command_buffer(ctx) blitCommandEncoder];
+		ctx.blitEncoderCount++;
 	}
 	return ctx.blitEncoder;
 }
 
-int64_t m2m_context_commit(int64_t handle) {
+int64_t m2m_context_commit(int64_t handle, const char *label) {
 	@autoreleasepool {
 		M2MContext *ctx = m2m_ctx(handle);
 		m2m_end_encoding(ctx);
 		id<MTLCommandBuffer> commandBuffer = m2m_command_buffer(ctx);
+		NSString *timingLabel = label ? @(label) : nil;
 		int64_t index = ++ctx.submitted;
 		__weak M2MContext *weakCtx = ctx;
 		// Completion order on one queue is submission order, so the latest index covers all before it.
 		[commandBuffer addCompletedHandler:^(id<MTLCommandBuffer> finished) {
-			(void)finished;
-			weakCtx.completed = index;
+			M2MContext *strongCtx = weakCtx;
+			double seconds = finished.GPUEndTime - finished.GPUStartTime;
+			strongCtx.gpuSeconds += seconds;
+			if (timingLabel) {
+				@synchronized(strongCtx.gpuSecondsByLabel) {
+					NSNumber *total = strongCtx.gpuSecondsByLabel[timingLabel];
+					strongCtx.gpuSecondsByLabel[timingLabel] = @(total.doubleValue + seconds);
+				}
+			}
+			strongCtx.completed = index;
 		}];
 		[commandBuffer commit];
 		[ctx.inFlight addObject:commandBuffer];
@@ -155,6 +168,35 @@ int64_t m2m_context_commit(int64_t handle) {
 
 int64_t m2m_context_completed(int64_t ctx) {
 	return m2m_ctx(ctx).completed;
+}
+
+void m2m_context_encoder_counts(int64_t handle, int64_t *render, int64_t *blit, int64_t *merged) {
+	M2MContext *ctx = m2m_ctx(handle);
+	*render = ctx.renderEncoderCount;
+	*blit = ctx.blitEncoderCount;
+	*merged = ctx.mergedPassCount;
+}
+
+int64_t m2m_context_take_label_times(int64_t handle, char *out, int64_t capacity) {
+	@autoreleasepool {
+		M2MContext *ctx = m2m_ctx(handle);
+		NSMutableString *text = [NSMutableString string];
+		@synchronized(ctx.gpuSecondsByLabel) {
+			NSArray<NSString *> *labels = [ctx.gpuSecondsByLabel keysSortedByValueUsingComparator:^(NSNumber *a, NSNumber *b) {
+				return [b compare:a];
+			}];
+			for (NSString *name in labels) {
+				[text appendFormat:@"%@=%.6f\n", name, ctx.gpuSecondsByLabel[name].doubleValue];
+			}
+			[ctx.gpuSecondsByLabel removeAllObjects];
+		}
+		m2m_copy_string(out, capacity, text);
+		return (int64_t)text.length;
+	}
+}
+
+double m2m_context_gpu_seconds(int64_t ctx) {
+	return m2m_ctx(ctx).gpuSeconds;
 }
 
 void m2m_context_wait(int64_t handle, int64_t index) {

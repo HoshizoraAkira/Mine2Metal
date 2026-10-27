@@ -11,12 +11,16 @@ import com.mojang.renderpearl.api.textures.GpuTexture;
 import com.mojang.renderpearl.backend.api.CommandEncoderBackend;
 import com.mojang.renderpearl.backend.api.RenderPassBackend;
 import dev.mine2metal.Mine2Metal;
+import com.mojang.renderpearl.api.textures.GpuTextureView;
+import org.joml.Vector4f;
 import org.joml.Vector4fc;
 import org.jspecify.annotations.Nullable;
 
 import java.nio.ByteBuffer;
 import java.util.ArrayDeque;
+import java.util.IdentityHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalDouble;
 
@@ -26,17 +30,22 @@ import java.util.OptionalDouble;
  */
 final class MetalCommandEncoder implements CommandEncoderBackend {
 	private static final int MAX_FRAMES_IN_FLIGHT = 3;
+	/** Names render encoders after their renderpearl pass, for Xcode captures and Instruments traces. */
+	private static final boolean LABELS = Boolean.getBoolean("mine2metal.labels") || FrameStats.ENABLED;
 
 	private final long ctx;
 	private final MetalTransientMemory transientMemory;
 	private final ArrayDeque<Deferred> deferred = new ArrayDeque<>();
 	/** Index the commands being recorded will get when committed. */
 	private long recordingIndex = 1L;
+	private final @Nullable FrameStats stats;
 	private boolean warnedPartialClear;
+	private final Map<MetalTexture, PendingClear> pendingClears = new IdentityHashMap<>();
 
 	MetalCommandEncoder(long ctx) {
 		this.ctx = ctx;
 		this.transientMemory = new MetalTransientMemory(ctx, this);
+		this.stats = FrameStats.ENABLED ? new FrameStats(ctx) : null;
 	}
 
 	long recordingIndex() {
@@ -55,12 +64,26 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
 	public void submit() {
 		this.transientMemory.endSubmit();
 		this.commit();
-		MetalNative.contextWait(this.ctx, this.recordingIndex - MAX_FRAMES_IN_FLIGHT);
+		this.waitForGpu(this.recordingIndex - MAX_FRAMES_IN_FLIGHT);
 		this.runCompleted();
+		if (this.stats != null) {
+			this.stats.endFrame();
+		}
+	}
+
+	private void waitForGpu(long index) {
+		if (this.stats == null) {
+			MetalNative.contextWait(this.ctx, index);
+			return;
+		}
+		long start = System.nanoTime();
+		MetalNative.contextWait(this.ctx, index);
+		this.stats.addWait(System.nanoTime() - start);
 	}
 
 	/** Commits what has been recorded without ending the frame. */
 	private void commit() {
+		this.flushPendingClears();
 		this.recordingIndex = MetalNative.contextCommit(this.ctx) + 1;
 	}
 
@@ -83,35 +106,62 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
 		return this.transientMemory;
 	}
 
+	private @Nullable String timedPassLabel;
+
 	@Override
 	public RenderPassBackend createRenderPass(RenderPassDescriptor descriptor) {
+		// Fold pending clears of this pass's attachments into its load actions; any other pending clear must land first.
 		List<RenderPassDescriptor.Attachment<Optional<Vector4fc>>> colors = descriptor.colorAttachments();
+		@Nullable Vector4fc[] colorClears = new Vector4fc[colors.size()];
 		for (int i = 0; i < colors.size(); i++) {
 			RenderPassDescriptor.Attachment<Optional<Vector4fc>> attachment = colors.get(i);
-			Optional<Vector4fc> clear = attachment.clearValue();
-			Vector4fc color = clear.orElse(null);
-			MetalNative.passColor(this.ctx, i, ((MetalTextureView) attachment.textureView()).handle, clear.isPresent(),
+			PendingClear pending = this.takePendingClear(attachment.textureView());
+			colorClears[i] = attachment.clearValue().orElse(pending != null ? pending.color() : null);
+		}
+		RenderPassDescriptor.@Nullable Attachment<OptionalDouble> depth = descriptor.depthAttachment();
+		double depthClear = Double.NaN;
+		if (depth != null) {
+			PendingClear pending = this.takePendingClear(depth.textureView());
+			depthClear = depth.clearValue().orElse(pending != null ? pending.depth() : Double.NaN);
+		}
+		this.flushPendingClears();
+
+		if (FrameStats.PASS_TIMES) {
+			this.recordingIndex = MetalNative.contextCommit(this.ctx, "(between passes)") + 1;
+			this.timedPassLabel = descriptor.label().get();
+		}
+
+		for (int i = 0; i < colors.size(); i++) {
+			Vector4fc color = colorClears[i];
+			MetalNative.passColor(this.ctx, i, ((MetalTextureView) colors.get(i).textureView()).handle, color != null,
 					color == null ? 0.0F : color.x(), color == null ? 0.0F : color.y(), color == null ? 0.0F : color.z(), color == null ? 0.0F : color.w());
 		}
 
 		int depthFormat = 0;
 		int stencilFormat = 0;
-		RenderPassDescriptor.@Nullable Attachment<OptionalDouble> depth = descriptor.depthAttachment();
 		if (depth != null) {
 			MetalTextureView view = (MetalTextureView) depth.textureView();
 			GpuFormat format = view.texture().getFormat();
-			MetalNative.passDepth(this.ctx, view.handle, format.hasStencilAspect(), depth.clearValue().isPresent(), depth.clearValue().orElse(1.0));
+			MetalNative.passDepth(this.ctx, view.handle, format.hasStencilAspect(), !Double.isNaN(depthClear), Double.isNaN(depthClear) ? 1.0 : depthClear);
 			depthFormat = MetalFormats.pixelFormat(format);
 			stencilFormat = format.hasStencilAspect() ? depthFormat : 0;
 		}
 
-		MetalNative.passOpen(this.ctx);
+		if (LABELS) {
+			MetalNative.passOpen(this.ctx, descriptor.label().get());
+		} else {
+			MetalNative.passOpen(this.ctx);
+		}
 		return new MetalRenderPass(this.ctx, this, depthFormat, stencilFormat, descriptor.renderArea());
 	}
 
 	@Override
 	public void submitRenderPass() {
 		MetalNative.passClose(this.ctx);
+		if (this.timedPassLabel != null) {
+			this.recordingIndex = MetalNative.contextCommit(this.ctx, this.timedPassLabel) + 1;
+			this.timedPassLabel = null;
+		}
 	}
 
 	@Override
@@ -140,21 +190,60 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
 		this.clear(null, null, texture, depth);
 	}
 
-	/** A render pass whose only job is its clear load actions. */
+	/**
+	 * Clears are deferred: a standalone clear pass writes the whole target only for the next pass to load it again, while
+	 * folded into that pass's load action it is free on Apple's tile-based GPUs.
+	 */
 	private void clear(@Nullable GpuTexture colorTexture, @Nullable Vector4fc color, @Nullable GpuTexture depthTexture, double depth) {
 		if (colorTexture != null && color != null) {
-			MetalNative.passColor(this.ctx, 0, ((MetalTexture) colorTexture).handle, true, color.x(), color.y(), color.z(), color.w());
+			this.pendingClears.put((MetalTexture) colorTexture, new PendingClear(new Vector4f(color), Double.NaN));
 		}
 		if (depthTexture != null) {
-			MetalNative.passDepth(this.ctx, ((MetalTexture) depthTexture).handle, depthTexture.getFormat().hasStencilAspect(), true, depth);
+			this.pendingClears.put((MetalTexture) depthTexture, new PendingClear(null, depth));
 		}
-		MetalNative.passOpen(this.ctx);
-		MetalNative.passClose(this.ctx);
+	}
+
+	/** Removes and returns the pending clear a pass attaching this view can take over, if any. */
+	private @Nullable PendingClear takePendingClear(GpuTextureView view) {
+		if (this.pendingClears.isEmpty() || view.baseMipLevel() != 0) {
+			return null;
+		}
+		return this.pendingClears.remove((MetalTexture) view.texture());
+	}
+
+	/** Runs every pending clear as its own pass; called before anything that could observe the cleared textures. */
+	private void flushPendingClears() {
+		if (this.pendingClears.isEmpty()) {
+			return;
+		}
+		for (Map.Entry<MetalTexture, PendingClear> entry : this.pendingClears.entrySet()) {
+			MetalTexture texture = entry.getKey();
+			PendingClear clear = entry.getValue();
+			if (texture.isClosed()) {
+				continue;
+			}
+			Vector4fc color = clear.color();
+			if (color != null) {
+				MetalNative.passColor(this.ctx, 0, texture.handle, true, color.x(), color.y(), color.z(), color.w());
+			} else {
+				MetalNative.passDepth(this.ctx, texture.handle, texture.getFormat().hasStencilAspect(), true, clear.depth());
+			}
+			if (LABELS) {
+				MetalNative.passOpen(this.ctx, "Clear");
+			} else {
+				MetalNative.passOpen(this.ctx);
+			}
+			MetalNative.passClose(this.ctx);
+		}
+		this.pendingClears.clear();
 	}
 
 	@Override
 	public void writeToBuffer(GpuBufferSlice destination, ByteBuffer data) {
 		// Staged through a blit so the write lands in command order, after any earlier GPU reads of the old contents.
+		if (this.stats != null) {
+			this.stats.addBufferWrite(data.remaining());
+		}
 		GpuBufferSlice staging = this.transientMemory.uploadGpu(data, 4L, GpuBuffer.USAGE_COPY_SRC);
 		MetalNative.blitBuffer(this.ctx, ((MetalBuffer) staging.buffer()).handle, staging.offset(), ((MetalBuffer) destination.buffer()).handle,
 				destination.offset(), data.remaining());
@@ -162,12 +251,19 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
 
 	@Override
 	public void copyToBuffer(GpuBufferSlice source, GpuBufferSlice target) {
+		if (this.stats != null) {
+			this.stats.addBufferCopy(source.length());
+		}
 		MetalNative.blitBuffer(this.ctx, ((MetalBuffer) source.buffer()).handle, source.offset(), ((MetalBuffer) target.buffer()).handle, target.offset(),
 				source.length());
 	}
 
 	@Override
 	public void writeToTexture(GpuTexture destination, ByteBuffer source, int mipLevel, int layer, int x, int y, int width, int height) {
+		this.flushPendingClears();
+		if (this.stats != null) {
+			this.stats.addTextureWrite(source.remaining());
+		}
 		GpuBufferSlice staging = this.transientMemory.uploadGpu(source, 16L, GpuBuffer.USAGE_COPY_SRC);
 		int bytesPerRow = width * destination.getFormat().blockSize();
 		MetalNative.blitBufferToTexture(this.ctx, ((MetalBuffer) staging.buffer()).handle, staging.offset(), bytesPerRow, (long) bytesPerRow * height,
@@ -177,6 +273,7 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
 	@Override
 	public void copyBufferToTexture(GpuBufferSlice source, int sourceX, int sourceY, int sourceWidth, int sourceHeight, GpuTexture destination, int destX,
 			int destY, int copyWidth, int copyHeight, int mipLevel, int layer) {
+		this.flushPendingClears();
 		int texelSize = destination.getFormat().blockSize();
 		long skip = (sourceX + (long) sourceY * sourceWidth) * texelSize;
 		long bytesPerRow = (long) sourceWidth * texelSize;
@@ -192,6 +289,7 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
 	@Override
 	public void copyTextureToBuffer(GpuTexture source, GpuBuffer destination, long offset, Runnable callback, int mipLevel, int x, int y, int width,
 			int height) {
+		this.flushPendingClears();
 		GpuFormat format = source.getFormat();
 		MetalNative.blitTextureToBuffer(this.ctx, ((MetalTexture) source).handle, mipLevel, x, y, width, height, ((MetalBuffer) destination).handle, offset,
 				(long) width * format.blockSize());
@@ -201,6 +299,7 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
 	@Override
 	public void copyTextureToTexture(GpuTexture source, GpuTexture destination, int mipLevel, int destX, int destY, int sourceX, int sourceY, int width,
 			int height) {
+		this.flushPendingClears();
 		MetalNative.blitTextureToTexture(this.ctx, ((MetalTexture) source).handle, ((MetalTexture) destination).handle, mipLevel, destX, destY, sourceX,
 				sourceY, width, height);
 	}
@@ -221,7 +320,7 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
 				if (index == MetalCommandEncoder.this.recordingIndex) {
 					MetalCommandEncoder.this.commit();
 				}
-				MetalNative.contextWait(MetalCommandEncoder.this.ctx, index);
+				MetalCommandEncoder.this.waitForGpu(index);
 				return true;
 			}
 
@@ -237,9 +336,14 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
 
 	/** Schedules the frame's present; it happens when the frame is committed in {@link #submit}. */
 	void present(long layer, MetalTextureView view) {
+		this.flushPendingClears();
 		MetalNative.present(this.ctx, layer, view.handle);
 	}
 
 	private record Deferred(long index, Runnable action) {
+	}
+
+	/** Either a color (for a color target) or a depth value (for a depth target). */
+	private record PendingClear(@Nullable Vector4fc color, double depth) {
 	}
 }

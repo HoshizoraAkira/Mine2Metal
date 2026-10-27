@@ -107,7 +107,27 @@ final class MetalNative {
 
 	static long contextCommit(long ctx) {
 		try {
-			return (long) Functions.CONTEXT_COMMIT.invokeExact(ctx);
+			return (long) Functions.CONTEXT_COMMIT.invokeExact(ctx, MemorySegment.NULL);
+		} catch (Throwable t) {
+			throw rethrow(t);
+		}
+	}
+
+	/** Commits and accumulates the command buffer's GPU time under label. */
+	static long contextCommit(long ctx, String label) {
+		try (Arena arena = Arena.ofConfined()) {
+			return (long) Functions.CONTEXT_COMMIT.invokeExact(ctx, arena.allocateFrom(label));
+		} catch (Throwable t) {
+			throw rethrow(t);
+		}
+	}
+
+	/** "label=seconds" lines for labelled commits since the last call. */
+	static String contextTakeLabelTimes(long ctx) {
+		try (Arena arena = Arena.ofConfined()) {
+			MemorySegment out = arena.allocate(16384);
+			long length = (long) Functions.CONTEXT_TAKE_LABEL_TIMES.invokeExact(ctx, out, out.byteSize());
+			return out.getString(0);
 		} catch (Throwable t) {
 			throw rethrow(t);
 		}
@@ -116,6 +136,25 @@ final class MetalNative {
 	static long contextCompleted(long ctx) {
 		try {
 			return (long) Functions.CONTEXT_COMPLETED.invokeExact(ctx);
+		} catch (Throwable t) {
+			throw rethrow(t);
+		}
+	}
+
+	/** Returns {render encoders, blit encoders, merged passes} so far. */
+	static long[] contextEncoderCounts(long ctx) {
+		try (Arena arena = Arena.ofConfined()) {
+			MemorySegment counts = arena.allocate(JAVA_LONG, 3);
+			Functions.CONTEXT_ENCODER_COUNTS.invokeExact(ctx, counts, counts.asSlice(JAVA_LONG.byteSize()), counts.asSlice(2 * JAVA_LONG.byteSize()));
+			return counts.toArray(JAVA_LONG);
+		} catch (Throwable t) {
+			throw rethrow(t);
+		}
+	}
+
+	static double contextGpuSeconds(long ctx) {
+		try {
+			return (double) Functions.CONTEXT_GPU_SECONDS.invokeExact(ctx);
 		} catch (Throwable t) {
 			throw rethrow(t);
 		}
@@ -220,7 +259,15 @@ final class MetalNative {
 
 	static void passOpen(long ctx) {
 		try {
-			Functions.PASS_OPEN.invokeExact(ctx);
+			Functions.PASS_OPEN.invokeExact(ctx, MemorySegment.NULL);
+		} catch (Throwable t) {
+			throw rethrow(t);
+		}
+	}
+
+	static void passOpen(long ctx, String label) {
+		try (Arena arena = Arena.ofConfined()) {
+			Functions.PASS_OPEN.invokeExact(ctx, arena.allocateFrom(label));
 		} catch (Throwable t) {
 			throw rethrow(t);
 		}
@@ -433,8 +480,11 @@ final class MetalNative {
 
 		static final MethodHandle CONTEXT_CREATE = function("m2m_context_create", JAVA_LONG, JAVA_LONG, ADDRESS, JAVA_LONG);
 		static final MethodHandle CONTEXT_MAX_BUFFER_LENGTH = function("m2m_context_max_buffer_length", JAVA_LONG, JAVA_LONG);
-		static final MethodHandle CONTEXT_COMMIT = function("m2m_context_commit", JAVA_LONG, JAVA_LONG);
+		static final MethodHandle CONTEXT_COMMIT = function("m2m_context_commit", JAVA_LONG, JAVA_LONG, ADDRESS);
+		static final MethodHandle CONTEXT_TAKE_LABEL_TIMES = function("m2m_context_take_label_times", JAVA_LONG, JAVA_LONG, ADDRESS, JAVA_LONG);
 		static final MethodHandle CONTEXT_COMPLETED = function("m2m_context_completed", JAVA_LONG, JAVA_LONG);
+		static final MethodHandle CONTEXT_ENCODER_COUNTS = function("m2m_context_encoder_counts", null, JAVA_LONG, ADDRESS, ADDRESS, ADDRESS);
+		static final MethodHandle CONTEXT_GPU_SECONDS = function("m2m_context_gpu_seconds", JAVA_DOUBLE, JAVA_LONG);
 		static final MethodHandle CONTEXT_WAIT = function("m2m_context_wait", null, JAVA_LONG, JAVA_LONG);
 
 		static final MethodHandle BUFFER_CREATE = function("m2m_buffer_create", JAVA_LONG, JAVA_LONG, JAVA_LONG);
@@ -457,7 +507,7 @@ final class MetalNative {
 		static final MethodHandle PASS_COLOR = function("m2m_pass_color", null,
 				JAVA_LONG, JAVA_INT, JAVA_LONG, JAVA_INT, JAVA_FLOAT, JAVA_FLOAT, JAVA_FLOAT, JAVA_FLOAT);
 		static final MethodHandle PASS_DEPTH = function("m2m_pass_depth", null, JAVA_LONG, JAVA_LONG, JAVA_INT, JAVA_INT, JAVA_DOUBLE);
-		static final MethodHandle PASS_OPEN = function("m2m_pass_open", null, JAVA_LONG);
+		static final MethodHandle PASS_OPEN = function("m2m_pass_open", null, JAVA_LONG, ADDRESS);
 		static final MethodHandle PASS_CLOSE = function("m2m_pass_close", null, JAVA_LONG);
 
 		static final MethodHandle LIBRARY_CREATE = function("m2m_library_create", JAVA_LONG, JAVA_LONG, ADDRESS, ADDRESS, JAVA_LONG);

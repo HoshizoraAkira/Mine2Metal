@@ -84,10 +84,14 @@ final class MetalRenderPipeline implements BackendRenderPipeline {
 			int[] layout = layout(info);
 			CreateInfo.Shader vertex = shader(info, ShaderType.VERTEX);
 			CreateInfo.Shader fragment = shader(info, ShaderType.FRAGMENT);
+			long start = System.nanoTime();
 			ShaderTranslator.Translated vertexMsl = ShaderTranslator.translate(vertex.module(), vertex.entryPoint(), info.uniforms().size());
 			ShaderTranslator.Translated fragmentMsl = ShaderTranslator.translate(fragment.module(), fragment.entryPoint(), info.uniforms().size());
+			long translated = System.nanoTime();
 			vertexLibrary = MetalNative.libraryCreate(ctx, vertexMsl.source());
 			fragmentLibrary = MetalNative.libraryCreate(ctx, fragmentMsl.source());
+			Mine2Metal.LOGGER.debug("Compiled pipeline {}: SPIR-V to MSL {} us, MSL to library {} us", info.name(), (translated - start) / 1000,
+					(System.nanoTime() - translated) / 1000);
 
 			DepthStencilState depth = info.depthStencilState();
 			long depthState = depth != null

@@ -17,6 +17,11 @@
 @property(nonatomic, strong) id<MTLBlitCommandEncoder> blitEncoder;
 @property(nonatomic, strong) id<MTLRenderCommandEncoder> renderEncoder;
 @property(nonatomic, strong) MTLRenderPassDescriptor *pendingPass;
+// A pass that renderpearl closed but whose encoder is kept open, so a following pass on the same
+// attachments that clears nothing can continue in it (see m2m_pass_open).
+@property(nonatomic) BOOL renderEncoderReusable;
+@property(nonatomic, strong) NSArray *renderEncoderAttachments;
+@property(nonatomic) int64_t mergedPassCount;
 // Attachment size of the open render pass, for clamping scissor rects.
 @property(nonatomic) NSUInteger passWidth;
 @property(nonatomic) NSUInteger passHeight;
@@ -32,6 +37,12 @@
 @property(nonatomic) int64_t submitted;
 // Written from Metal's completion thread.
 @property(atomic) int64_t completed;
+@property(atomic) double gpuSeconds;
+// Encoders created so far, for the frame stats.
+@property(nonatomic) int64_t renderEncoderCount;
+@property(nonatomic) int64_t blitEncoderCount;
+// GPU seconds per command buffer label, filled from the completion thread under @synchronized.
+@property(nonatomic, strong) NSMutableDictionary<NSString *, NSNumber *> *gpuSecondsByLabel;
 @end
 
 static inline int64_t m2m_retain(id object) {

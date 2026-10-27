@@ -89,24 +89,67 @@ void m2m_pass_depth(int64_t ctx, int64_t texture, int32_t has_stencil, int32_t c
 	}
 }
 
-void m2m_pass_open(int64_t handle) {
+// The attachment textures of a pass, with NSNull for empty slots, so passes compare by identity.
+static NSArray *m2m_attachment_textures(MTLRenderPassDescriptor *pass) {
+	NSMutableArray *textures = [NSMutableArray arrayWithCapacity:9];
+	for (NSUInteger i = 0; i < 8; i++) {
+		[textures addObject:pass.colorAttachments[i].texture ?: (id)[NSNull null]];
+	}
+	[textures addObject:pass.depthAttachment.texture ?: (id)[NSNull null]];
+	return textures;
+}
+
+static BOOL m2m_pass_clears(MTLRenderPassDescriptor *pass) {
+	for (NSUInteger i = 0; i < 8; i++) {
+		if (pass.colorAttachments[i].texture && pass.colorAttachments[i].loadAction == MTLLoadActionClear) {
+			return YES;
+		}
+	}
+	return pass.depthAttachment.texture && pass.depthAttachment.loadAction == MTLLoadActionClear;
+}
+
+static BOOL m2m_same_attachments(NSArray *a, NSArray *b) {
+	if (a.count != b.count) {
+		return NO;
+	}
+	for (NSUInteger i = 0; i < a.count; i++) {
+		if (a[i] != b[i]) {
+			return NO;
+		}
+	}
+	return YES;
+}
+
+void m2m_pass_open(int64_t handle, const char *label) {
 	@autoreleasepool {
 		M2MContext *ctx = m2m_ctx(handle);
 		MTLRenderPassDescriptor *pass = m2m_pending_pass(ctx);
+		ctx.pendingPass = nil;
+
+		NSArray *attachments = m2m_attachment_textures(pass);
+		if (ctx.renderEncoderReusable && !m2m_pass_clears(pass) && m2m_same_attachments(attachments, ctx.renderEncoderAttachments)) {
+			ctx.renderEncoderReusable = NO;
+			ctx.mergedPassCount++;
+			return;
+		}
+
 		id<MTLTexture> sizing = pass.colorAttachments[0].texture ?: pass.depthAttachment.texture;
 		ctx.passWidth = sizing.width;
 		ctx.passHeight = sizing.height;
 
 		m2m_end_encoding(ctx);
 		ctx.renderEncoder = [m2m_command_buffer(ctx) renderCommandEncoderWithDescriptor:pass];
-		ctx.pendingPass = nil;
+		ctx.renderEncoderCount++;
+		if (label) {
+			ctx.renderEncoder.label = @(label);
+		}
+		ctx.renderEncoderAttachments = attachments;
 		// renderpearl's front faces are counter-clockwise in GL window space; flipping vertex Y mirrors that.
 		[ctx.renderEncoder setFrontFacingWinding:MTLWindingClockwise];
 	}
 }
 
 void m2m_pass_close(int64_t handle) {
-	@autoreleasepool {
-		m2m_end_encoding(m2m_ctx(handle));
-	}
+	// Left open for m2m_pass_open to continue; anything else that needs the command buffer ends it.
+	m2m_ctx(handle).renderEncoderReusable = YES;
 }

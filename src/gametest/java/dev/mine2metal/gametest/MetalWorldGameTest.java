@@ -4,6 +4,7 @@ import com.mojang.blaze3d.systems.RenderSystem;
 import net.fabricmc.fabric.api.client.gametest.v1.FabricClientGameTest;
 import net.fabricmc.fabric.api.client.gametest.v1.context.ClientGameTestContext;
 import net.fabricmc.fabric.api.client.gametest.v1.context.TestSingleplayerContext;
+import net.minecraft.client.InactivityFpsLimit;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.Options;
 import org.slf4j.Logger;
@@ -36,6 +37,11 @@ public class MetalWorldGameTest implements FabricClientGameTest {
 			singleplayer.getConnection().waitForChunksRender();
 			context.takeScreenshot("mine2metal-world");
 
+			// Creative flight keeps the player where the camera is put instead of falling to its death.
+			singleplayer.getServer().runCommand("gamemode creative @a");
+			context.waitTicks(5);
+			context.runOnClient(client -> client.player.getAbilities().flying = true);
+
 			// From above, looking down: lots of chunks, foliage (cutout) and usually water (translucent).
 			singleplayer.getServer().runCommand("tp @a ~ ~40 ~");
 			context.waitTicks(20);
@@ -47,6 +53,17 @@ public class MetalWorldGameTest implements FabricClientGameTest {
 			singleplayer.getServer().runCommand("time set midnight");
 			context.waitTicks(20);
 			context.takeScreenshot("mine2metal-world-night");
+
+			// A heavier load: a large window and render distance 16, looking at the horizon.
+			singleplayer.getServer().runCommand("time set noon");
+			context.getInput().resizeWindow(1920, 1080);
+			context.runOnClient(client -> client.options.renderDistance().set(16));
+			context.getInput().lookAt(0.0F, 10.0F);
+			// waitForChunksRender never settles at this distance (on OpenGL too). Generation competes with rendering for
+			// the CPU, so give it long enough to finish or the measurement mostly reflects world generation.
+			context.waitTicks(45 * 20);
+			context.takeScreenshot("mine2metal-world-far");
+			LOGGER.info("Average FPS at 1920x1080, render distance 16: {}", averageFps(context));
 		}
 	}
 
@@ -55,6 +72,8 @@ public class MetalWorldGameTest implements FabricClientGameTest {
 		context.runOnClient(client -> {
 			client.options.enableVsync().set(false);
 			client.options.framerateLimit().set(Options.UNLIMITED_FRAMERATE_CUTOFF);
+			// The test sends no input for minutes, which would otherwise trip the 30 fps AFK limiter.
+			client.options.inactivityFpsLimit().set(InactivityFpsLimit.MINIMIZED);
 		});
 		// Let chunk meshing settle so the numbers measure rendering, not world loading.
 		context.waitTicks(100);
