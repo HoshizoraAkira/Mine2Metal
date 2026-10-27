@@ -74,7 +74,7 @@ class MetalBuffer extends BaseGpuBuffer {
 		this.lastWrite = 0L;
 		this.encoder.afterGpu(() -> {
 			if (this.closed) {
-				MetalNative.release(old);
+				MetalNative.resourceRelease(ctx, old);
 			} else {
 				this.spares.add(old);
 			}

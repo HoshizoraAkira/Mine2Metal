@@ -26,7 +26,7 @@ final class MetalTransientMemory implements TransientMemory {
 		this.encoder = encoder;
 		this.gpu = new TransientBlockAllocator<>(BLOCK_SIZE, 1L << 62, TransientBlockAllocator.Allocator.create(
 				size -> new Block(MetalNative.bufferCreate(ctx, size), size),
-				block -> MetalNative.release(block.handle())));
+				block -> MetalNative.resourceRelease(ctx, block.handle())));
 	}
 
 	/** Called once per frame before the commit; CPU blocks are free right away, GPU blocks once that submit completes. */

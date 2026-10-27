@@ -2,6 +2,7 @@ package dev.mine2metal.config;
 
 import dev.mine2metal.metal.MetalRenderer;
 import net.caffeinemc.mods.sodium.api.config.ConfigEntryPoint;
+import net.caffeinemc.mods.sodium.api.config.option.OptionFlag;
 import net.caffeinemc.mods.sodium.api.config.option.OptionImpact;
 import net.caffeinemc.mods.sodium.api.config.structure.ConfigBuilder;
 import net.minecraft.network.chat.Component;
@@ -13,6 +14,7 @@ import net.minecraft.resources.Identifier;
  * loaded when Sodium is installed; without it {@link MetalSettingsScreen} offers the same options.
  */
 public final class SodiumOptionsPage implements ConfigEntryPoint {
+	private static final Identifier METAL_VERSION = Identifier.fromNamespaceAndPath("mine2metal", "metal_version");
 	private static final Identifier UPSCALING = Identifier.fromNamespaceAndPath("mine2metal", "upscaling");
 	private static final Identifier RENDER_SCALE = Identifier.fromNamespaceAndPath("mine2metal", "render_scale");
 	private static final Identifier FRAME_INTERPOLATION = Identifier.fromNamespaceAndPath("mine2metal", "frame_interpolation");
@@ -26,6 +28,17 @@ public final class SodiumOptionsPage implements ConfigEntryPoint {
 				.setName("mine2metal")
 				.addPage(builder.createOptionPage()
 						.setName(Component.translatable("mine2metal.options.page"))
+						.addOptionGroup(builder.createOptionGroup()
+								.setName(Component.translatable("mine2metal.options.group.api"))
+								.addOption(builder.createEnumOption(METAL_VERSION, MetalSettings.MetalVersion.class)
+										.setName(Component.translatable("mine2metal.options.metal_version"))
+										.setTooltip(value -> MetalOptionTexts.metalVersionTooltip())
+										.setElementNameProvider(MetalOptionTexts::metalVersionName)
+										.setImpact(OptionImpact.LOW)
+										.setFlags(OptionFlag.REQUIRES_GAME_RESTART)
+										.setStorageHandler(settings::save)
+										.setDefaultValue(MetalSettings.MetalVersion.AUTO)
+										.setBinding(value -> settings.metalVersion = value, () -> settings.metalVersion)))
 						.addOptionGroup(builder.createOptionGroup()
 								.setName(Component.translatable("mine2metal.options.group.upscaling"))
 								.addOption(builder.createEnumOption(UPSCALING, MetalSettings.Upscaling.class)

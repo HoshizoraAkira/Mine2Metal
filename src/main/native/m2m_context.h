@@ -6,11 +6,105 @@
 
 #include "mine2metal.h"
 
+// Metal 4 objects are only created after an @available(macOS 26.0, *) check (see m2m_context_create) and only used
+// while ctx.metal4 is set, so their uses need no availability guard of their own.
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wunguarded-availability-new"
+
+typedef void (^M2MCompletion)(CFTimeInterval gpuStart, CFTimeInterval gpuEnd, NSError *error);
+
+// Copy commands with the same selectors on a Metal 3 blit encoder and a Metal 4 compute encoder.
+@protocol M2MCopier <NSObject>
+- (void)copyFromBuffer:(id<MTLBuffer>)sourceBuffer
+         sourceOffset:(NSUInteger)sourceOffset
+             toBuffer:(id<MTLBuffer>)destinationBuffer
+    destinationOffset:(NSUInteger)destinationOffset
+                 size:(NSUInteger)size;
+- (void)copyFromBuffer:(id<MTLBuffer>)sourceBuffer
+           sourceOffset:(NSUInteger)sourceOffset
+      sourceBytesPerRow:(NSUInteger)sourceBytesPerRow
+    sourceBytesPerImage:(NSUInteger)sourceBytesPerImage
+             sourceSize:(MTLSize)sourceSize
+              toTexture:(id<MTLTexture>)destinationTexture
+       destinationSlice:(NSUInteger)destinationSlice
+       destinationLevel:(NSUInteger)destinationLevel
+      destinationOrigin:(MTLOrigin)destinationOrigin;
+- (void)copyFromTexture:(id<MTLTexture>)sourceTexture
+                 sourceSlice:(NSUInteger)sourceSlice
+                 sourceLevel:(NSUInteger)sourceLevel
+                sourceOrigin:(MTLOrigin)sourceOrigin
+                  sourceSize:(MTLSize)sourceSize
+                    toBuffer:(id<MTLBuffer>)destinationBuffer
+           destinationOffset:(NSUInteger)destinationOffset
+      destinationBytesPerRow:(NSUInteger)destinationBytesPerRow
+    destinationBytesPerImage:(NSUInteger)destinationBytesPerImage;
+- (void)copyFromTexture:(id<MTLTexture>)sourceTexture
+           sourceSlice:(NSUInteger)sourceSlice
+           sourceLevel:(NSUInteger)sourceLevel
+          sourceOrigin:(MTLOrigin)sourceOrigin
+            sourceSize:(MTLSize)sourceSize
+             toTexture:(id<MTLTexture>)destinationTexture
+      destinationSlice:(NSUInteger)destinationSlice
+      destinationLevel:(NSUInteger)destinationLevel
+     destinationOrigin:(MTLOrigin)destinationOrigin;
+- (void)copyFromTexture:(id<MTLTexture>)sourceTexture toTexture:(id<MTLTexture>)destinationTexture;
+@end
+
+// Render commands with the same selectors on Metal 3 and Metal 4 render encoders. Bindings and indexed or indirect
+// draws differ and go through the m2m_bind_* functions and render.m.
+@protocol M2MRenderCommands <NSObject>
+- (void)setRenderPipelineState:(id<MTLRenderPipelineState>)pipelineState;
+- (void)setDepthStencilState:(id<MTLDepthStencilState>)depthStencilState;
+- (void)setCullMode:(MTLCullMode)cullMode;
+- (void)setTriangleFillMode:(MTLTriangleFillMode)fillMode;
+- (void)setDepthBias:(float)depthBias slopeScale:(float)slopeScale clamp:(float)clamp;
+- (void)setScissorRect:(MTLScissorRect)rect;
+- (void)setFrontFacingWinding:(MTLWinding)frontFacingWinding;
+- (void)drawPrimitives:(MTLPrimitiveType)primitiveType vertexStart:(NSUInteger)vertexStart vertexCount:(NSUInteger)vertexCount;
+- (void)drawPrimitives:(MTLPrimitiveType)primitiveType
+           vertexStart:(NSUInteger)vertexStart
+           vertexCount:(NSUInteger)vertexCount
+         instanceCount:(NSUInteger)instanceCount
+          baseInstance:(NSUInteger)baseInstance;
+@end
+
 @interface M2MContext : NSObject
 @property(nonatomic, strong) id<MTLDevice> device;
 @property(nonatomic, strong) id<MTLCommandQueue> queue;
 @property(nonatomic, strong) id<MTLRenderPipelineState> presentPipeline;
 @property(nonatomic, strong) id<MTLSamplerState> presentSampler;
+
+// Metal 4 (gpu.m). Command buffers come from allocators that return to a pool when the GPU is done with them;
+// every buffer and texture lives in one residency set; bindings go through argument tables, small constants
+// through an upload ring; and since Metal 4 tracks no hazards, every encoder starts and ends with a full barrier.
+@property(nonatomic) BOOL metal4;
+@property(nonatomic, strong) id<MTL4CommandQueue> queue4;
+@property(nonatomic, strong) id<MTL4CommandQueue> presentQueue4;
+@property(nonatomic, strong) id<MTL4CommandBuffer> commandBuffer4;
+@property(nonatomic, strong) id<MTL4CommandAllocator> allocator4;
+@property(nonatomic, strong) NSMutableArray<id<MTL4CommandAllocator>> *freeAllocators;
+@property(nonatomic, strong) NSMutableArray<id<MTL4CommandAllocator>> *freePresentAllocators;
+@property(nonatomic, strong) id<MTL4RenderCommandEncoder> renderEncoder4;
+@property(nonatomic, strong) id<MTL4ComputeCommandEncoder> transferEncoder4;
+@property(nonatomic) BOOL transferEncoderUsed;
+@property(nonatomic, strong) id<MTL4ArgumentTable> argumentTable;
+@property(nonatomic, strong) id<MTL4ArgumentTable> presentArgumentTable;
+@property(nonatomic, strong) id<MTLResidencySet> residency;
+@property(nonatomic) BOOL residencyDirty;
+@property(nonatomic, weak) CAMetalLayer *residentLayer;
+// Signaled with each submit index once the GPU has finished it.
+@property(nonatomic, strong) id<MTLSharedEvent> completion;
+// For MetalFX's Metal 4 scalers.
+@property(nonatomic, strong) id<MTL4Compiler> compiler;
+// Run when the open command buffer completes, and queue-level waits and signals around its commit.
+@property(nonatomic, strong) NSMutableArray<M2MCompletion> *pendingCompletions;
+@property(nonatomic, strong) NSMutableArray *waitsBeforeCommit;
+@property(nonatomic, strong) NSMutableArray *signalsAfterCommit;
+// Shared buffers small constants are copied into (Metal 4 has no setBytes), reused once the GPU is past them.
+@property(nonatomic, strong) NSMutableArray *uploadChunks;
+// Objects replaced while the GPU may still use them, with the submit index after which they can go. Metal 4
+// command buffers do not keep the resources they use alive.
+@property(nonatomic, strong) NSMutableArray *retired;
 
 // Recording state; at most one encoder is open at a time.
 @property(nonatomic, strong) id<MTLCommandBuffer> commandBuffer;
@@ -90,13 +184,51 @@ static inline M2MContext *m2m_ctx(int64_t handle) {
 	return (M2MContext *)m2m_borrow(handle);
 }
 
-// Shared by every encoding entry point.
+// Shared by every encoding entry point (gpu.m).
+
+// The open command buffer, begun on first use: Metal 3 and Metal 4 respectively.
 id<MTLCommandBuffer> m2m_command_buffer(M2MContext *ctx);
+id<MTL4CommandBuffer> m2m_command_buffer4(M2MContext *ctx);
 void m2m_end_encoding(M2MContext *ctx);
+// An encoder for copies, continuing the open one if it is one.
+id<M2MCopier> m2m_copier(M2MContext *ctx);
+// Ends what is open and starts a render encoder for pass, which becomes ctx's open render encoder.
+id<M2MRenderCommands> m2m_open_render_encoder(M2MContext *ctx, MTLRenderPassDescriptor *pass, NSString *label);
+id<M2MRenderCommands> m2m_render_encoder(M2MContext *ctx);
+// Bindings on the open render encoder. Metal 4 shares one argument table between the vertex and fragment stages,
+// so a slot holds one resource for both.
+void m2m_bind_buffer(M2MContext *ctx, NSUInteger index, id<MTLBuffer> buffer, NSUInteger offset, BOOL vertex,
+                     BOOL fragment);
+void m2m_bind_bytes(M2MContext *ctx, NSUInteger index, const void *data, NSUInteger length, BOOL vertex, BOOL fragment);
+void m2m_bind_texture(M2MContext *ctx, NSUInteger index, id<MTLTexture> texture, BOOL vertex, BOOL fragment);
+void m2m_bind_sampler(M2MContext *ctx, NSUInteger index, id<MTLSamplerState> sampler, BOOL vertex, BOOL fragment);
+// Runs completion once the GPU has finished everything encoded so far.
+void m2m_on_completed(M2MContext *ctx, M2MCompletion completion);
+// GPU work committed after this point waits for event to reach value; event reaches value once the work encoded so
+// far is done. Metal 3 encodes these where they are called; Metal 4 applies them to the whole open command buffer.
+void m2m_wait_for_event(M2MContext *ctx, id<MTLEvent> event, uint64_t value);
+void m2m_signal_event(M2MContext *ctx, id<MTLEvent> event, uint64_t value);
+// Commits the open command buffer, or an empty one; completion runs when it finishes.
+void m2m_commit_open(M2MContext *ctx, NSString *label, M2MCompletion completion);
+// True when MINE2METAL_TRACE is set: Metal 4 commits, queue waits and signals, and completions are logged.
+BOOL m2m_tracing(void);
 // Logs a failed command buffer's error and notes device loss.
-void m2m_record_error(M2MContext *ctx, id<MTLCommandBuffer> failed);
-id<MTLBlitCommandEncoder> m2m_blit_encoder(M2MContext *ctx);
+void m2m_record_error(M2MContext *ctx, NSError *error);
+// Metal 4 resources must be in the residency set while the GPU uses them.
+void m2m_track(M2MContext *ctx, id<MTLAllocation> allocation);
+void m2m_untrack(M2MContext *ctx, id<MTLAllocation> allocation);
+// Keeps object (and its residency) until the GPU has finished the work encoded so far, and a little after, since
+// the present queue may read it too. object may be nil.
+void m2m_retire(M2MContext *ctx, id object);
+// A private texture for the backend's own use, tracked for residency.
+id<MTLTexture> m2m_new_private_texture(M2MContext *ctx, MTLPixelFormat format, NSUInteger width, NSUInteger height,
+                                       MTLTextureUsage usage);
+// Present-queue command buffers for Metal 4 (present.m), from their own allocator pool.
+id<MTL4CommandBuffer> m2m_present_command_buffer4(M2MContext *ctx);
+void m2m_commit_present4(M2MContext *ctx, id<MTL4CommandBuffer> commandBuffer, M2MCompletion completion);
 // Copies message into a caller-provided buffer as NUL-terminated UTF-8, truncating to capacity.
 void m2m_copy_string(char *out, int64_t capacity, NSString *message);
+
+#pragma clang diagnostic pop
 
 #endif

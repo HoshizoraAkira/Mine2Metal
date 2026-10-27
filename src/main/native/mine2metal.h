@@ -25,15 +25,22 @@ M2M_EXPORT int32_t m2m_device_validation_active(int64_t device);
 
 // 1 when the device supports MTLGPUFamilyMetal3, else 0.
 M2M_EXPORT int32_t m2m_device_supports_metal3(int64_t device);
+// 1 on macOS 26 or newer with a GPU in the Metal 4 family (Apple M1 or later).
+M2M_EXPORT int32_t m2m_device_supports_metal4(int64_t device);
 
 // Releases any object handed out by this library. Passing 0 is a no-op.
 M2M_EXPORT void m2m_release(int64_t object);
+// As m2m_release, for buffers, textures and anything else the GPU may use: with Metal 4 it also leaves the
+// context's residency set.
+M2M_EXPORT void m2m_resource_release(int64_t ctx, int64_t object);
 
 // Context: device, command queue and the command buffer being recorded
 
 // Returns a retained context for device, or 0 with a message written to error. With debug set, command
 // buffers record per-encoder execution status so GPU errors name the failing encoder.
-M2M_EXPORT int64_t m2m_context_create(int64_t device, int32_t debug, char *error, int64_t error_capacity);
+// metal4 selects the Metal 4 command model (MTL4CommandQueue, residency sets, argument tables); it needs macOS 26
+// and m2m_device_supports_metal4.
+M2M_EXPORT int64_t m2m_context_create(int64_t device, int32_t debug, int32_t metal4, char *error, int64_t error_capacity);
 // Number of command buffers that have failed on the GPU so far.
 M2M_EXPORT int64_t m2m_context_error_count(int64_t ctx);
 // Writes the messages of failed command buffers since the last call, one per line, then forgets them.

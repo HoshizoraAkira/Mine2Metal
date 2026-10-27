@@ -2,9 +2,13 @@
 
 #include "m2m_context.h"
 
+// See m2m_context.h: the Metal 4 branches run only when ctx.metal4 is set, which requires macOS 26.
+#pragma clang diagnostic ignored "-Wunguarded-availability-new"
+
 // One spatial scaler is kept and rebuilt only when the sizes or formats change (window resize, render scale).
 @interface M2MSpatialUpscaler : NSObject
-@property(nonatomic, strong) id<MTLFXSpatialScaler> scaler;
+// An MTLFXSpatialScaler, or an MTL4FXSpatialScaler with Metal 4.
+@property(nonatomic, strong) id<MTLFXSpatialScalerBase> scaler;
 @property(nonatomic) NSUInteger inputWidth, inputHeight, outputWidth, outputHeight;
 @property(nonatomic) MTLPixelFormat format;
 // MetalFX may need output usages the game's render target was not created with; it then writes here and the
@@ -16,7 +20,11 @@
 @end
 
 int32_t m2m_metalfx_spatial_supported(int64_t ctx) {
-	return [MTLFXSpatialScalerDescriptor supportsDevice:m2m_ctx(ctx).device] ? 1 : 0;
+	M2MContext *context = m2m_ctx(ctx);
+	if (context.metal4) {
+		return [MTLFXSpatialScalerDescriptor supportsMetal4FX:context.device] ? 1 : 0;
+	}
+	return [MTLFXSpatialScalerDescriptor supportsDevice:context.device] ? 1 : 0;
 }
 
 static M2MSpatialUpscaler *m2m_spatial_upscaler(M2MContext *ctx, id<MTLTexture> input, id<MTLTexture> output) {
@@ -37,7 +45,11 @@ static M2MSpatialUpscaler *m2m_spatial_upscaler(M2MContext *ctx, id<MTLTexture> 
 	descriptor.colorProcessingMode = MTLFXSpatialScalerColorProcessingModePerceptual;
 
 	M2MSpatialUpscaler *created = [M2MSpatialUpscaler new];
-	created.scaler = [descriptor newSpatialScalerWithDevice:ctx.device];
+	if (ctx.metal4) {
+		created.scaler = [descriptor newSpatialScalerWithDevice:ctx.device compiler:ctx.compiler];
+	} else {
+		created.scaler = [descriptor newSpatialScalerWithDevice:ctx.device];
+	}
 	if (!created.scaler) {
 		return nil;
 	}
@@ -49,14 +61,10 @@ static M2MSpatialUpscaler *m2m_spatial_upscaler(M2MContext *ctx, id<MTLTexture> 
 
 	MTLTextureUsage needed = created.scaler.outputTextureUsage;
 	if ((output.usage & needed) != needed) {
-		MTLTextureDescriptor *staging = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:output.pixelFormat
-		                                                                                   width:output.width
-		                                                                                  height:output.height
-		                                                                               mipmapped:NO];
-		staging.storageMode = MTLStorageModePrivate;
-		staging.usage = needed;
-		created.staging = [ctx.device newTextureWithDescriptor:staging];
+		created.staging = m2m_new_private_texture(ctx, output.pixelFormat, output.width, output.height, needed);
 	}
+	m2m_retire(ctx, current.staging);
+	m2m_retire(ctx, current.scaler);
 	ctx.spatialUpscaler = created;
 	return created;
 }
@@ -72,15 +80,18 @@ int32_t m2m_metalfx_spatial_upscale(int64_t handle, int64_t input_handle, int64_
 		}
 
 		m2m_end_encoding(ctx);
-		id<MTLCommandBuffer> commandBuffer = m2m_command_buffer(ctx);
 		upscaler.scaler.inputContentWidth = input.width;
 		upscaler.scaler.inputContentHeight = input.height;
 		upscaler.scaler.colorTexture = input;
 		upscaler.scaler.outputTexture = upscaler.staging ?: output;
-		[upscaler.scaler encodeToCommandBuffer:commandBuffer];
+		if (ctx.metal4) {
+			[(id<MTL4FXSpatialScaler>)upscaler.scaler encodeToCommandBuffer:m2m_command_buffer4(ctx)];
+		} else {
+			[(id<MTLFXSpatialScaler>)upscaler.scaler encodeToCommandBuffer:m2m_command_buffer(ctx)];
+		}
 
 		if (upscaler.staging) {
-			[m2m_blit_encoder(ctx) copyFromTexture:upscaler.staging toTexture:output];
+			[m2m_copier(ctx) copyFromTexture:upscaler.staging toTexture:output];
 		}
 		return 1;
 	}

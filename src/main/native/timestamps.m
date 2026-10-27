@@ -52,21 +52,17 @@ void m2m_timestamp_write(int64_t ctx_handle, int64_t pool_handle, int64_t index)
 
 		// Committed outside m2m_context_commit: it does not get a submit index of its own, since the frame's
 		// buffer committed after it on the same queue completes later and covers it.
-		m2m_end_encoding(ctx);
-		id<MTLCommandBuffer> commandBuffer = m2m_command_buffer(ctx);
 		__weak M2MContext *weakCtx = ctx;
-		[commandBuffer addCompletedHandler:^(id<MTLCommandBuffer> finished) {
+		m2m_commit_open(ctx, @"mine2metal timestamp", ^(CFTimeInterval gpuStart, CFTimeInterval gpuEnd, NSError *failure) {
 			M2MContext *strongCtx = weakCtx;
-			if (finished.status == MTLCommandBufferStatusError) {
-				m2m_record_error(strongCtx, finished);
+			if (failure) {
+				m2m_record_error(strongCtx, failure);
 			}
 			// An empty command buffer may report no GPU times; completion is then the best estimate.
-			CFTimeInterval end = finished.GPUEndTime > 0 ? finished.GPUEndTime : CACurrentMediaTime();
-			strongCtx.gpuSeconds += finished.GPUEndTime - finished.GPUStartTime;
+			CFTimeInterval end = gpuEnd > 0 ? gpuEnd : CACurrentMediaTime();
+			strongCtx.gpuSeconds += gpuEnd - gpuStart;
 			m2m_timestamp_store(pool, index, (int64_t)(end * 1e9));
-		}];
-		[commandBuffer commit];
-		ctx.commandBuffer = nil;
+		});
 	}
 }
 

@@ -18,5 +18,12 @@
 	"mine2metal.options.frame_interpolation.tooltip": "Menyusul di versi berikutnya. Akan membuat satu frame tambahan di antara setiap pasang frame agar gerakan lebih halus, dengan sedikit tambahan latensi input. Butuh macOS 26 atau lebih baru.",
 	"mine2metal.options.group.diagnostics": "Diagnostik",
 	"mine2metal.options.performance_hud": "HUD Performa Metal",
-	"mine2metal.options.performance_hud.tooltip": "Menampilkan HUD Performa Metal milik Apple di pojok window: frame rate, grafik waktu frame, waktu GPU per frame, dan pemakaian memori. Diukur oleh macOS sendiri, jadi juga menunjukkan hal yang terlewat oleh penghitung game."
+	"mine2metal.options.performance_hud.tooltip": "Menampilkan HUD Performa Metal milik Apple di pojok window: frame rate, grafik waktu frame, waktu GPU per frame, dan pemakaian memori. Diukur oleh macOS sendiri, jadi juga menunjukkan hal yang terlewat oleh penghitung game.",
+	"mine2metal.options.group.api": "API Grafis",
+	"mine2metal.options.metal_version": "Versi Metal",
+	"mine2metal.options.metal_version.auto": "Otomatis",
+	"mine2metal.options.metal_version.metal_4": "Metal 4",
+	"mine2metal.options.metal_version.metal_3": "Metal 3",
+	"mine2metal.options.metal_version.tooltip": "Versi Metal milik Apple yang dipakai game untuk merender. Berlaku setelah game dimulai ulang.\n\nOtomatis: Metal 4 kalau Mac ini mendukungnya (macOS 26 atau lebih baru), selain itu Metal 3.\nMetal 4: model perintah yang lebih baru dengan kerja CPU lebih sedikit per frame; kembali ke Metal 3 kalau tidak tersedia.\nMetal 3: jalan di macOS 14 dan lebih baru.\n\nOpenGL dan Vulkan ada di Video Settings > Graphics API.",
+	"mine2metal.options.metal_version.running": "Sedang dipakai: Metal %s"
 }

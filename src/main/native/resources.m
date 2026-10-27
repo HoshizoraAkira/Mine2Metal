@@ -7,6 +7,7 @@ int64_t m2m_buffer_create(int64_t ctx, int64_t size) {
 		NSUInteger length = ((NSUInteger)(size > 0 ? size : 1) + 15) & ~(NSUInteger)15;
 		id<MTLBuffer> buffer = [m2m_ctx(ctx).device newBufferWithLength:length
 		                                                        options:MTLResourceStorageModeShared];
+		m2m_track(m2m_ctx(ctx), buffer);
 		return buffer ? m2m_retain(buffer) : 0;
 	}
 }
@@ -40,6 +41,8 @@ int64_t m2m_texture_create(int64_t ctx, int32_t pixel_format, int32_t width, int
 		}
 
 		id<MTLTexture> texture = [m2m_ctx(ctx).device newTextureWithDescriptor:descriptor];
+		// Views of it (m2m_texture_view_create) share its memory, so only the texture itself is made resident.
+		m2m_track(m2m_ctx(ctx), texture);
 		return texture ? m2m_retain(texture) : 0;
 	}
 }
@@ -60,6 +63,8 @@ int64_t m2m_sampler_create(int64_t ctx, int32_t address_u, int32_t address_v, in
                            int32_t mip_filter, int32_t max_anisotropy, float max_lod) {
 	@autoreleasepool {
 		MTLSamplerDescriptor *descriptor = [MTLSamplerDescriptor new];
+		// Needed to bind it through a Metal 4 argument table.
+		descriptor.supportArgumentBuffers = YES;
 		descriptor.sAddressMode = address_u == 0 ? MTLSamplerAddressModeRepeat : MTLSamplerAddressModeClampToEdge;
 		descriptor.tAddressMode = address_v == 0 ? MTLSamplerAddressModeRepeat : MTLSamplerAddressModeClampToEdge;
 		descriptor.minFilter = min_filter == 0 ? MTLSamplerMinMagFilterNearest : MTLSamplerMinMagFilterLinear;

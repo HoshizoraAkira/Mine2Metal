@@ -25,6 +25,12 @@ public final class MetalRenderer {
 		return device != null;
 	}
 
+	/** The Metal version the game renders with (3 or 4), or 0 when Metal is not active. */
+	public static int metalVersion() {
+		MetalDevice current = device;
+		return current != null ? current.metalVersion : 0;
+	}
+
 	public static boolean supportsSpatialUpscaling() {
 		MetalDevice current = device;
 		return current != null && current.spatialUpscalingSupported;

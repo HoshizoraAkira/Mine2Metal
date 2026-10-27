@@ -51,6 +51,16 @@ public final class MetalSettingsScreen extends OptionsSubScreen {
 				});
 		performanceHud.active = MetalRenderer.isActive();
 
+		CycleButton<MetalSettings.MetalVersion> metalVersion = CycleButton.builder(MetalOptionTexts::metalVersionName, settings.metalVersion)
+				.withValues(MetalSettings.MetalVersion.values())
+				.withTooltip(value -> Tooltip.create(MetalOptionTexts.metalVersionTooltip()))
+				.create(Component.translatable("mine2metal.options.metal_version"), (button, value) -> {
+					settings.metalVersion = value;
+					settings.save();
+				});
+
+		this.list.addHeader(Component.translatable("mine2metal.options.group.api"));
+		this.list.addSmall(metalVersion, null);
 		this.list.addHeader(Component.translatable("mine2metal.options.group.upscaling"));
 		this.list.addSmall(upscaling, scale);
 		this.list.addHeader(Component.translatable("mine2metal.options.group.frame_generation"));

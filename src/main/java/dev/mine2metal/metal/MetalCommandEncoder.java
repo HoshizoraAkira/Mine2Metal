@@ -60,7 +60,7 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
 	}
 
 	void releaseAfterGpu(long handle) {
-		this.afterGpu(() -> MetalNative.release(handle));
+		this.afterGpu(() -> MetalNative.resourceRelease(this.ctx, handle));
 	}
 
 	void afterGpu(Runnable action) {

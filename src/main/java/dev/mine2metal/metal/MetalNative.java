@@ -95,13 +95,30 @@ final class MetalNative {
 		}
 	}
 
+	static boolean deviceSupportsMetal4(long device) {
+		try {
+			return (int) Functions.DEVICE_SUPPORTS_METAL4.invokeExact(device) != 0;
+		} catch (Throwable t) {
+			throw rethrow(t);
+		}
+	}
+
+	/** As {@link #release}, for anything the GPU may use; with Metal 4 it also leaves the residency set. */
+	static void resourceRelease(long ctx, long object) {
+		try {
+			Functions.RESOURCE_RELEASE.invokeExact(ctx, object);
+		} catch (Throwable t) {
+			throw rethrow(t);
+		}
+	}
+
 	/** Returns the new context; on failure throws with the native error message. */
-	static long contextCreate(long device, boolean debug) throws BackendCreationException {
+	static long contextCreate(long device, boolean debug, boolean metal4) throws BackendCreationException {
 		long ctx;
 		String error;
 		try (Arena arena = Arena.ofConfined()) {
 			MemorySegment buffer = arena.allocate(ERROR_CAPACITY);
-			ctx = (long) Functions.CONTEXT_CREATE.invokeExact(device, debug ? 1 : 0, buffer, (long) ERROR_CAPACITY);
+			ctx = (long) Functions.CONTEXT_CREATE.invokeExact(device, debug ? 1 : 0, metal4 ? 1 : 0, buffer, (long) ERROR_CAPACITY);
 			error = buffer.getString(0);
 		} catch (Throwable t) {
 			throw rethrow(t);
@@ -665,9 +682,11 @@ final class MetalNative {
 		static final MethodHandle DEVICE_VALIDATION_ACTIVE = function("m2m_device_validation_active", JAVA_INT, JAVA_LONG);
 		static final MethodHandle DEVICE_NAME = function("m2m_device_name", JAVA_LONG, JAVA_LONG, ADDRESS, JAVA_LONG);
 		static final MethodHandle DEVICE_SUPPORTS_METAL3 = function("m2m_device_supports_metal3", JAVA_INT, JAVA_LONG);
+		static final MethodHandle DEVICE_SUPPORTS_METAL4 = function("m2m_device_supports_metal4", JAVA_INT, JAVA_LONG);
 		static final MethodHandle RELEASE = function("m2m_release", null, JAVA_LONG);
+		static final MethodHandle RESOURCE_RELEASE = function("m2m_resource_release", null, JAVA_LONG, JAVA_LONG);
 
-		static final MethodHandle CONTEXT_CREATE = function("m2m_context_create", JAVA_LONG, JAVA_LONG, JAVA_INT, ADDRESS, JAVA_LONG);
+		static final MethodHandle CONTEXT_CREATE = function("m2m_context_create", JAVA_LONG, JAVA_LONG, JAVA_INT, JAVA_INT, ADDRESS, JAVA_LONG);
 		static final MethodHandle CONTEXT_ERROR_COUNT = function("m2m_context_error_count", JAVA_LONG, JAVA_LONG);
 		static final MethodHandle CONTEXT_TAKE_ERRORS = function("m2m_context_take_errors", JAVA_INT, JAVA_LONG, ADDRESS, JAVA_LONG);
 		static final MethodHandle CONTEXT_MAX_BUFFER_LENGTH = function("m2m_context_max_buffer_length", JAVA_LONG, JAVA_LONG);

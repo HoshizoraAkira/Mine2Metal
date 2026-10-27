@@ -41,6 +41,8 @@ Launcher resmi:
 | 17 | Frame Interpolation | Terlihat tapi tidak bisa dipilih, dengan tooltip "menyusul" |
 | 20 | Upscaling Temporal, Render Scale 50% lalu 75% dan 100%; diam, lalu putar kamera dan terbang maju | Saat diam, dunia hampir setajam resolusi asli (lebih tajam dari Spatial 50%) dan tepi blok halus tanpa gerigi; saat bergerak tidak ada bayangan ganda di blok. Mob yang bergerak cepat boleh meninggalkan jejak samar. Tangan selalu tajam |
 | 21 | Upscaling Temporal, lalu /tp jauh, ganti dimensi, F11, ubah ukuran window | Tidak ada sisa gambar lama yang tercampur setelah pindah |
+| 22 | Menu Metal → API Grafis → Versi Metal: Otomatis, Metal 4, Metal 3 (restart setelah tiap pilihan) | F3 menunjukkan driver "Metal 4 (mine2metal)" atau "Metal 3 (mine2metal)" sesuai pilihan (Otomatis = Metal 4 di macOS 26+); tooltip menyebut versi yang sedang dipakai; dunia tampil sama di keduanya |
+| 23 | Metal 4: main 10 menit dengan VSync nyala lalu mati, upscaling Spatial dan Temporal | Tidak ada crash, layar hitam, atau kedip; FPS di adegan ramai sama atau lebih tinggi dari Metal 3 |
 | 18 | Menu Metal → Diagnostik → HUD Performa Metal: nyalakan, lalu matikan | Overlay Apple (FPS, grafik waktu frame, waktu GPU, memori) muncul di pojok window dan hilang lagi; tetap muncul setelah F11 atau restart selama opsinya nyala |
 | 19 | Buka inventory dengan kompas dan jam di hotbar, tunggu beberapa detik | Ikon kompas dan jam berganti gambar dengan bersih, tanpa sisa gambar lama di slot |
 

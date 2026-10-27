@@ -20,6 +20,12 @@ public final class Mine2Metal {
 		return MetalSettings.get().enabled;
 	}
 
+	/** The Metal version asked for: {@code -Dmine2metal.metal} wins over the config file. */
+	public static MetalSettings.MetalVersion requestedMetalVersion() {
+		String override = System.getProperty("mine2metal.metal");
+		return override != null ? MetalSettings.parseMetalVersion(override) : MetalSettings.get().metalVersion;
+	}
+
 	public static boolean isSupportedPlatform() {
 		return System.getProperty("os.name").startsWith("Mac") && System.getProperty("os.arch").equals("aarch64");
 	}

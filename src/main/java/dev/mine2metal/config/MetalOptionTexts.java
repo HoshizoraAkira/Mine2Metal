@@ -25,6 +25,18 @@ final class MetalOptionTexts {
 		return Component.translatable("mine2metal.options.upscaling.tooltip");
 	}
 
+	static Component metalVersionName(MetalSettings.MetalVersion value) {
+		return Component.translatable("mine2metal.options.metal_version." + value.name().toLowerCase(Locale.ROOT));
+	}
+
+	/** Explains the choice and names the version running now, which only changes after a restart. */
+	static Component metalVersionTooltip() {
+		int running = MetalRenderer.metalVersion();
+		Component current = running == 0 ? Component.translatable("mine2metal.options.metal_inactive")
+				: Component.translatable("mine2metal.options.metal_version.running", running);
+		return Component.translatable("mine2metal.options.metal_version.tooltip").append("\n\n").append(current);
+	}
+
 	static boolean upscalingAvailable() {
 		return MetalRenderer.supportsSpatialUpscaling() || MetalRenderer.supportsTemporalUpscaling();
 	}

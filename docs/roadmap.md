@@ -89,6 +89,31 @@ Saat uji manual di window hampir 4K dengan vsync mati, game terasa patah-patah w
 
 Perbaikan ("fast sync"): saat vsync mati, layer tetap `displaySyncEnabled`, tapi thread render tidak lagi mempresentasikan. Setiap frame disalin ke salah satu dari tiga slot, lalu ditandai sebagai frame terbaru setelah GPU selesai. Thread present terpisah (`mine2metal present`) menunggu `nextDrawable`, yang berdetak sesuai refresh layar, lalu selalu menampilkan frame terbaru yang sudah selesai. Game tetap merender tanpa batas tanpa pernah menunggu layar, dan layar mendapat satu frame baru di setiap refresh tanpa tearing. Thread dihentikan saat surface dikonfigurasi ulang atau ditutup. Di gametest (window terlihat, vsync mati, render ~1400 FPS) hasilnya 300 frame tampil per 5 detik, gap p50/p95 16,7 ms, 0 terlambat. Uji manual di MacBook Air M3 (window 1920×1243 Retina, Sodium, render distance 16, vsync mati): 153–203 FPS, 300 frame tampil per 5 detik, gap p50/p95 16,7 ms, 0 terlambat (sebelumnya ~200 tampil, p95 33,3 ms, ~90 terlambat). Saat vsync nyala, jalurnya tetap seperti sebelumnya.
 
+## M13 Metal 4 (2026-10-28)
+
+Satu kode native dengan dua model perintah. Default **Otomatis**: Metal 4 kalau `MTLGPUFamilyMetal4` didukung dan macOS ≥ 26, selain itu Metal 3. Bisa dipaksa di menu Metal → API Grafis → Versi Metal (berlaku setelah restart), di `metalVersion=` pada `config/mine2metal.properties`, atau `-Dmine2metal.metal=auto|metal4|metal3`. Kalau Metal 4 gagal dibuat, otomatis kembali ke Metal 3. Vulkan/OpenGL tetap lewat Graphics API vanilla.
+
+| Bagian | Metal 3 | Metal 4 |
+|---|---|---|
+| Antrean & command buffer | `MTLCommandQueue`, 1 command buffer per submit | `MTL4CommandQueue`, command buffer dari `MTL4CommandAllocator` yang kembali ke pool lewat commit feedback |
+| Residency | otomatis | satu `MTLResidencySet` untuk semua buffer/tekstur (ditambah saat dibuat, dilepas lewat `m2m_resource_release`; tulisan dikunci karena resource juga dibuat dari thread worker); drawable lewat `CAMetalLayer.residencySet` |
+| Binding | `setVertexBuffer`/`setFragmentTexture`/`setBytes` | satu `MTL4ArgumentTable` dipakai stage vertex dan fragment (alamat GPU, `gpuResourceID`); konstanta kecil lewat ring buffer upload 1 MB; binding ditangkap per draw (dicek dengan prototipe) |
+| Hazard | dilacak otomatis | barrier penuh di awal dan akhir setiap encoder (konservatif, setara serialisasi Metal 3); barrier antar salinan dalam satu encoder |
+| Salin/blit | `MTLBlitCommandEncoder` | `MTL4ComputeCommandEncoder` (selector sama) |
+| Present | `presentDrawable`, `encodeWaitForEvent` | `waitForDrawable`/`signalDrawable` dan event di level antrean |
+| MetalFX | `MTLFXSpatialScaler`/`MTLFXTemporalScaler` | `MTL4FX…` dibuat dengan `MTL4Compiler` |
+| Umur resource | command buffer menahannya | command buffer Metal 4 **tidak** menahan resource; tekstur internal yang diganti disimpan sampai 3 submit kemudian (`m2m_retire`) |
+| Pipeline | `MTLRenderPipelineState` dari `MTLDevice` | sama (terbukti bisa dipakai di encoder Metal 4) |
+
+Debug: `MINE2METAL_TRACE=1` mencatat setiap commit, wait/signal antrean, dan completion. Bug pertama yang ketemu: indeks tunggu negatif dari Java (`recordingIndex - 3` di awal) jadi angka raksasa di `uint64` dan menunggu selamanya; sekarang dibatasi ke submit yang sudah di-commit.
+
+Hasil (gametest, Apple M3, macOS 27):
+- Seluruh gametest lolos di bawah Metal API validation dengan Metal 4, tanpa error validasi.
+- Screenshot Metal 4 vs Metal 3: judul 0,00% piksel beda; dunia 0,07–0,26% (animasi awan/air); temporal 0,7–0,8% (history MetalFX).
+- Adegan berat (1920×1080, render distance 16, Sodium): waktu CPU per frame p50 **~0,75 ms** (Metal 4) vs ~1,6 ms (Metal 3), FPS 928 vs 413. Ini manfaat utama Metal 4: biaya CPU per draw lebih kecil tanpa pelacakan hazard.
+- MacBook Air tanpa kipas: run kedua selalu lebih lambat karena panas (urutan dibalik, hasil temporal ikut terbalik: 1038 vs 521 FPS). Perbandingan harus bergantian urutan; angka FPS tunggal di sini belum bisa dipakai sebagai klaim.
+- Belum dioptimalkan: barrier penuh di tiap encoder bisa dipersempit (misalnya render→render hanya fragment→fragment).
+
 ## Fitur khas Metal (setelah M5)
 
 | Fitur | API Apple | macOS | Input yang dibutuhkan | Kesulitan |

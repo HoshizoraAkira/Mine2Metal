@@ -25,7 +25,16 @@ public final class MetalSettings {
 		TEMPORAL
 	}
 
+	public enum MetalVersion {
+		/** Metal 4 when this Mac supports it (macOS 26, Apple M1 or later), otherwise Metal 3. */
+		AUTO,
+		METAL_4,
+		METAL_3
+	}
+
 	public boolean enabled = true;
+	/** Read once at startup, when the backend is created. */
+	public MetalVersion metalVersion = MetalVersion.AUTO;
 	public Upscaling upscaling = Upscaling.OFF;
 	/** Percent of the window's width and height the world is rendered at while upscaling. */
 	public int renderScale = 75;
@@ -69,6 +78,7 @@ public final class MetalSettings {
 			return settings;
 		}
 		settings.enabled = Boolean.parseBoolean(values.getProperty("enabled", "true"));
+		settings.metalVersion = parseMetalVersion(values.getProperty("metalVersion", "auto"));
 		settings.upscaling = parseUpscaling(values.getProperty("upscaling", "off"));
 		settings.renderScale = clampScale(parseInt(values.getProperty("renderScale"), settings.renderScale));
 		settings.frameInterpolation = Boolean.parseBoolean(values.getProperty("frameInterpolation", "false"));
@@ -85,6 +95,11 @@ public final class MetalSettings {
 				# Vulkan there (and restarting) bypasses it, as does enabled=false. -Dmine2metal.enabled overrides this.
 				enabled=%s
 				#
+				# auto: Metal 4 when this Mac supports it (macOS 26 or newer), otherwise Metal 3
+				# metal4 / metal3: that version; metal4 falls back to Metal 3 where it is not available
+				# Applies after a restart. -Dmine2metal.metal=auto|metal4|metal3 overrides this.
+				metalVersion=%s
+				#
 				# off: render the world at full resolution
 				# spatial: render the world at renderScale percent and upscale it with MetalFX, frame by frame
 				# temporal: the same, combining several frames for more detail; at 100 it only smooths edges
@@ -96,7 +111,7 @@ public final class MetalSettings {
 				#
 				# Apple's Metal Performance HUD (frame rate, frame times, GPU time, memory) over the game window.
 				performanceHud=%s
-				""".formatted(this.enabled, this.upscaling.name().toLowerCase(Locale.ROOT), this.renderScale, this.frameInterpolation,
+				""".formatted(this.enabled, metalVersionName(this.metalVersion), this.upscaling.name().toLowerCase(Locale.ROOT), this.renderScale, this.frameInterpolation,
 						this.performanceHud);
 		Path file = file();
 		try {
@@ -110,6 +125,22 @@ public final class MetalSettings {
 	public static int clampScale(int percent) {
 		int stepped = Math.round(percent / (float) RENDER_SCALE_STEP) * RENDER_SCALE_STEP;
 		return Math.clamp(stepped, MIN_RENDER_SCALE, MAX_RENDER_SCALE);
+	}
+
+	public static MetalVersion parseMetalVersion(String value) {
+		return switch (value.trim().toLowerCase(Locale.ROOT)) {
+			case "metal4", "4" -> MetalVersion.METAL_4;
+			case "metal3", "3" -> MetalVersion.METAL_3;
+			default -> MetalVersion.AUTO;
+		};
+	}
+
+	private static String metalVersionName(MetalVersion version) {
+		return switch (version) {
+			case AUTO -> "auto";
+			case METAL_4 -> "metal4";
+			case METAL_3 -> "metal3";
+		};
 	}
 
 	private static Upscaling parseUpscaling(String value) {

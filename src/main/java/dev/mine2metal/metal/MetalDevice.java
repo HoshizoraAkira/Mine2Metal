@@ -44,8 +44,12 @@ final class MetalDevice implements GpuDeviceBackend {
 	@Nullable MetalSurface surface;
 
 	/** Takes ownership of ctx. */
-	MetalDevice(long ctx, String name, boolean validation, boolean labels) {
+	/** 3 or 4: which Metal command model the context uses. */
+	final int metalVersion;
+
+	MetalDevice(long ctx, String name, boolean validation, boolean labels, int metalVersion) {
 		this.ctx = ctx;
+		this.metalVersion = metalVersion;
 		this.validation = validation;
 		this.encoder = new MetalCommandEncoder(ctx, labels);
 		this.spatialUpscalingSupported = MetalNative.metalFxSpatialSupported(ctx);
@@ -56,7 +60,7 @@ final class MetalDevice implements GpuDeviceBackend {
 		this.info = new DeviceInfo(
 				name,
 				"Apple",
-				"Metal 3 (mine2metal)",
+				"Metal " + metalVersion + " (mine2metal)",
 				true,
 				"Metal",
 				1.0F,

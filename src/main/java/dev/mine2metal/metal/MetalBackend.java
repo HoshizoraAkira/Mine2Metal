@@ -31,6 +31,21 @@ public final class MetalBackend implements GpuBackend {
 		return SDLVideo.SDL_CreateWindow(title, width, height, flags | SDLVideo.SDL_WINDOW_METAL);
 	}
 
+	/** The configured version, or Metal 4 by default, where this Mac has it. */
+	private static boolean useMetal4(long device, String name) {
+		boolean supported = MetalNative.deviceSupportsMetal4(device);
+		return switch (Mine2Metal.requestedMetalVersion()) {
+			case AUTO -> supported;
+			case METAL_3 -> false;
+			case METAL_4 -> {
+				if (!supported) {
+					Mine2Metal.LOGGER.warn("Metal 4 was requested, but {} on this macOS only supports Metal 3", name);
+				}
+				yield supported;
+			}
+		};
+	}
+
 	@Override
 	public GpuDevice createDevice(GpuDebugOptions debugOptions) throws BackendCreationException {
 		long device = MetalNative.deviceCreate(debugOptions.useValidationLayers());
@@ -47,9 +62,22 @@ public final class MetalBackend implements GpuBackend {
 			if (debugOptions.useValidationLayers() && !validation) {
 				Mine2Metal.LOGGER.warn("Metal API validation was requested but could not be enabled; set MTL_DEBUG_LAYER=1 before launching instead");
 			}
-			long ctx = MetalNative.contextCreate(device, validation || debugOptions.logLevel() > 0);
-			Mine2Metal.LOGGER.info("Rendering with Metal 3 on {}{}", name, validation ? " with API validation" : "");
-			MetalDevice metal = new MetalDevice(ctx, name, validation, debugOptions.useLabels());
+			boolean debug = validation || debugOptions.logLevel() > 0;
+			boolean metal4 = useMetal4(device, name);
+			long ctx;
+			try {
+				ctx = MetalNative.contextCreate(device, debug, metal4);
+			} catch (BackendCreationException e) {
+				if (!metal4) {
+					throw e;
+				}
+				Mine2Metal.LOGGER.warn("Could not set up Metal 4, using Metal 3: {}", e.getMessage());
+				metal4 = false;
+				ctx = MetalNative.contextCreate(device, debug, false);
+			}
+			int version = metal4 ? 4 : 3;
+			Mine2Metal.LOGGER.info("Rendering with Metal {} on {}{}", version, name, validation ? " with API validation" : "");
+			MetalDevice metal = new MetalDevice(ctx, name, validation, debugOptions.useLabels(), version);
 			MetalRenderer.deviceCreated(metal);
 			return new FrontendGpuDevice(metal);
 		} finally {

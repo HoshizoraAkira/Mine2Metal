@@ -2,6 +2,9 @@
 
 #include "m2m_context.h"
 
+// See m2m_context.h: the Metal 4 branches run only when ctx.metal4 is set, which requires macOS 26.
+#pragma clang diagnostic ignored "-Wunguarded-availability-new"
+
 // MetalFX temporal upscaling. Minecraft draws no motion vectors, so a pass derives them from depth and the camera:
 // each pixel is unprojected with this frame's matrices and projected with the previous frame's. That is exact for
 // the world, which does not move; moving entities get the camera's motion only. The same pass copies depth into a
@@ -46,7 +49,8 @@ typedef struct {
 } M2MMotionParams;
 
 @interface M2MTemporalUpscaler : NSObject
-@property(nonatomic, strong) id<MTLFXTemporalScaler> scaler;
+// An MTLFXTemporalScaler, or an MTL4FXTemporalScaler with Metal 4.
+@property(nonatomic, strong) id<MTLFXTemporalScalerBase> scaler;
 @property(nonatomic) NSUInteger inputWidth, inputHeight, outputWidth, outputHeight;
 @property(nonatomic) MTLPixelFormat colorFormat, outputFormat;
 @property(nonatomic, strong) id<MTLTexture> motion;
@@ -59,24 +63,17 @@ typedef struct {
 @end
 
 int32_t m2m_metalfx_temporal_supported(int64_t ctx) {
-	return [MTLFXTemporalScalerDescriptor supportsDevice:m2m_ctx(ctx).device] ? 1 : 0;
+	M2MContext *context = m2m_ctx(ctx);
+	if (context.metal4) {
+		return [MTLFXTemporalScalerDescriptor supportsMetal4FX:context.device] ? 1 : 0;
+	}
+	return [MTLFXTemporalScalerDescriptor supportsDevice:context.device] ? 1 : 0;
 }
 
 void m2m_metalfx_temporal_scale_range(int64_t ctx, float *min_scale, float *max_scale) {
 	id<MTLDevice> device = m2m_ctx(ctx).device;
 	*min_scale = [MTLFXTemporalScalerDescriptor supportedInputContentMinScaleForDevice:device];
 	*max_scale = [MTLFXTemporalScalerDescriptor supportedInputContentMaxScaleForDevice:device];
-}
-
-static id<MTLTexture> m2m_private_texture(M2MContext *ctx, MTLPixelFormat format, NSUInteger width, NSUInteger height,
-                                          MTLTextureUsage usage) {
-	MTLTextureDescriptor *descriptor = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:format
-	                                                                                    width:width
-	                                                                                   height:height
-	                                                                                mipmapped:NO];
-	descriptor.storageMode = MTLStorageModePrivate;
-	descriptor.usage = usage;
-	return [ctx.device newTextureWithDescriptor:descriptor];
 }
 
 static M2MTemporalUpscaler *m2m_temporal_upscaler(M2MContext *ctx, id<MTLTexture> color, id<MTLTexture> output) {
@@ -98,7 +95,11 @@ static M2MTemporalUpscaler *m2m_temporal_upscaler(M2MContext *ctx, id<MTLTexture
 	descriptor.outputTextureFormat = output.pixelFormat;
 
 	M2MTemporalUpscaler *created = [M2MTemporalUpscaler new];
-	created.scaler = [descriptor newTemporalScalerWithDevice:ctx.device];
+	if (ctx.metal4) {
+		created.scaler = [descriptor newTemporalScalerWithDevice:ctx.device compiler:ctx.compiler];
+	} else {
+		created.scaler = [descriptor newTemporalScalerWithDevice:ctx.device];
+	}
 	if (!created.scaler) {
 		return nil;
 	}
@@ -108,14 +109,18 @@ static M2MTemporalUpscaler *m2m_temporal_upscaler(M2MContext *ctx, id<MTLTexture
 	created.outputHeight = output.height;
 	created.colorFormat = color.pixelFormat;
 	created.outputFormat = output.pixelFormat;
-	created.motion = m2m_private_texture(ctx, MTLPixelFormatRG16Float, color.width, color.height,
+	created.motion = m2m_new_private_texture(ctx, MTLPixelFormatRG16Float, color.width, color.height,
 	                                     MTLTextureUsageRenderTarget | created.scaler.motionTextureUsage);
-	created.depth = m2m_private_texture(ctx, MTLPixelFormatDepth32Float, color.width, color.height,
+	created.depth = m2m_new_private_texture(ctx, MTLPixelFormatDepth32Float, color.width, color.height,
 	                                    MTLTextureUsageRenderTarget | created.scaler.depthTextureUsage);
 	MTLTextureUsage needed = created.scaler.outputTextureUsage;
 	if ((output.usage & needed) != needed) {
-		created.staging = m2m_private_texture(ctx, output.pixelFormat, output.width, output.height, needed);
+		created.staging = m2m_new_private_texture(ctx, output.pixelFormat, output.width, output.height, needed);
 	}
+	m2m_retire(ctx, current.motion);
+	m2m_retire(ctx, current.depth);
+	m2m_retire(ctx, current.staging);
+	m2m_retire(ctx, current.scaler);
 	ctx.temporalUpscaler = created;
 	return created;
 }
@@ -164,9 +169,6 @@ int32_t m2m_metalfx_temporal_upscale(int64_t handle, int64_t color_handle, int64
 		rebuilt = rebuilt || upscaler != ctx.lastTemporalUpscaler;
 		ctx.lastTemporalUpscaler = upscaler;
 
-		m2m_end_encoding(ctx);
-		id<MTLCommandBuffer> commandBuffer = m2m_command_buffer(ctx);
-
 		MTLRenderPassDescriptor *pass = [MTLRenderPassDescriptor renderPassDescriptor];
 		pass.colorAttachments[0].texture = upscaler.motion;
 		pass.colorAttachments[0].loadAction = MTLLoadActionDontCare;
@@ -174,19 +176,17 @@ int32_t m2m_metalfx_temporal_upscale(int64_t handle, int64_t color_handle, int64
 		pass.depthAttachment.texture = upscaler.depth;
 		pass.depthAttachment.loadAction = MTLLoadActionDontCare;
 		pass.depthAttachment.storeAction = MTLStoreActionStore;
-		id<MTLRenderCommandEncoder> encoder = [commandBuffer renderCommandEncoderWithDescriptor:pass];
-		encoder.label = @"mine2metal motion vectors";
-		ctx.renderEncoderCount++;
+		id<M2MRenderCommands> encoder = m2m_open_render_encoder(ctx, pass, @"mine2metal motion vectors");
 		[encoder setRenderPipelineState:motionPipeline];
 		[encoder setDepthStencilState:ctx.motionDepthState];
-		[encoder setFragmentTexture:sourceDepth atIndex:0];
+		m2m_bind_texture(ctx, 0, sourceDepth, NO, YES);
 		M2MMotionParams params;
 		memcpy(&params, matrices, sizeof(params));
-		[encoder setFragmentBytes:&params length:sizeof(params) atIndex:0];
+		m2m_bind_bytes(ctx, 0, &params, sizeof(params), NO, YES);
 		[encoder drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
-		[encoder endEncoding];
+		m2m_end_encoding(ctx);
 
-		id<MTLFXTemporalScaler> scaler = upscaler.scaler;
+		id<MTLFXTemporalScalerBase> scaler = upscaler.scaler;
 		scaler.colorTexture = color;
 		scaler.depthTexture = upscaler.depth;
 		scaler.motionTexture = upscaler.motion;
@@ -199,10 +199,14 @@ int32_t m2m_metalfx_temporal_upscale(int64_t handle, int64_t color_handle, int64
 		scaler.motionVectorScaleY = 1.0f;
 		scaler.depthReversed = NO;
 		scaler.reset = reset != 0 || rebuilt;
-		[scaler encodeToCommandBuffer:commandBuffer];
+		if (ctx.metal4) {
+			[(id<MTL4FXTemporalScaler>)scaler encodeToCommandBuffer:m2m_command_buffer4(ctx)];
+		} else {
+			[(id<MTLFXTemporalScaler>)scaler encodeToCommandBuffer:m2m_command_buffer(ctx)];
+		}
 
 		if (upscaler.staging) {
-			[m2m_blit_encoder(ctx) copyFromTexture:upscaler.staging toTexture:output];
+			[m2m_copier(ctx) copyFromTexture:upscaler.staging toTexture:output];
 		}
 		return 1;
 	}

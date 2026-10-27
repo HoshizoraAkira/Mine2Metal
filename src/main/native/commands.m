@@ -2,7 +2,7 @@
 
 void m2m_blit_buffer(int64_t ctx, int64_t src, int64_t src_offset, int64_t dst, int64_t dst_offset, int64_t size) {
 	@autoreleasepool {
-		[m2m_blit_encoder(m2m_ctx(ctx)) copyFromBuffer:m2m_borrow(src)
+		[m2m_copier(m2m_ctx(ctx)) copyFromBuffer:m2m_borrow(src)
 		                                  sourceOffset:(NSUInteger)src_offset
 		                                      toBuffer:m2m_borrow(dst)
 		                             destinationOffset:(NSUInteger)dst_offset
@@ -14,7 +14,7 @@ void m2m_blit_buffer_to_texture(int64_t ctx, int64_t buffer, int64_t offset, int
                                 int64_t bytes_per_image, int64_t texture, int32_t layer, int32_t mip, int32_t x,
                                 int32_t y, int32_t width, int32_t height) {
 	@autoreleasepool {
-		[m2m_blit_encoder(m2m_ctx(ctx)) copyFromBuffer:m2m_borrow(buffer)
+		[m2m_copier(m2m_ctx(ctx)) copyFromBuffer:m2m_borrow(buffer)
 		                                  sourceOffset:(NSUInteger)offset
 		                             sourceBytesPerRow:(NSUInteger)bytes_per_row
 		                           sourceBytesPerImage:(NSUInteger)bytes_per_image
@@ -29,7 +29,7 @@ void m2m_blit_buffer_to_texture(int64_t ctx, int64_t buffer, int64_t offset, int
 void m2m_blit_texture_to_buffer(int64_t ctx, int64_t texture, int32_t mip, int32_t x, int32_t y, int32_t width,
                                 int32_t height, int64_t buffer, int64_t offset, int64_t bytes_per_row) {
 	@autoreleasepool {
-		[m2m_blit_encoder(m2m_ctx(ctx)) copyFromTexture:m2m_borrow(texture)
+		[m2m_copier(m2m_ctx(ctx)) copyFromTexture:m2m_borrow(texture)
 		                                    sourceSlice:0
 		                                    sourceLevel:(NSUInteger)mip
 		                                   sourceOrigin:MTLOriginMake((NSUInteger)x, (NSUInteger)y, 0)
@@ -44,7 +44,7 @@ void m2m_blit_texture_to_buffer(int64_t ctx, int64_t texture, int32_t mip, int32
 void m2m_blit_texture_to_texture(int64_t ctx, int64_t src, int64_t dst, int32_t mip, int32_t dst_x, int32_t dst_y,
                                  int32_t src_x, int32_t src_y, int32_t width, int32_t height) {
 	@autoreleasepool {
-		[m2m_blit_encoder(m2m_ctx(ctx)) copyFromTexture:m2m_borrow(src)
+		[m2m_copier(m2m_ctx(ctx)) copyFromTexture:m2m_borrow(src)
 		                                    sourceSlice:0
 		                                    sourceLevel:(NSUInteger)mip
 		                                   sourceOrigin:MTLOriginMake((NSUInteger)src_x, (NSUInteger)src_y, 0)
@@ -137,15 +137,10 @@ void m2m_pass_open(int64_t handle, const char *label) {
 		ctx.passWidth = sizing.width;
 		ctx.passHeight = sizing.height;
 
-		m2m_end_encoding(ctx);
-		ctx.renderEncoder = [m2m_command_buffer(ctx) renderCommandEncoderWithDescriptor:pass];
-		ctx.renderEncoderCount++;
-		if (label) {
-			ctx.renderEncoder.label = @(label);
-		}
+		id<M2MRenderCommands> encoder = m2m_open_render_encoder(ctx, pass, label ? @(label) : nil);
 		ctx.renderEncoderAttachments = attachments;
 		// renderpearl's front faces are counter-clockwise in GL window space; flipping vertex Y mirrors that.
-		[ctx.renderEncoder setFrontFacingWinding:MTLWindingClockwise];
+		[encoder setFrontFacingWinding:MTLWindingClockwise];
 	}
 }
 

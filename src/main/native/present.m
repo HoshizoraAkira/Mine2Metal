@@ -2,6 +2,9 @@
 
 #include "m2m_context.h"
 
+// See m2m_context.h: the Metal 4 branches run only when ctx.metal4 is set, which requires macOS 26.
+#pragma clang diagnostic ignored "-Wunguarded-availability-new"
+
 // Slots the newest finished frame is copied into when vsync is off: usually one being written, one holding the
 // latest finished frame and one being shown.
 static const int32_t M2M_LATEST_SLOTS = 3;
@@ -27,21 +30,53 @@ static id<MTLTexture> m2m_matching_texture(M2MContext *ctx, id slot, id<MTLTextu
 	    current.pixelFormat == source.pixelFormat) {
 		return current;
 	}
-	MTLTextureDescriptor *descriptor = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:source.pixelFormat
-	                                                                                    width:source.width
-	                                                                                   height:source.height
-	                                                                                mipmapped:NO];
-	descriptor.storageMode = MTLStorageModePrivate;
-	descriptor.usage = MTLTextureUsageShaderRead;
-	return [ctx.device newTextureWithDescriptor:descriptor];
+	m2m_retire(ctx, current);
+	return m2m_new_private_texture(ctx, source.pixelFormat, source.width, source.height, MTLTextureUsageShaderRead);
 }
 
-static void m2m_draw_to_drawable(M2MContext *ctx, id<MTLCommandBuffer> commandBuffer, id<MTLTexture> source,
-                                 id<CAMetalDrawable> drawable) {
+// Draws source onto drawable and presents it, on the present queue. The draw first waits for waitEvent to reach
+// waitValue, and signalEvent reaches signalValue once it is done (either event may be nil).
+static void m2m_present_on_queue(M2MContext *ctx, id<MTLTexture> source, id<CAMetalDrawable> drawable, id<MTLEvent> waitEvent,
+                                 uint64_t waitValue, id<MTLEvent> signalEvent, uint64_t signalValue, M2MCompletion completion) {
 	MTLRenderPassDescriptor *pass = [MTLRenderPassDescriptor renderPassDescriptor];
 	pass.colorAttachments[0].texture = drawable.texture;
 	pass.colorAttachments[0].loadAction = MTLLoadActionDontCare;
 	pass.colorAttachments[0].storeAction = MTLStoreActionStore;
+	m2m_record_presented(ctx, drawable);
+
+	if (ctx.metal4) {
+		id<MTL4CommandBuffer> commandBuffer = m2m_present_command_buffer4(ctx);
+		MTL4RenderPassDescriptor *pass4 = [MTL4RenderPassDescriptor new];
+		pass4.colorAttachments[0] = pass.colorAttachments[0];
+		id<MTL4RenderCommandEncoder> encoder = [commandBuffer renderCommandEncoderWithDescriptor:pass4];
+		encoder.label = @"mine2metal present";
+		[encoder barrierAfterQueueStages:MTLStageAll beforeStages:MTLStageFragment visibilityOptions:MTL4VisibilityOptionDevice];
+		[encoder setRenderPipelineState:ctx.presentPipeline];
+		[ctx.presentArgumentTable setTexture:source.gpuResourceID atIndex:0];
+		[ctx.presentArgumentTable setSamplerState:ctx.presentSampler.gpuResourceID atIndex:0];
+		[encoder setArgumentTable:ctx.presentArgumentTable atStages:MTLRenderStageFragment];
+		[encoder drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
+		[encoder endEncoding];
+		if (waitEvent) {
+			if (m2m_tracing()) {
+				NSLog(@"mine2metal trace: present queue waits for %@ = %llu", waitEvent.label, waitValue);
+			}
+			[ctx.presentQueue4 waitForEvent:waitEvent value:waitValue];
+		}
+		[ctx.presentQueue4 waitForDrawable:drawable];
+		m2m_commit_present4(ctx, commandBuffer, completion);
+		[ctx.presentQueue4 signalDrawable:drawable];
+		[drawable present];
+		if (signalEvent) {
+			[ctx.presentQueue4 signalEvent:signalEvent value:signalValue];
+		}
+		return;
+	}
+
+	id<MTLCommandBuffer> commandBuffer = [ctx.presentQueue commandBuffer];
+	if (waitEvent) {
+		[commandBuffer encodeWaitForEvent:waitEvent value:waitValue];
+	}
 	id<MTLRenderCommandEncoder> encoder = [commandBuffer renderCommandEncoderWithDescriptor:pass];
 	encoder.label = @"mine2metal present";
 	[encoder setRenderPipelineState:ctx.presentPipeline];
@@ -49,6 +84,16 @@ static void m2m_draw_to_drawable(M2MContext *ctx, id<MTLCommandBuffer> commandBu
 	[encoder setFragmentSamplerState:ctx.presentSampler atIndex:0];
 	[encoder drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
 	[encoder endEncoding];
+	if (signalEvent) {
+		[commandBuffer encodeSignalEvent:signalEvent value:signalValue];
+	}
+	if (completion) {
+		[commandBuffer addCompletedHandler:^(id<MTLCommandBuffer> finished) {
+			completion(finished.GPUStartTime, finished.GPUEndTime, finished.error);
+		}];
+	}
+	[commandBuffer presentDrawable:drawable];
+	[commandBuffer commit];
 }
 
 // With vsync off the game renders as fast as it can while this thread shows, once per refresh, the newest frame
@@ -81,20 +126,18 @@ static void m2m_present_loop(M2MContext *ctx, CAMetalLayer *layer, dispatch_sema
 			ctx.presentingSlots |= 1u << slot;
 			[ctx.latestLock unlock];
 
-			id<MTLCommandBuffer> commandBuffer = [ctx.presentQueue commandBuffer];
-			m2m_draw_to_drawable(ctx, commandBuffer, source, drawable);
 			__weak M2MContext *weakCtx = ctx;
-			[commandBuffer addCompletedHandler:^(id<MTLCommandBuffer> finished) {
-				(void)finished;
-				M2MContext *strongCtx = weakCtx;
-				[strongCtx.latestLock lock];
-				strongCtx.presentingSlots &= ~(1u << slot);
-				[strongCtx.latestLock broadcast];
-				[strongCtx.latestLock unlock];
-			}];
-			m2m_record_presented(ctx, drawable);
-			[commandBuffer presentDrawable:drawable];
-			[commandBuffer commit];
+			m2m_present_on_queue(ctx, source, drawable, nil, 0, nil, 0,
+			                     ^(CFTimeInterval gpuStart, CFTimeInterval gpuEnd, NSError *failure) {
+				                     (void)gpuStart;
+				                     (void)gpuEnd;
+				                     (void)failure;
+				                     M2MContext *strongCtx = weakCtx;
+				                     [strongCtx.latestLock lock];
+				                     strongCtx.presentingSlots &= ~(1u << slot);
+				                     [strongCtx.latestLock broadcast];
+				                     [strongCtx.latestLock unlock];
+			                     });
 			shownFrame = frame;
 		}
 	}
@@ -141,6 +184,11 @@ void m2m_layer_configure(int64_t ctx, int64_t layer_handle, int32_t width, int32
 		layer.displaySyncEnabled = YES;
 		layer.drawableSize = CGSizeMake(width, height);
 		context.layerVsync = vsync != 0;
+		if (context.metal4 && context.residentLayer != layer) {
+			// The layer's drawables are resident through its own set.
+			[context.presentQueue4 addResidencySet:layer.residencySet];
+			context.residentLayer = layer;
+		}
 
 		if (!context.layerVsync) {
 			m2m_start_present_thread(context, layer);
@@ -196,13 +244,13 @@ static int32_t m2m_publish_latest(M2MContext *ctx, id<MTLTexture> source) {
 	uint64_t frame = ++ctx.frameCounter;
 	[ctx.latestLock unlock];
 
-	m2m_end_encoding(ctx);
-	id<MTLCommandBuffer> commandBuffer = m2m_command_buffer(ctx);
-	[m2m_blit_encoder(ctx) copyFromTexture:source toTexture:target];
+	[m2m_copier(ctx) copyFromTexture:source toTexture:target];
 	m2m_end_encoding(ctx);
 	__weak M2MContext *weakCtx = ctx;
-	[commandBuffer addCompletedHandler:^(id<MTLCommandBuffer> finished) {
-		(void)finished;
+	m2m_on_completed(ctx, ^(CFTimeInterval gpuStart, CFTimeInterval gpuEnd, NSError *failure) {
+		(void)gpuStart;
+		(void)gpuEnd;
+		(void)failure;
 		M2MContext *strongCtx = weakCtx;
 		[strongCtx.latestLock lock];
 		strongCtx.writingSlot = M2M_NO_SLOT;
@@ -212,7 +260,7 @@ static int32_t m2m_publish_latest(M2MContext *ctx, id<MTLTexture> source) {
 		}
 		[strongCtx.latestLock broadcast];
 		[strongCtx.latestLock unlock];
-	}];
+	});
 	return 1;
 }
 
@@ -222,8 +270,6 @@ static int32_t m2m_present_synced(M2MContext *ctx, CAMetalLayer *layer, id<MTLTe
 	if (!drawable) {
 		return 0;
 	}
-	m2m_record_presented(ctx, drawable);
-
 	// The frame is copied out on the render queue and drawn to the drawable on a separate present queue. A
 	// command buffer that renders to a drawable waits on the GPU until the compositor releases it, often until
 	// the next refresh; on the render queue that wait would hold up every later frame while the GPU idles.
@@ -232,23 +278,16 @@ static int32_t m2m_present_synced(M2MContext *ctx, CAMetalLayer *layer, id<MTLTe
 	id<MTLTexture> staging = m2m_matching_texture(ctx, ctx.presentStaging[slot], source);
 	ctx.presentStaging[slot] = staging;
 
-	m2m_end_encoding(ctx);
-	id<MTLCommandBuffer> renderCommands = m2m_command_buffer(ctx);
 	if (present > 2) {
 		// This slot was last read by present - 2.
-		[renderCommands encodeWaitForEvent:ctx.presentDone value:(uint64_t)(present - 2)];
+		m2m_wait_for_event(ctx, ctx.presentDone, (uint64_t)(present - 2));
 	}
-	[m2m_blit_encoder(ctx) copyFromTexture:source toTexture:staging];
+	[m2m_copier(ctx) copyFromTexture:source toTexture:staging];
 	m2m_end_encoding(ctx);
-	[renderCommands encodeSignalEvent:ctx.frameReady value:(uint64_t)present];
+	m2m_signal_event(ctx, ctx.frameReady, (uint64_t)present);
 
-	id<MTLCommandBuffer> presentCommands = [ctx.presentQueue commandBuffer];
-	[presentCommands encodeWaitForEvent:ctx.frameReady value:(uint64_t)present];
-	m2m_draw_to_drawable(ctx, presentCommands, staging, drawable);
-	[presentCommands encodeSignalEvent:ctx.presentDone value:(uint64_t)present];
-	[presentCommands presentDrawable:drawable];
 	// Safe to commit before the render queue's buffer: the GPU holds it at the frameReady wait.
-	[presentCommands commit];
+	m2m_present_on_queue(ctx, staging, drawable, ctx.frameReady, (uint64_t)present, ctx.presentDone, (uint64_t)present, nil);
 
 	ctx.presentCount = present;
 	return 1;

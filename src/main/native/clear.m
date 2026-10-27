@@ -1,10 +1,11 @@
 #include "m2m_context.h"
 
 // Clears part of a texture: Metal load actions only clear whole attachments, so a triangle covering the attachment is
-// drawn with the region as its scissor rect. The vertex stage places it at the clear depth.
+// drawn with the region as its scissor rect. The vertex stage places it at the clear depth. Depth and color use
+// different slots, since Metal 4 shares bindings between the stages.
 static NSString *const M2M_CLEAR_SHADER = @"#include <metal_stdlib>\n"
                                            "using namespace metal;\n"
-                                           "vertex float4 m2m_clear_vertex(uint vid [[vertex_id]], constant float &depth [[buffer(0)]]) {\n"
+                                           "vertex float4 m2m_clear_vertex(uint vid [[vertex_id]], constant float &depth [[buffer(1)]]) {\n"
                                            "    float2 p = float2((vid << 1) & 2, vid & 2);\n"
                                            "    return float4(p * 2.0 - 1.0, depth, 1.0);\n"
                                            "}\n"
@@ -101,10 +102,7 @@ int32_t m2m_clear_region(int64_t handle, int64_t color_texture, float r, float g
 			}
 		}
 
-		m2m_end_encoding(ctx);
-		id<MTLRenderCommandEncoder> encoder = [m2m_command_buffer(ctx) renderCommandEncoderWithDescriptor:pass];
-		encoder.label = @"mine2metal partial clear";
-		ctx.renderEncoderCount++;
+		id<M2MRenderCommands> encoder = m2m_open_render_encoder(ctx, pass, @"mine2metal partial clear");
 		[encoder setRenderPipelineState:pipeline];
 		if (depthTarget) {
 			[encoder setDepthStencilState:ctx.clearDepthState];
@@ -112,13 +110,13 @@ int32_t m2m_clear_region(int64_t handle, int64_t color_texture, float r, float g
 		MTLScissorRect rect = {(NSUInteger)left, (NSUInteger)top, (NSUInteger)(right - left), (NSUInteger)(bottom - top)};
 		[encoder setScissorRect:rect];
 		float clearDepth = (float)depth;
-		[encoder setVertexBytes:&clearDepth length:sizeof(clearDepth) atIndex:0];
+		m2m_bind_bytes(ctx, 1, &clearDepth, sizeof(clearDepth), YES, NO);
 		if (color) {
 			float clearColor[4] = {r, g, b, a};
-			[encoder setFragmentBytes:clearColor length:sizeof(clearColor) atIndex:0];
+			m2m_bind_bytes(ctx, 0, clearColor, sizeof(clearColor), NO, YES);
 		}
 		[encoder drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
-		[encoder endEncoding];
+		m2m_end_encoding(ctx);
 		return 1;
 	}
 }

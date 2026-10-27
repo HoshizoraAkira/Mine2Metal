@@ -18,5 +18,12 @@
 	"mine2metal.options.frame_interpolation.tooltip": "Coming in a later version. Will generate an extra frame between each rendered pair for smoother motion, at the cost of some input latency. Needs macOS 26 or newer.",
 	"mine2metal.options.group.diagnostics": "Diagnostics",
 	"mine2metal.options.performance_hud": "Metal Performance HUD",
-	"mine2metal.options.performance_hud.tooltip": "Shows Apple's Metal Performance HUD in the corner of the window: frame rate, frame time graph, GPU time per frame and memory use. Measured by macOS itself, so it also shows what the game's own counters miss."
+	"mine2metal.options.performance_hud.tooltip": "Shows Apple's Metal Performance HUD in the corner of the window: frame rate, frame time graph, GPU time per frame and memory use. Measured by macOS itself, so it also shows what the game's own counters miss.",
+	"mine2metal.options.group.api": "Graphics API",
+	"mine2metal.options.metal_version": "Metal Version",
+	"mine2metal.options.metal_version.auto": "Automatic",
+	"mine2metal.options.metal_version.metal_4": "Metal 4",
+	"mine2metal.options.metal_version.metal_3": "Metal 3",
+	"mine2metal.options.metal_version.tooltip": "Which version of Apple's Metal the game renders with. Takes effect after restarting the game.\n\nAutomatic: Metal 4 when this Mac supports it (macOS 26 or newer), otherwise Metal 3.\nMetal 4: newer command model with less CPU work per frame; falls back to Metal 3 where it is not available.\nMetal 3: works on macOS 14 and newer.\n\nOpenGL and Vulkan are under Video Settings > Graphics API.",
+	"mine2metal.options.metal_version.running": "Running now: Metal %s"
 }
