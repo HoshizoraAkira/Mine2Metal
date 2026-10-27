@@ -81,6 +81,7 @@ int64_t m2m_context_create(int64_t device_handle, int32_t debug, char *error, in
 		ctx.presentStaging = [NSMutableArray arrayWithObjects:[NSNull null], [NSNull null], nil];
 		ctx.inFlight = [NSMutableArray array];
 		ctx.gpuSecondsByLabel = [NSMutableDictionary dictionary];
+		ctx.presentedTimes = [NSMutableArray array];
 		ctx.firstInFlightIndex = 1;
 		if (!ctx.queue || !ctx.presentQueue) {
 			m2m_copy_string(error, error_capacity, @"Could not create a command queue");

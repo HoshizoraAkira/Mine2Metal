@@ -89,6 +89,12 @@ public class MetalWorldGameTest implements FabricClientGameTest {
 			context.takeScreenshot("mine2metal-world-above");
 			LOGGER.info("Average FPS from above (vsync off, uncapped): {}", averageFps(context));
 
+			if (Boolean.getBoolean("mine2metal.test.pacing")) {
+				measurePacing(context, false);
+				measurePacing(context, true);
+				singleplayer.getServer().runCommand(returnAbove);
+			}
+
 			if (backend.equals("Metal")) {
 				checkSpatialUpscaling(context, singleplayer, returnAbove);
 			}
@@ -244,6 +250,27 @@ public class MetalWorldGameTest implements FabricClientGameTest {
 		if (!condition) {
 			throw new AssertionError(message);
 		}
+	}
+
+	/**
+	 * Turns the camera steadily while flying forward for ten seconds, which is when uneven frame pacing shows; the
+	 * numbers are in the frame stats ({@code -Dmine2metal.stats=true}) logged during the segment.
+	 */
+	private static void measurePacing(ClientGameTestContext context, boolean vsync) {
+		context.runOnClient(client -> {
+			client.options.enableVsync().set(vsync);
+			client.options.framerateLimit().set(Options.UNLIMITED_FRAMERATE_CUTOFF);
+			client.options.inactivityFpsLimit().set(InactivityFpsLimit.MINIMIZED);
+		});
+		context.waitTicks(20);
+		LOGGER.info("Pacing segment start (vsync {})", vsync);
+		context.getInput().holdKey(options -> options.keyUp);
+		for (int tick = 0; tick < 200; tick++) {
+			context.getInput().lookAt(tick * 6.0F, 15.0F);
+			context.waitTick();
+		}
+		context.getInput().releaseKey(options -> options.keyUp);
+		LOGGER.info("Pacing segment end (vsync {})", vsync);
 	}
 
 	/** Uncaps the frame rate and averages Minecraft's per-second FPS counter over a few seconds. */

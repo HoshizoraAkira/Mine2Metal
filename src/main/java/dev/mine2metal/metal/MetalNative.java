@@ -483,6 +483,17 @@ final class MetalNative {
 		}
 	}
 
+	/** On-screen times (seconds) of frames presented since the last call. */
+	static double[] takePresentedTimes(long ctx) {
+		try (Arena arena = Arena.ofConfined()) {
+			MemorySegment out = arena.allocate(JAVA_DOUBLE, 4096);
+			long count = (long) Functions.TAKE_PRESENTED_TIMES.invokeExact(ctx, out, 4096L);
+			return out.asSlice(0, count * JAVA_DOUBLE.byteSize()).toArray(JAVA_DOUBLE);
+		} catch (Throwable t) {
+			throw rethrow(t);
+		}
+	}
+
 	static void layerConfigure(long ctx, long layer, int width, int height, boolean vsync) {
 		try {
 			Functions.LAYER_CONFIGURE.invokeExact(ctx, layer, width, height, vsync ? 1 : 0);
@@ -630,6 +641,7 @@ final class MetalNative {
 		static final MethodHandle METALFX_SPATIAL_SUPPORTED = function("m2m_metalfx_spatial_supported", JAVA_INT, JAVA_LONG);
 		static final MethodHandle METALFX_SPATIAL_UPSCALE = function("m2m_metalfx_spatial_upscale", JAVA_INT, JAVA_LONG, JAVA_LONG, JAVA_LONG);
 
+		static final MethodHandle TAKE_PRESENTED_TIMES = function("m2m_take_presented_times", JAVA_LONG, JAVA_LONG, ADDRESS, JAVA_LONG);
 		static final MethodHandle LAYER_CONFIGURE = function("m2m_layer_configure", null, JAVA_LONG, JAVA_LONG, JAVA_INT, JAVA_INT, JAVA_INT);
 		static final MethodHandle PRESENT = function("m2m_present", JAVA_INT, JAVA_LONG, JAVA_LONG, JAVA_LONG);
 

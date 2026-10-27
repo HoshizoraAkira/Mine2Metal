@@ -6,6 +6,11 @@
 static const double M2M_PACING_MARGIN = 0.9;
 // After this many refreshes without the presented handler, stop waiting for it.
 static const double M2M_STALE_PRESENT_REFRESHES = 4.0;
+// With vsync off, presents allowed on their way to the screen at once. One is not enough: the frame after a
+// shown one cannot be rendered, copied and composited before the next refresh, so only every other refresh
+// would get a new frame. Two keep every refresh fed while leaving the third drawable free, so nextDrawable
+// never blocks.
+static const int32_t M2M_MAX_PRESENTS_IN_FLIGHT = 2;
 
 void m2m_layer_configure(int64_t ctx, int64_t layer_handle, int32_t width, int32_t height, int32_t vsync) {
 	@autoreleasepool {
@@ -27,16 +32,38 @@ void m2m_layer_configure(int64_t ctx, int64_t layer_handle, int32_t width, int32
 	}
 }
 
+int64_t m2m_take_presented_times(int64_t handle, double *out, int64_t capacity) {
+	M2MContext *ctx = m2m_ctx(handle);
+	int64_t count = 0;
+	@synchronized(ctx.presentedTimes) {
+		for (NSNumber *time in ctx.presentedTimes) {
+			if (count >= capacity) {
+				break;
+			}
+			out[count++] = time.doubleValue;
+		}
+		[ctx.presentedTimes removeAllObjects];
+	}
+	return count;
+}
+
 int32_t m2m_present(int64_t handle, int64_t layer_handle, int64_t texture) {
 	@autoreleasepool {
 		M2MContext *ctx = m2m_ctx(handle);
 		// Without vsync the game renders faster than the display shows frames. Presenting each one would leave
-		// every drawable queued at the compositor and block nextDrawable, so a frame goes out only once the previous
-		// one has reached the screen (or a refresh has passed, in case the presented handler never comes).
+		// every drawable queued at the compositor and block nextDrawable, so frames go out about once per refresh
+		// and only while fewer than M2M_MAX_PRESENTS_IN_FLIGHT are still on their way to the screen.
 		CFTimeInterval now = CACurrentMediaTime();
 		if (!ctx.layerVsync) {
-			BOOL previousOnScreen = !ctx.awaitingDisplay || now - ctx.lastPresentTime > ctx.refreshInterval * M2M_STALE_PRESENT_REFRESHES;
-			if (!previousOnScreen || now - ctx.lastPresentTime < ctx.refreshInterval * M2M_PACING_MARGIN) {
+			int32_t inFlight;
+			@synchronized(ctx) {
+				if (now - ctx.lastPresentTime > ctx.refreshInterval * M2M_STALE_PRESENT_REFRESHES) {
+					// The presented handler can be skipped (window hidden, display asleep); do not wait for it forever.
+					ctx.presentsInFlight = 0;
+				}
+				inFlight = ctx.presentsInFlight;
+			}
+			if (inFlight >= M2M_MAX_PRESENTS_IN_FLIGHT || now - ctx.lastPresentTime < ctx.refreshInterval * M2M_PACING_MARGIN) {
 				return 2;
 			}
 		}
@@ -47,11 +74,22 @@ int32_t m2m_present(int64_t handle, int64_t layer_handle, int64_t texture) {
 			return 0;
 		}
 		ctx.lastPresentTime = now;
-		ctx.awaitingDisplay = YES;
+		@synchronized(ctx) {
+			ctx.presentsInFlight += 1;
+		}
 		__weak M2MContext *weakCtx = ctx;
 		[drawable addPresentedHandler:^(id<MTLDrawable> shown) {
-			(void)shown;
-			weakCtx.awaitingDisplay = NO;
+			M2MContext *strongCtx = weakCtx;
+			@synchronized(strongCtx) {
+				strongCtx.presentsInFlight = MAX(0, strongCtx.presentsInFlight - 1);
+			}
+			// presentedTime is 0 for a drawable the compositor never showed; recorded too, as dropped frames.
+			CFTimeInterval presented = shown.presentedTime;
+			@synchronized(strongCtx.presentedTimes) {
+				if (strongCtx.presentedTimes.count < 4096) {
+					[strongCtx.presentedTimes addObject:@(presented)];
+				}
+			}
 		}];
 
 		// The frame is copied out on the render queue and drawn to the drawable on a separate present queue. A

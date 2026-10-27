@@ -158,6 +158,10 @@ M2M_EXPORT int32_t m2m_metalfx_spatial_upscale(int64_t ctx, int64_t input, int64
 
 // Presentation
 
+// Copies up to capacity on-screen times (seconds) of presented frames since the last call, 0 for frames the
+// compositor dropped; returns how many.
+M2M_EXPORT int64_t m2m_take_presented_times(int64_t ctx, double *out, int64_t capacity);
+
 M2M_EXPORT void m2m_layer_configure(int64_t ctx, int64_t layer, int32_t width, int32_t height, int32_t vsync);
 // Draws texture onto the layer's next drawable and schedules its present on the current
 // command buffer. Returns 1 when presented, 0 when no drawable is available (for example a

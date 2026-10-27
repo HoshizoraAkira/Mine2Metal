@@ -36,8 +36,11 @@
 @property(nonatomic, strong) id<MTLEvent> presentDone;
 @property(nonatomic, strong) NSMutableArray *presentStaging;
 @property(nonatomic) int64_t presentCount;
-// Set while the last presented drawable has not reached the screen; cleared from Core Animation's thread.
-@property(atomic) BOOL awaitingDisplay;
+// Presents sent but not yet shown (or dropped) by the compositor; changed under @synchronized(ctx) because Core
+// Animation's thread decrements it.
+@property(nonatomic) int32_t presentsInFlight;
+// When presented drawables actually reached the screen (CACurrentMediaTime seconds), for the frame stats.
+@property(nonatomic, strong) NSMutableArray<NSNumber *> *presentedTimes;
 
 // MetalFX spatial scaler state (metalfx.m), kept untyped here so other files need not import MetalFX.
 @property(nonatomic, strong) id spatialUpscaler;

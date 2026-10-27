@@ -23,6 +23,8 @@ final class FrameStats {
 	private long waitNanos;
 	private long presentNanos;
 	private int frames;
+	private long lastFrameEnd = System.nanoTime();
+	private final it.unimi.dsi.fastutil.longs.LongArrayList frameTimes = new it.unimi.dsi.fastutil.longs.LongArrayList();
 	private long copyBytes;
 	private int copies;
 	private int cpuCopies;
@@ -76,6 +78,8 @@ final class FrameStats {
 	void endFrame() {
 		this.frames++;
 		long now = System.nanoTime();
+		this.frameTimes.add(now - this.lastFrameEnd);
+		this.lastFrameEnd = now;
 		long elapsed = now - this.windowStart;
 		if (elapsed < INTERVAL_NANOS) {
 			return;
@@ -93,6 +97,7 @@ final class FrameStats {
 				String.format("%.1f", (double) (encoders[1] - this.encodersAtStart[1]) / this.frames),
 				String.format("%.1f", (double) (encoders[2] - this.encodersAtStart[2]) / this.frames));
 
+		this.logPacing();
 		Mine2Metal.LOGGER.info("Metal transfers per frame: {} buffer copies ({} on CPU, {} KB), {} buffer writes ({} on CPU, {} KB), {} KB texture writes; "
 						+ "blits per {} frames: {}",
 				String.format("%.1f", (double) this.copies / this.frames), String.format("%.1f", (double) this.cpuCopies / this.frames),
@@ -117,6 +122,45 @@ final class FrameStats {
 		this.cpuWrites = 0;
 		this.blitTargets.clear();
 		this.textureBytes = 0L;
+	}
+
+	/**
+	 * Smoothness, which averages hide: CPU frame times, and the gaps between frames actually reaching the screen. A gap
+	 * well over the refresh interval is a refresh that showed the previous frame again, which reads as a stutter.
+	 */
+	private void logPacing() {
+		long[] times = this.frameTimes.toLongArray();
+		this.frameTimes.clear();
+		java.util.Arrays.sort(times);
+
+		double[] presented = MetalNative.takePresentedTimes(this.ctx);
+		double[] shown = java.util.Arrays.stream(presented).filter(time -> time > 0.0).toArray();
+		int dropped = presented.length - shown.length;
+		double[] gaps = new double[Math.max(0, shown.length - 1)];
+		for (int i = 1; i < shown.length; i++) {
+			gaps[i - 1] = (shown[i] - shown[i - 1]) * 1000.0;
+		}
+		java.util.Arrays.sort(gaps);
+		double typical = gaps.length > 0 ? gaps[gaps.length / 2] : 0.0;
+		int repeats = 0;
+		for (double gap : gaps) {
+			if (gap > typical * 1.5) {
+				repeats++;
+			}
+		}
+
+		Mine2Metal.LOGGER.info("Metal pacing: CPU frame p50 {} / p99 {} / max {} ms; shown {} frames ({} dropped), gap p50 {} / p95 {} / max {} ms, {} late",
+				ms(percentile(times, 0.5)), ms(percentile(times, 0.99)), ms(times.length > 0 ? times[times.length - 1] : 0L), shown.length, dropped,
+				String.format("%.1f", typical), String.format("%.1f", gaps.length > 0 ? gaps[(int) (gaps.length * 0.95)] : 0.0),
+				String.format("%.1f", gaps.length > 0 ? gaps[gaps.length - 1] : 0.0), repeats);
+	}
+
+	private static long percentile(long[] sorted, double fraction) {
+		return sorted.length == 0 ? 0L : sorted[Math.min(sorted.length - 1, (int) (sorted.length * fraction))];
+	}
+
+	private static String ms(long nanos) {
+		return String.format("%.2f", nanos / 1e6);
 	}
 
 	private void logPassTimes() {
