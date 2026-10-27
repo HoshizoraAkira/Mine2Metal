@@ -104,7 +104,7 @@ final class MetalRenderPass implements RenderPassBackend {
 
 	@Override
 	public void setVertexBuffer(int slot, GpuBufferSlice slice) {
-		MetalNative.renderVertexBuffer(this.ctx, MetalRenderPipeline.VERTEX_BUFFER_BASE_SLOT + slot, ((MetalBuffer) slice.buffer()).handle, slice.offset());
+		MetalNative.renderVertexBuffer(this.ctx, MetalRenderPipeline.VERTEX_BUFFER_BASE_SLOT + slot, ((MetalBuffer) slice.buffer()).use(), slice.offset());
 	}
 
 	@Override
@@ -122,7 +122,7 @@ final class MetalRenderPass implements RenderPassBackend {
 			warnIndexedFan();
 			return;
 		}
-		MetalNative.renderDrawIndexed(this.ctx, this.pipeline.primitive, this.indexSize, this.indexBuffer.handle, (long) firstIndex * this.indexSize,
+		MetalNative.renderDrawIndexed(this.ctx, this.pipeline.primitive, this.indexSize, this.indexBuffer.use(), (long) firstIndex * this.indexSize,
 				indexCount, instanceCount, baseVertex, firstInstance);
 	}
 
@@ -140,7 +140,7 @@ final class MetalRenderPass implements RenderPassBackend {
 			warnIndexedFan();
 			return;
 		}
-		MetalNative.renderMultiDrawIndexed(this.ctx, this.pipeline.primitive, this.indexSize, this.indexBuffer.handle, MemoryUtil.memAddress(indexOffsets),
+		MetalNative.renderMultiDrawIndexed(this.ctx, this.pipeline.primitive, this.indexSize, this.indexBuffer.use(), MemoryUtil.memAddress(indexOffsets),
 				MemoryUtil.memAddress(indexCounts), MemoryUtil.memAddress(baseVertices), drawCount);
 	}
 
@@ -153,8 +153,8 @@ final class MetalRenderPass implements RenderPassBackend {
 			warnIndexedFan();
 			return;
 		}
-		MetalNative.renderDrawIndexedIndirect(this.ctx, this.pipeline.primitive, this.indexSize, this.indexBuffer.handle,
-				((MetalBuffer) commands.buffer()).handle, commands.offset(), drawCount, INDEXED_INDIRECT_STRIDE);
+		MetalNative.renderDrawIndexedIndirect(this.ctx, this.pipeline.primitive, this.indexSize, this.indexBuffer.use(),
+				((MetalBuffer) commands.buffer()).use(), commands.offset(), drawCount, INDEXED_INDIRECT_STRIDE);
 	}
 
 	@Override
@@ -193,7 +193,7 @@ final class MetalRenderPass implements RenderPassBackend {
 		if (!this.prepareDraw()) {
 			return;
 		}
-		MetalNative.renderDrawIndirect(this.ctx, this.pipeline.primitive, ((MetalBuffer) commands.buffer()).handle, commands.offset(), drawCount,
+		MetalNative.renderDrawIndirect(this.ctx, this.pipeline.primitive, ((MetalBuffer) commands.buffer()).use(), commands.offset(), drawCount,
 				INDIRECT_STRIDE);
 	}
 
@@ -213,7 +213,7 @@ final class MetalRenderPass implements RenderPassBackend {
 		for (int i = 1; i <= triangles; i++) {
 			data.put(firstVertex).put(firstVertex + i).put(firstVertex + i + 1);
 		}
-		MetalNative.renderDrawIndexed(this.ctx, MetalFormats.PRIMITIVE_TRIANGLE, Integer.BYTES, ((MetalBuffer) indices.slice().buffer()).handle,
+		MetalNative.renderDrawIndexed(this.ctx, MetalFormats.PRIMITIVE_TRIANGLE, Integer.BYTES, ((MetalBuffer) indices.slice().buffer()).use(),
 				indices.slice().offset(), triangles * 3, instanceCount, 0, firstInstance);
 	}
 
@@ -252,12 +252,12 @@ final class MetalRenderPass implements RenderPassBackend {
 			if (current.uniformType(index) == UniformType.TEXEL_BUFFER) {
 				BindGroupLayout.UniformDescription description = current.uniforms.get(index);
 				GpuFormat format = description.gpuFormat();
-				long texture = MetalNative.bufferTextureCreate(buffer.handle, slice.offset(), slice.length(), MetalFormats.pixelFormat(format),
+				long texture = MetalNative.bufferTextureCreate(buffer.use(), slice.offset(), slice.length(), MetalFormats.pixelFormat(format),
 						format.blockSize());
 				MetalNative.renderTexture(this.ctx, index, texture, 0L);
 				this.encoder.releaseAfterGpu(texture);
 			} else {
-				MetalNative.renderBuffer(this.ctx, index, buffer.handle, slice.offset());
+				MetalNative.renderBuffer(this.ctx, index, buffer.use(), slice.offset());
 			}
 		} else {
 			throw new IllegalArgumentException("Unsupported uniform value " + value.getClass().getName() + " at slot " + index);

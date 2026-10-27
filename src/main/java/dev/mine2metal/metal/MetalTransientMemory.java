@@ -133,6 +133,12 @@ final class MetalTransientMemory implements TransientMemory {
 		}
 
 		@Override
+		boolean canRename() {
+			// The memory belongs to the pool's block, shared with other allocations.
+			return false;
+		}
+
+		@Override
 		public GpuBufferSlice.MappedView map(long offset, long length, boolean read, boolean write) {
 			throw new IllegalStateException("Transient buffers cannot be mapped");
 		}

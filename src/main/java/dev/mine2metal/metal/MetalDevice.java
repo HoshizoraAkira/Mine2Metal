@@ -95,7 +95,11 @@ final class MetalDevice implements GpuDeviceBackend {
 
 	@Override
 	public GpuBuffer createBuffer(@Nullable Supplier<String> label, int usage, long size) {
-		return new MetalBuffer(this.encoder, this.newBuffer(size), usage, size);
+		MetalBuffer buffer = new MetalBuffer(this.encoder, this.newBuffer(size), usage, size);
+		if (FrameStats.ENABLED && label != null) {
+			buffer.label = label.get();
+		}
+		return buffer;
 	}
 
 	@Override

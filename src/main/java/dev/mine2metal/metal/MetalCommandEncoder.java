@@ -14,6 +14,7 @@ import dev.mine2metal.Mine2Metal;
 import com.mojang.renderpearl.api.textures.GpuTextureView;
 import org.joml.Vector4f;
 import org.joml.Vector4fc;
+import org.lwjgl.system.MemoryUtil;
 import org.jspecify.annotations.Nullable;
 
 import java.nio.ByteBuffer;
@@ -240,22 +241,48 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
 
 	@Override
 	public void writeToBuffer(GpuBufferSlice destination, ByteBuffer data) {
-		// Staged through a blit so the write lands in command order, after any earlier GPU reads of the old contents.
+		MetalBuffer target = (MetalBuffer) destination.buffer();
+		// Shared memory: a buffer no GPU work can still touch is written in place, which saves a blit encoder. A busy
+		// buffer whose contents are replaced entirely moves to fresh memory first, which is just as cheap.
+		boolean replacesAll = destination.offset() == 0L && data.remaining() == target.size();
+		boolean idle = target.isIdle(MetalNative.contextCompleted(this.ctx));
+		if (!idle && replacesAll && target.canRename()) {
+			target.rename(this.ctx);
+			idle = true;
+		}
+		if (idle) {
+			MemoryUtil.memCopy(MemoryUtil.memAddress(data), target.address + destination.offset(), data.remaining());
+			if (this.stats != null) {
+				this.stats.addBufferWrite(target, data.remaining(), false);
+			}
+			return;
+		}
+
+		// Otherwise staged through a blit, so the write lands in command order after earlier GPU reads of the old contents.
 		if (this.stats != null) {
-			this.stats.addBufferWrite(data.remaining());
+			this.stats.addBufferWrite(target, data.remaining(), true);
 		}
 		GpuBufferSlice staging = this.transientMemory.uploadGpu(data, 4L, GpuBuffer.USAGE_COPY_SRC);
-		MetalNative.blitBuffer(this.ctx, ((MetalBuffer) staging.buffer()).handle, staging.offset(), ((MetalBuffer) destination.buffer()).handle,
-				destination.offset(), data.remaining());
+		MetalNative.blitBuffer(this.ctx, ((MetalBuffer) staging.buffer()).handle, staging.offset(), target.use(), destination.offset(), data.remaining());
 	}
 
 	@Override
 	public void copyToBuffer(GpuBufferSlice source, GpuBufferSlice target) {
-		if (this.stats != null) {
-			this.stats.addBufferCopy(source.length());
+		MetalBuffer from = (MetalBuffer) source.buffer();
+		MetalBuffer to = (MetalBuffer) target.buffer();
+		long completed = MetalNative.contextCompleted(this.ctx);
+		if (from.isIdle(completed) && to.isIdle(completed)) {
+			MemoryUtil.memCopy(from.address + source.offset(), to.address + target.offset(), source.length());
+			if (this.stats != null) {
+				this.stats.addBufferCopy(to, source.length(), false);
+			}
+			return;
 		}
-		MetalNative.blitBuffer(this.ctx, ((MetalBuffer) source.buffer()).handle, source.offset(), ((MetalBuffer) target.buffer()).handle, target.offset(),
-				source.length());
+
+		if (this.stats != null) {
+			this.stats.addBufferCopy(to, source.length(), true);
+		}
+		MetalNative.blitBuffer(this.ctx, from.use(), source.offset(), to.use(), target.offset(), source.length());
 	}
 
 	@Override
@@ -277,7 +304,7 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
 		int texelSize = destination.getFormat().blockSize();
 		long skip = (sourceX + (long) sourceY * sourceWidth) * texelSize;
 		long bytesPerRow = (long) sourceWidth * texelSize;
-		MetalNative.blitBufferToTexture(this.ctx, ((MetalBuffer) source.buffer()).handle, source.offset() + skip, bytesPerRow, bytesPerRow * sourceHeight,
+		MetalNative.blitBufferToTexture(this.ctx, ((MetalBuffer) source.buffer()).use(), source.offset() + skip, bytesPerRow, bytesPerRow * sourceHeight,
 				((MetalTexture) destination).handle, layer, mipLevel, destX, destY, copyWidth, copyHeight);
 	}
 
@@ -291,7 +318,7 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
 			int height) {
 		this.flushPendingClears();
 		GpuFormat format = source.getFormat();
-		MetalNative.blitTextureToBuffer(this.ctx, ((MetalTexture) source).handle, mipLevel, x, y, width, height, ((MetalBuffer) destination).handle, offset,
+		MetalNative.blitTextureToBuffer(this.ctx, ((MetalTexture) source).handle, mipLevel, x, y, width, height, ((MetalBuffer) destination).use(), offset,
 				(long) width * format.blockSize());
 		this.afterGpu(callback);
 	}

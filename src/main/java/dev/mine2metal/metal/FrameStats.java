@@ -24,9 +24,13 @@ final class FrameStats {
 	private int frames;
 	private long copyBytes;
 	private int copies;
+	private int cpuCopies;
 	private long writeBytes;
 	private int writes;
+	private int cpuWrites;
 	private long textureBytes;
+	/** Buffers that still needed a blit, by label, to show what keeps blit encoders alive. */
+	private final java.util.Map<String, Integer> blitTargets = new java.util.TreeMap<>();
 
 	FrameStats(long ctx) {
 		this.ctx = ctx;
@@ -36,14 +40,28 @@ final class FrameStats {
 		this.waitNanos += nanos;
 	}
 
-	void addBufferCopy(long bytes) {
+	void addBufferCopy(MetalBuffer target, long bytes, boolean blit) {
 		this.copyBytes += bytes;
 		this.copies++;
+		this.countPath(target, blit, "copy");
+		if (!blit) {
+			this.cpuCopies++;
+		}
 	}
 
-	void addBufferWrite(long bytes) {
+	void addBufferWrite(MetalBuffer target, long bytes, boolean blit) {
 		this.writeBytes += bytes;
 		this.writes++;
+		this.countPath(target, blit, "write");
+		if (!blit) {
+			this.cpuWrites++;
+		}
+	}
+
+	private void countPath(MetalBuffer target, boolean blit, String kind) {
+		if (blit) {
+			this.blitTargets.merge(kind + " to " + (target.label != null ? target.label : "?"), 1, Integer::sum);
+		}
 	}
 
 	void addTextureWrite(long bytes) {
@@ -68,9 +86,12 @@ final class FrameStats {
 				String.format("%.1f", (double) (encoders[1] - this.encodersAtStart[1]) / this.frames),
 				String.format("%.1f", (double) (encoders[2] - this.encodersAtStart[2]) / this.frames));
 
-		Mine2Metal.LOGGER.info("Metal transfers per frame: {} buffer copies ({} KB), {} buffer writes ({} KB), {} KB texture writes",
-				String.format("%.1f", (double) this.copies / this.frames), this.copyBytes / 1024 / this.frames,
-				String.format("%.1f", (double) this.writes / this.frames), this.writeBytes / 1024 / this.frames, this.textureBytes / 1024 / this.frames);
+		Mine2Metal.LOGGER.info("Metal transfers per frame: {} buffer copies ({} on CPU, {} KB), {} buffer writes ({} on CPU, {} KB), {} KB texture writes; "
+						+ "blits per {} frames: {}",
+				String.format("%.1f", (double) this.copies / this.frames), String.format("%.1f", (double) this.cpuCopies / this.frames),
+				this.copyBytes / 1024 / this.frames,
+				String.format("%.1f", (double) this.writes / this.frames), String.format("%.1f", (double) this.cpuWrites / this.frames),
+				this.writeBytes / 1024 / this.frames, this.textureBytes / 1024 / this.frames, this.frames, this.blitTargets);
 		if (PASS_TIMES) {
 			this.logPassTimes();
 		}
@@ -82,8 +103,11 @@ final class FrameStats {
 		this.frames = 0;
 		this.copyBytes = 0L;
 		this.copies = 0;
+		this.cpuCopies = 0;
 		this.writeBytes = 0L;
 		this.writes = 0;
+		this.cpuWrites = 0;
+		this.blitTargets.clear();
 		this.textureBytes = 0L;
 	}
 

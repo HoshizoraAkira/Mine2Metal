@@ -11,7 +11,7 @@
 | **M4 Pipeline & shader** ✅ | SPIR-V → MSL via SPIRV-Cross (MSL 3.0, flip Y vertex, uniform `i` → slot `i`, push constant slot 26, vertex buffer slot 27+), library per shader, `MTLRenderPipelineState` per format depth/stencil (dibuat saat dipakai), `MTLDepthStencilState` | 0 pipeline gagal; 204 pipeline butuh total 254 ms (SPIR-V → MSL) + 37 ms (MSL → library) di 4–8 thread, jadi cache MSL ke disk tidak diperlukan |
 | **M5 Render pass** ✅ (sebagian) | Binding uniform buffer, tekstur + sampler, texel buffer, push constant, scissor, draw / drawIndexed / multiDraw / indirect (di-batch native: 1 panggilan FFM per batch), fan non-indexed → index, wireframe, cull, depth bias, present terpacu per refresh saat vsync mati. Belum: fan ber-index, multi-draw interleaved, gl_DrawID | Layar judul ([screenshot](screenshots/m5-title-screen.png)) dan dunia singleplayer tampil; selisih piksel vs OpenGL kecil (lihat bawah) |
 | **M6 Sodium** ✅ | Sodium 0.9.3-beta.1 berjalan di Metal lewat jalur `gl_multidraw` miliknya (multi-draw langsung dengan array terpisah, pas dengan Metal), jadi mixin `DrawBackend` tidak diperlukan. Fitur Sodium yang dicek `backendName` "OpenGL" hanya fitur khusus GL (no-error context, WGL) dan memang mati dengan benar | Dunia dengan Sodium tampil identik dengan GL ([dunia](screenshots/m6-world-sodium.png), [dari atas](screenshots/m6-world-above-sodium.png), [malam](screenshots/m6-world-night-sodium.png), [jauh](screenshots/m7-world-far-sodium.png)) |
-| **M7 Performa** (sebagian) | Selesai: clear ditunda dan dilipat ke load action pass berikutnya, pass berurutan dengan attachment sama digabung dalam satu encoder, alat ukur (`-Dmine2metal.stats`, `-Dmine2metal.passTimes`, label encoder untuk Instruments). Berikutnya: kurangi blit encoder (~3/frame), `MTLResidencySet`, depth memoryless, jalur GPU-driven (ICB) | Render encoder turun 8,9 → 3,1 per frame; GPU 0,4–0,5 ms/frame di skenario berat; lihat tabel di bawah |
+| **M7 Performa** ✅ | Clear ditunda dan dilipat ke load action pass berikutnya; pass berurutan dengan attachment sama digabung dalam satu encoder; tulis/salin buffer lewat CPU saat buffer tidak dipakai GPU (memori shared), atau buffer "di-rename" ke memori cadangan saat seluruh isinya diganti; alat ukur (`-Dmine2metal.stats`, `-Dmine2metal.passTimes`, label encoder untuk Instruments). Sengaja tidak dikerjakan: `MTLResidencySet` dan depth memoryless (alasan di bawah) | Per frame: render encoder 8,9 → 3,1, blit encoder 3,1 → 0; GPU 0,3–0,4 ms/frame di skenario ringan |
 | **M8 Ketahanan** | Validation layer, resize/fullscreen/device loss, toggle config, pemaketan dylib | Stabil untuk pemakai |
 
 ## Hasil uji otomatis (2026-10-27)
@@ -23,18 +23,27 @@
 
 | Konfigurasi | Ringan (FPS) | Berat (FPS) |
 |---|---|---|
-| Metal + Sodium | 1625 / 1675 | 1178 / 1453 |
+| Metal + Sodium, setelah M7 lengkap | 2045 – 2772 | 664 – 1528 |
+| Metal + Sodium, setelah lipat clear + gabung pass | 1625 / 1675 | 1178 / 1453 |
+| Metal + Sodium, sebelum M7 | 1112 – 1378 | 80 – 150 |
 | OpenGL + Sodium | 321 – 488 | 200 – 273 |
-| Metal tanpa Sodium | 1794 | 416 |
+| Metal tanpa Sodium (setelah lipat clear + gabung pass) | 1794 | 416 |
 | OpenGL tanpa Sodium | 224 | 244 |
 
-Sebelum optimasi M7, skenario berat di Metal hanya 80–150 FPS (lebih lambat dari GL). Metal System Trace menunjukkan GPU sebagian besar berada di *performance state* "Minimum": pekerjaan GPU yang terpecah (sekitar 5 pass clear terpisah dan 9 render encoder per frame) membuat governor tidak menaikkan clock. Setelah clear dilipat dan pass digabung, mode lambat itu tidak muncul lagi dalam 5 kali jalan.
+Rentang yang lebar di baris pertama berasal dari suhu: setelah sekitar satu jam benchmark, MacBook Air (tanpa kipas) masuk thermal state "fair", dan waktu GPU per frame naik pelan-pelan dari 0,78 ke 2,5 ms tanpa perubahan beban. Angka tertinggi diukur saat thermal state "nominal".
+
+Sebelum optimasi M7, skenario berat di Metal lebih lambat dari GL. Metal System Trace menunjukkan GPU sebagian besar berada di *performance state* "Minimum": pekerjaan GPU yang terpecah (sekitar 5 pass clear terpisah, 9 render encoder, dan 3 blit encoder per frame) membuat governor tidak menaikkan clock.
+
+Keputusan berbasis data:
+- **Cache MSL ke disk tidak dibuat**: 204 pipeline hanya butuh ~290 ms total, terbagi ke beberapa thread.
+- **`MTLResidencySet` ditunda**: residency set mengurangi overhead CPU/driver, sedangkan setelah M7 render thread menghabiskan 55–70% waktu frame menunggu GPU. FPS tidak akan naik dari situ.
+- **Depth memoryless / store `DontCare` tidak dibuat**: renderpearl tidak memberi informasi masa hidup attachment, dan depth utama dimuat ulang oleh pass berikutnya. Eksperimen yang memaksa depth `DontCare` tidak menunjukkan peningkatan di atas noise (kemungkinan karena GPU Apple sudah mengompresi depth tanpa loss), sementara tebakan yang salah merusak gambar tanpa error.
 
 | Screenshot Metal vs OpenGL | Piksel berbeda > 8 level | > 48 level |
 |---|---|---|
 | Dunia, dari atas (Sodium) | 0,21% | 0,00% |
 | Dunia, malam (Sodium) | 0,00% | 0,00% |
-| Dunia, jauh, RD 16 (Sodium) | 0,06% | 0,00% |
+| Dunia, jauh, RD 16 (Sodium) | 0,04% | 0,01% |
 | Dunia, dari atas (tanpa Sodium) | 0,17% | 0,00% |
 | Dunia, jauh, RD 16 (tanpa Sodium) | 0,06% | 0,02% |
 
