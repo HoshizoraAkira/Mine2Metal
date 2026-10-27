@@ -124,7 +124,7 @@ final class MetalRenderPass implements RenderPassBackend {
 			return;
 		}
 		if (this.pipeline.topology == PrimitiveTopology.TRIANGLE_FAN) {
-			warnIndexedFan();
+			this.drawIndexedFan((long) firstIndex * this.indexSize, indexCount, instanceCount, baseVertex, firstInstance);
 			return;
 		}
 		MetalNative.renderDrawIndexed(this.ctx, this.pipeline.primitive, this.indexSize, this.indexBuffer.use(), (long) firstIndex * this.indexSize,
@@ -142,7 +142,10 @@ final class MetalRenderPass implements RenderPassBackend {
 			return;
 		}
 		if (this.pipeline.topology == PrimitiveTopology.TRIANGLE_FAN) {
-			warnIndexedFan();
+			for (int i = 0; i < drawCount; i++) {
+				this.drawIndexedFan(indexOffsets.get(indexOffsets.position() + i), indexCounts.get(indexCounts.position() + i),
+						1, baseVertices.get(baseVertices.position() + i), 0);
+			}
 			return;
 		}
 		MetalNative.renderMultiDrawIndexed(this.ctx, this.pipeline.primitive, this.indexSize, this.indexBuffer.use(), MemoryUtil.memAddress(indexOffsets),
@@ -155,7 +158,8 @@ final class MetalRenderPass implements RenderPassBackend {
 			return;
 		}
 		if (this.pipeline.topology == PrimitiveTopology.TRIANGLE_FAN) {
-			warnIndexedFan();
+			// The draw arguments are only known on the GPU.
+			warnIndexedFan("indirect");
 			return;
 		}
 		MetalNative.renderDrawIndexedIndirect(this.ctx, this.pipeline.primitive, this.indexSize, this.indexBuffer.use(),
@@ -204,6 +208,8 @@ final class MetalRenderPass implements RenderPassBackend {
 
 	@Override
 	public void writeTimestamp(GpuQueryPool pool, int index) {
+		// Apple GPUs cannot sample inside a render encoder, and splitting the pass here would change its load and
+		// store actions; the value stays unavailable, which the profiler treats as a missing sample.
 	}
 
 	/** Metal has no fans: (0, i, i + 1) triangles through a throwaway index buffer keep the same winding. */
@@ -222,10 +228,41 @@ final class MetalRenderPass implements RenderPassBackend {
 				indices.slice().offset(), triangles * 3, instanceCount, 0, firstInstance);
 	}
 
-	private static void warnIndexedFan() {
+	/**
+	 * Indexed fans become (f0, fi, fi+1) triangles, read on the CPU from the shared index buffer; only Minecraft's debug
+	 * renderers draw them, so a buffer that still has a GPU write pending is skipped rather than waited for.
+	 */
+	private void drawIndexedFan(long byteOffset, int indexCount, int instanceCount, int baseVertex, int firstInstance) {
+		int triangles = indexCount - 2;
+		if (triangles <= 0) {
+			return;
+		}
+		MetalBuffer source = this.indexBuffer;
+		if (!source.isReadableOnCpu(MetalNative.contextCompleted(this.ctx))) {
+			warnIndexedFan("from an index buffer the GPU is still writing");
+			return;
+		}
+		GpuBufferSlice.MappedView indices = this.encoder.transientMemory().allocateGpuMapped((long) triangles * 3 * Integer.BYTES, Integer.BYTES,
+				GpuBuffer.USAGE_INDEX);
+		IntBuffer data = indices.data().order(ByteOrder.nativeOrder()).asIntBuffer();
+		long base = source.address + byteOffset;
+		int first = this.readIndex(base, 0);
+		for (int i = 1; i <= triangles; i++) {
+			data.put(first).put(this.readIndex(base, i)).put(this.readIndex(base, i + 1));
+		}
+		MetalNative.renderDrawIndexed(this.ctx, MetalFormats.PRIMITIVE_TRIANGLE, Integer.BYTES, ((MetalBuffer) indices.slice().buffer()).use(),
+				indices.slice().offset(), triangles * 3, instanceCount, baseVertex, firstInstance);
+	}
+
+	private int readIndex(long base, int i) {
+		return this.indexSize == Short.BYTES ? Short.toUnsignedInt(MemoryUtil.memGetShort(base + (long) i * Short.BYTES))
+				: MemoryUtil.memGetInt(base + (long) i * Integer.BYTES);
+	}
+
+	private static void warnIndexedFan(String reason) {
 		if (!warnedIndexedFan) {
 			warnedIndexedFan = true;
-			Mine2Metal.LOGGER.warn("Indexed triangle fans are not supported on Metal yet; skipping them");
+			Mine2Metal.LOGGER.warn("Skipping indexed triangle fans drawn {} on Metal", reason);
 		}
 	}
 

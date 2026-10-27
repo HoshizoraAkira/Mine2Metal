@@ -148,6 +148,14 @@ void m2m_layer_configure(int64_t ctx, int64_t layer_handle, int32_t width, int32
 	}
 }
 
+void m2m_layer_set_hud(int64_t layer_handle, int32_t enabled) {
+	@autoreleasepool {
+		CAMetalLayer *layer = m2m_borrow(layer_handle);
+		// The same overlay MTL_HUD_ENABLED=1 shows: frame rate, frame time graph, GPU time and memory.
+		layer.developerHUDProperties = enabled ? @{@"mode" : @"default", @"logging" : @"default"} : nil;
+	}
+}
+
 void m2m_layer_detach(int64_t ctx) {
 	m2m_stop_present_thread(m2m_ctx(ctx));
 }

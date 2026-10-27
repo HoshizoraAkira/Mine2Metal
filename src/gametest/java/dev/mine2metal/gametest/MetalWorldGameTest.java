@@ -1,6 +1,15 @@
 package dev.mine2metal.gametest;
 
 import com.mojang.blaze3d.systems.RenderSystem;
+import com.mojang.renderpearl.api.GpuFormat;
+import com.mojang.renderpearl.api.buffers.GpuBuffer;
+import com.mojang.renderpearl.api.buffers.GpuBufferSlice;
+import com.mojang.renderpearl.api.commands.CommandEncoder;
+import com.mojang.renderpearl.api.commands.GpuQueryPool;
+import com.mojang.renderpearl.api.device.GpuDevice;
+import com.mojang.renderpearl.api.textures.GpuTexture;
+import dev.mine2metal.metal.MetalRenderer;
+import org.joml.Vector4f;
 import net.fabricmc.fabric.api.client.gametest.v1.FabricClientGameTest;
 import net.fabricmc.fabric.api.client.gametest.v1.context.ClientGameTestContext;
 import net.fabricmc.fabric.api.client.gametest.v1.context.TestSingleplayerContext;
@@ -23,10 +32,13 @@ import net.minecraft.world.phys.Vec3;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
+import java.nio.ByteBuffer;
 import java.io.UncheckedIOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Locale;
+import java.util.OptionalLong;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Creates a singleplayer world and screenshots it through Minecraft's own readback path, so the images exercise the
@@ -48,6 +60,14 @@ public class MetalWorldGameTest implements FabricClientGameTest {
 		}
 
 		context.takeScreenshot("mine2metal-title");
+		if (backend.equals("Metal")) {
+			checkTimestamps(context);
+			checkPartialClear(context);
+			context.runOnClient(client -> {
+				MetalRenderer.setPerformanceHud(true);
+				MetalRenderer.setPerformanceHud(false);
+			});
+		}
 		if (backend.equals("Metal") && !Boolean.getBoolean("mine2metal.test.skipScreens")) {
 			openSettingsScreens(context);
 		}
@@ -218,6 +238,79 @@ public class MetalWorldGameTest implements FabricClientGameTest {
 		context.setScreen(() -> null);
 		context.runOnClient(client -> settings.upscaling = MetalSettings.Upscaling.OFF);
 		context.waitTicks(10);
+	}
+
+	/** Two timestamps around a clear: both arrive, in order, and less than a second apart. */
+	private static void checkTimestamps(ClientGameTestContext context) {
+		GpuQueryPool pool = context.computeOnClient(client -> {
+			GpuDevice device = RenderSystem.getDevice();
+			GpuQueryPool created = device.createTimestampQueryPool(2);
+			CommandEncoder encoder = device.createCommandEncoder();
+			try (GpuTexture texture = device.createTexture("mine2metal timestamp test", GpuTexture.USAGE_RENDER_ATTACHMENT | GpuTexture.USAGE_COPY_DST, GpuFormat.RGBA8_UNORM, 256, 256,
+					1, 1)) {
+				encoder.writeTimestamp(created, 0);
+				encoder.clearColorTexture(texture, new Vector4f(1.0F, 0.0F, 0.0F, 1.0F));
+				encoder.writeTimestamp(created, 1);
+			}
+			return created;
+		});
+		context.waitTicks(5);
+		OptionalLong[] values = context.computeOnClient(client -> pool.getValues(0, 2));
+		context.runOnClient(client -> pool.close());
+		check(values[0].isPresent() && values[1].isPresent(), "Timestamps should be available a few ticks after they were written");
+		long elapsed = values[1].getAsLong() - values[0].getAsLong();
+		check(elapsed >= 0L && elapsed < 1_000_000_000L, "Timestamps should be ordered and close together, got " + elapsed + " ns apart");
+		LOGGER.info("Timestamp checks passed ({} ns apart)", elapsed);
+	}
+
+	/**
+	 * A partial clear, as the GUI item atlas does for a single slot, changes only its region: rows keep GL's bottom-up
+	 * order, so region row y is row y of the read-back image.
+	 */
+	private static void checkPartialClear(ClientGameTestContext context) {
+		int size = 16;
+		AtomicBoolean copied = new AtomicBoolean();
+		GpuBuffer readback = context.computeOnClient(client -> {
+			GpuDevice device = RenderSystem.getDevice();
+			CommandEncoder encoder = device.createCommandEncoder();
+			GpuBuffer buffer = device.createBuffer(() -> "mine2metal partial clear readback", GpuBuffer.USAGE_MAP_READ | GpuBuffer.USAGE_COPY_DST,
+					(long) size * size * 4);
+			try (GpuTexture color = device.createTexture("mine2metal partial clear", GpuTexture.USAGE_RENDER_ATTACHMENT | GpuTexture.USAGE_COPY_SRC
+					| GpuTexture.USAGE_COPY_DST, GpuFormat.RGBA8_UNORM, size, size, 1, 1);
+					GpuTexture depth = device.createTexture("mine2metal partial clear depth", GpuTexture.USAGE_RENDER_ATTACHMENT | GpuTexture.USAGE_COPY_DST, GpuFormat.D32_FLOAT, size,
+							size, 1, 1)) {
+				encoder.clearColorAndDepthTextures(color, new Vector4f(1.0F, 0.0F, 0.0F, 1.0F), depth, 1.0);
+				encoder.clearColorAndDepthTextures(color, new Vector4f(0.0F, 0.0F, 1.0F, 1.0F), depth, 0.0, 4, 8, 4, 4, 0);
+				encoder.copyTextureToBuffer(color, buffer, 0L, () -> copied.set(true), 0);
+			}
+			return buffer;
+		});
+		for (int i = 0; i < 20 && !copied.get(); i++) {
+			context.waitTicks(1);
+		}
+		check(copied.get(), "The partial clear readback should finish");
+		int[] pixels = context.computeOnClient(client -> {
+			try (GpuBufferSlice.MappedView view = readback.map(true, false)) {
+				ByteBuffer data = view.data();
+				int[] rgba = new int[size * size];
+				for (int i = 0; i < rgba.length; i++) {
+					rgba[i] = data.getInt(i * 4);
+				}
+				return rgba;
+			} finally {
+				readback.close();
+			}
+		});
+		int red = pixels[0];
+		int blue = pixels[9 * size + 5];
+		check(red != blue, "The cleared region should differ from the rest");
+		for (int y = 0; y < size; y++) {
+			for (int x = 0; x < size; x++) {
+				boolean inside = x >= 4 && x < 8 && y >= 8 && y < 12;
+				check(pixels[y * size + x] == (inside ? blue : red), "Pixel " + x + "," + y + " should be " + (inside ? "cleared" : "kept"));
+			}
+		}
+		LOGGER.info("Partial clear checks passed");
 	}
 
 	/** Metal comes first only for the "Default" graphics API, and the config file can turn it off. */

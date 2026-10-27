@@ -15,5 +15,8 @@
 	"mine2metal.options.render_scale.value": "%s%%",
 	"mine2metal.options.group.frame_generation": "Pembuatan Frame MetalFX",
 	"mine2metal.options.frame_interpolation": "Interpolasi Frame",
-	"mine2metal.options.frame_interpolation.tooltip": "Menyusul di versi berikutnya. Akan membuat satu frame tambahan di antara setiap pasang frame agar gerakan lebih halus, dengan sedikit tambahan latensi input. Butuh macOS 26 atau lebih baru."
+	"mine2metal.options.frame_interpolation.tooltip": "Menyusul di versi berikutnya. Akan membuat satu frame tambahan di antara setiap pasang frame agar gerakan lebih halus, dengan sedikit tambahan latensi input. Butuh macOS 26 atau lebih baru.",
+	"mine2metal.options.group.diagnostics": "Diagnostik",
+	"mine2metal.options.performance_hud": "HUD Performa Metal",
+	"mine2metal.options.performance_hud.tooltip": "Menampilkan HUD Performa Metal milik Apple di pojok window: frame rate, grafik waktu frame, waktu GPU per frame, dan pemakaian memori. Diukur oleh macOS sendiri, jadi juga menunjukkan hal yang terlewat oleh penghitung game."
 }

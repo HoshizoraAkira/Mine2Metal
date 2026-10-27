@@ -210,9 +210,17 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
 			int mipLevel) {
 		if (mipLevel == 0 && x == 0 && y == 0 && width == colorTexture.getWidth(0) && height == colorTexture.getHeight(0)) {
 			this.clear(colorTexture, color, depthTexture, depth);
-		} else if (!this.warnedPartialClear) {
+			return;
+		}
+		// The GUI item atlas clears one slot before redrawing it, for animated items such as compasses and clocks.
+		this.flushPendingClears();
+		MetalTexture target = (MetalTexture) colorTexture;
+		MetalTexture depthTarget = (MetalTexture) depthTexture;
+		boolean hasStencil = depthTarget != null && depthTarget.getFormat().hasStencilAspect();
+		if (!MetalNative.clearRegion(this.ctx, target.handle, color.x(), color.y(), color.z(), color.w(), depthTarget == null ? 0L : depthTarget.handle, hasStencil,
+				depth, x, y, width, height, mipLevel) && !this.warnedPartialClear) {
 			this.warnedPartialClear = true;
-			Mine2Metal.LOGGER.warn("Partial texture clears are not implemented yet; skipping them");
+			Mine2Metal.LOGGER.warn("Could not create the pipeline for partial texture clears; skipping them");
 		}
 	}
 
@@ -293,7 +301,7 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
 			this.stats.addBufferWrite(target, data.remaining(), true);
 		}
 		GpuBufferSlice staging = this.transientMemory.uploadGpu(data, 4L, GpuBuffer.USAGE_COPY_SRC);
-		MetalNative.blitBuffer(this.ctx, ((MetalBuffer) staging.buffer()).handle, staging.offset(), target.use(), destination.offset(), data.remaining());
+		MetalNative.blitBuffer(this.ctx, ((MetalBuffer) staging.buffer()).handle, staging.offset(), target.useForWrite(), destination.offset(), data.remaining());
 	}
 
 	@Override
@@ -312,7 +320,7 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
 		if (this.stats != null) {
 			this.stats.addBufferCopy(to, source.length(), true);
 		}
-		MetalNative.blitBuffer(this.ctx, from.use(), source.offset(), to.use(), target.offset(), source.length());
+		MetalNative.blitBuffer(this.ctx, from.use(), source.offset(), to.useForWrite(), target.offset(), source.length());
 	}
 
 	@Override
@@ -348,7 +356,7 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
 			int height) {
 		this.flushPendingClears();
 		GpuFormat format = source.getFormat();
-		MetalNative.blitTextureToBuffer(this.ctx, ((MetalTexture) source).handle, mipLevel, x, y, width, height, ((MetalBuffer) destination).use(), offset,
+		MetalNative.blitTextureToBuffer(this.ctx, ((MetalTexture) source).handle, mipLevel, x, y, width, height, ((MetalBuffer) destination).useForWrite(), offset,
 				(long) width * format.blockSize());
 		this.afterGpu(callback);
 	}
@@ -389,6 +397,8 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
 
 	@Override
 	public void writeTimestamp(GpuQueryPool pool, int index) {
+		this.flushPendingClears();
+		MetalNative.timestampWrite(this.ctx, ((MetalTimestampQueryPool) pool).handle, index);
 	}
 
 	/** MetalFX spatial upscale of input into output, in command order; false if MetalFX rejected the sizes or formats. */

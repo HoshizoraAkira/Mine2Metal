@@ -42,10 +42,21 @@ public final class MetalSettingsScreen extends OptionsSubScreen {
 				});
 		interpolation.active = false;
 
+		CycleButton<Boolean> performanceHud = CycleButton.onOffBuilder(settings.performanceHud)
+				.withTooltip(value -> Tooltip.create(MetalOptionTexts.performanceHudTooltip()))
+				.create(Component.translatable("mine2metal.options.performance_hud"), (button, value) -> {
+					settings.performanceHud = value;
+					settings.save();
+					MetalRenderer.setPerformanceHud(value);
+				});
+		performanceHud.active = MetalRenderer.isActive();
+
 		this.list.addHeader(Component.translatable("mine2metal.options.group.upscaling"));
 		this.list.addSmall(upscaling, scale);
 		this.list.addHeader(Component.translatable("mine2metal.options.group.frame_generation"));
 		this.list.addSmall(interpolation, null);
+		this.list.addHeader(Component.translatable("mine2metal.options.group.diagnostics"));
+		this.list.addSmall(performanceHud, null);
 	}
 
 	private static final class RenderScaleSlider extends AbstractSliderButton {

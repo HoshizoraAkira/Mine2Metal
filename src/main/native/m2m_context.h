@@ -47,6 +47,10 @@
 @property(nonatomic, strong) dispatch_semaphore_t presentThreadStopped;
 // When presented drawables actually reached the screen (CACurrentMediaTime seconds, 0 if dropped), for the stats.
 @property(nonatomic, strong) NSMutableArray<NSNumber *> *presentedTimes;
+// Partial clears (clear.m): pipelines by attachment formats, compiled on first use.
+@property(nonatomic, strong) id<MTLLibrary> clearLibrary;
+@property(nonatomic, strong) NSMutableDictionary<NSNumber *, id<MTLRenderPipelineState>> *clearPipelines;
+@property(nonatomic, strong) id<MTLDepthStencilState> clearDepthState;
 // MetalFX spatial scaler state (metalfx.m), kept untyped here so other files need not import MetalFX.
 @property(nonatomic, strong) id spatialUpscaler;
 
@@ -84,6 +88,8 @@ static inline M2MContext *m2m_ctx(int64_t handle) {
 // Shared by every encoding entry point.
 id<MTLCommandBuffer> m2m_command_buffer(M2MContext *ctx);
 void m2m_end_encoding(M2MContext *ctx);
+// Logs a failed command buffer's error and notes device loss.
+void m2m_record_error(M2MContext *ctx, id<MTLCommandBuffer> failed);
 id<MTLBlitCommandEncoder> m2m_blit_encoder(M2MContext *ctx);
 // Copies message into a caller-provided buffer as NUL-terminated UTF-8, truncating to capacity.
 void m2m_copy_string(char *out, int64_t capacity, NSString *message);

@@ -30,6 +30,15 @@ public final class MetalRenderer {
 		return current != null && current.spatialUpscalingSupported;
 	}
 
+	/** Shows or hides the Metal Performance HUD over the game window; does nothing when Metal is not active. */
+	public static void setPerformanceHud(boolean enabled) {
+		MetalDevice current = device;
+		MetalSurface surface = current != null ? current.surface : null;
+		if (surface != null) {
+			surface.setPerformanceHud(enabled);
+		}
+	}
+
 	/** Upscales input onto output with MetalFX; false if Metal is not active or MetalFX refused these textures. */
 	public static boolean upscaleSpatial(GpuTexture input, GpuTexture output) {
 		MetalDevice current = device;

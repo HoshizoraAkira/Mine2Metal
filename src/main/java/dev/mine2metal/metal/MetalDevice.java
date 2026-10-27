@@ -36,6 +36,8 @@ final class MetalDevice implements GpuDeviceBackend {
 	private final DeviceInfo info;
 	private final boolean validation;
 	final boolean spatialUpscalingSupported;
+	/** The window's surface, once created; the settings screens reach it through {@link MetalRenderer}. */
+	@Nullable MetalSurface surface;
 
 	/** Takes ownership of ctx. */
 	MetalDevice(long ctx, String name, boolean validation, boolean labels) {
@@ -61,7 +63,9 @@ final class MetalDevice implements GpuDeviceBackend {
 
 	@Override
 	public GpuSurfaceBackend createSurface(long window, BooleanSupplier isIconified) {
-		return new MetalSurface(this.ctx, this.encoder, window);
+		MetalSurface created = new MetalSurface(this.ctx, this.encoder, window);
+		this.surface = created;
+		return created;
 	}
 
 	@Override
@@ -157,7 +161,7 @@ final class MetalDevice implements GpuDeviceBackend {
 
 	@Override
 	public long getTimestampCalibrationOffset() {
-		return 0L;
+		return System.nanoTime() - MetalNative.hostTimeNanos();
 	}
 
 	@Override

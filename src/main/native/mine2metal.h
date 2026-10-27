@@ -156,6 +156,23 @@ M2M_EXPORT int32_t m2m_metalfx_spatial_supported(int64_t ctx);
 // Returns 0 if MetalFX could not create a scaler for these sizes and formats.
 M2M_EXPORT int32_t m2m_metalfx_spatial_upscale(int64_t ctx, int64_t input, int64_t output);
 
+// Clears a region of one mip level of a color and/or depth texture (either handle may be 0), keeping the rest and the
+// stencil aspect. Returns 0 if the clear pipeline could not be created.
+M2M_EXPORT int32_t m2m_clear_region(int64_t ctx, int64_t color, float r, float g, float b, float a, int64_t depth,
+                                    int32_t has_stencil, double depth_value, int32_t x, int32_t y, int32_t width,
+                                    int32_t height, int32_t mip_level);
+
+// Timestamps
+
+// A pool of GPU timestamps, released with m2m_release.
+M2M_EXPORT int64_t m2m_timestamp_pool_create(int64_t size);
+// Copies count values from first on, in nanoseconds of host time; -1 where one is not available yet.
+M2M_EXPORT void m2m_timestamp_pool_read(int64_t pool, int64_t first, int64_t count, int64_t *out);
+// Records when the GPU finishes everything encoded so far; ends the current command buffer.
+M2M_EXPORT void m2m_timestamp_write(int64_t ctx, int64_t pool, int64_t index);
+// Now, on the clock timestamps use.
+M2M_EXPORT int64_t m2m_host_time_nanos(void);
+
 // Presentation
 
 // Copies up to capacity on-screen times (seconds) of presented frames since the last call, 0 for frames the
@@ -165,6 +182,8 @@ M2M_EXPORT int64_t m2m_take_presented_times(int64_t ctx, double *out, int64_t ca
 // With vsync off this starts a present thread that shows the newest finished frame once per refresh; with vsync
 // on frames are presented from the render thread and nextDrawable caps the frame rate.
 M2M_EXPORT void m2m_layer_configure(int64_t ctx, int64_t layer, int32_t width, int32_t height, int32_t vsync);
+// Shows or hides the Metal Performance HUD on the layer.
+M2M_EXPORT void m2m_layer_set_hud(int64_t layer, int32_t enabled);
 // Stops the present thread before the layer goes away.
 M2M_EXPORT void m2m_layer_detach(int64_t ctx);
 // Hands the finished frame to the display: with vsync on it is presented now (1, or 0 without a drawable,

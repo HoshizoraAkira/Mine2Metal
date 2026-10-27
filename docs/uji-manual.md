@@ -39,5 +39,7 @@ Launcher resmi:
 | 15 | Video Settings → Metal (Sodium) atau Metal Settings... (vanilla): Upscaling Spatial, geser Render Scale 50% ↔ 100% | Dunia jadi lebih lembut di skala rendah tapi tetap tajam di tepi; menu, HUD, dan teks tetap tajam; tidak ada kedip saat menggeser |
 | 16 | Upscaling Spatial lalu ubah ukuran window dan F11 | Gambar langsung menyesuaikan, tidak gepeng |
 | 17 | Temporal dan Frame Interpolation | Terlihat tapi tidak bisa dipilih, dengan tooltip "menyusul" |
+| 18 | Menu Metal → Diagnostik → HUD Performa Metal: nyalakan, lalu matikan | Overlay Apple (FPS, grafik waktu frame, waktu GPU, memori) muncul di pojok window dan hilang lagi; tetap muncul setelah F11 atau restart selama opsinya nyala |
+| 19 | Buka inventory dengan kompas dan jam di hotbar, tunggu beberapa detik | Ikon kompas dan jam berganti gambar dengan bersih, tanpa sisa gambar lama di slot |
 
 Kalau ada yang salah: catat nomor barisnya, ambil screenshot (F2), dan simpan `logs/latest.log`. Untuk mencari tahu apakah masalahnya dari Metal, jalankan ulang dengan `-Dmine2metal.enabled=false` dan bandingkan.

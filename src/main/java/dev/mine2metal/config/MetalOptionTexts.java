@@ -24,6 +24,13 @@ final class MetalOptionTexts {
 		return Component.translatable("mine2metal.options.upscaling.tooltip");
 	}
 
+	static Component performanceHudTooltip() {
+		if (!MetalRenderer.isActive()) {
+			return Component.translatable("mine2metal.options.metal_inactive");
+		}
+		return Component.translatable("mine2metal.options.performance_hud.tooltip");
+	}
+
 	static Component percent(int value) {
 		return Component.translatable("mine2metal.options.render_scale.value", value);
 	}

@@ -84,6 +84,7 @@ int64_t m2m_context_create(int64_t device_handle, int32_t debug, char *error, in
 		ctx.latestSlot = -1;
 		ctx.writingSlot = -1;
 		ctx.inFlight = [NSMutableArray array];
+		ctx.clearPipelines = [NSMutableDictionary dictionary];
 		ctx.gpuSecondsByLabel = [NSMutableDictionary dictionary];
 		ctx.presentedTimes = [NSMutableArray array];
 		ctx.firstInFlightIndex = 1;
@@ -136,7 +137,7 @@ id<MTLCommandBuffer> m2m_command_buffer(M2MContext *ctx) {
 	return ctx.commandBuffer;
 }
 
-static void m2m_record_error(M2MContext *ctx, id<MTLCommandBuffer> failed) {
+void m2m_record_error(M2MContext *ctx, id<MTLCommandBuffer> failed) {
 	NSError *error = failed.error;
 	NSMutableString *message = [NSMutableString stringWithFormat:@"Command buffer failed: %@", error.localizedDescription];
 	for (id<MTLCommandBufferEncoderInfo> info in error.userInfo[MTLCommandBufferEncoderInfoErrorKey]) {

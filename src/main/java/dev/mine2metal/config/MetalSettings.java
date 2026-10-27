@@ -32,6 +32,8 @@ public final class MetalSettings {
 	public int renderScale = 75;
 	/** Not implemented yet; always treated as off. */
 	public boolean frameInterpolation;
+	/** Apple's Metal Performance HUD over the game window. */
+	public boolean performanceHud;
 
 	private MetalSettings() {
 	}
@@ -71,6 +73,7 @@ public final class MetalSettings {
 		settings.upscaling = parseUpscaling(values.getProperty("upscaling", "off"));
 		settings.renderScale = clampScale(parseInt(values.getProperty("renderScale"), settings.renderScale));
 		settings.frameInterpolation = Boolean.parseBoolean(values.getProperty("frameInterpolation", "false"));
+		settings.performanceHud = Boolean.parseBoolean(values.getProperty("performanceHud", "false"));
 		return settings;
 	}
 
@@ -91,7 +94,11 @@ public final class MetalSettings {
 				#
 				# Not available yet.
 				frameInterpolation=%s
-				""".formatted(this.enabled, this.upscaling.name().toLowerCase(Locale.ROOT), this.renderScale, this.frameInterpolation);
+				#
+				# Apple's Metal Performance HUD (frame rate, frame times, GPU time, memory) over the game window.
+				performanceHud=%s
+				""".formatted(this.enabled, this.upscaling.name().toLowerCase(Locale.ROOT), this.renderScale, this.frameInterpolation,
+						this.performanceHud);
 		Path file = file();
 		try {
 			Files.createDirectories(file.getParent());

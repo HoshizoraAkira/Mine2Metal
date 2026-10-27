@@ -20,6 +20,8 @@ class MetalBuffer extends BaseGpuBuffer {
 	private final MetalCommandEncoder encoder;
 	/** Submit index of the last recorded GPU command that reads or writes this buffer; 0 if none. */
 	private long lastUse;
+	/** Submit index of the last recorded GPU command that writes this buffer; 0 if none. */
+	private long lastWrite;
 	private boolean closed;
 	/** A mapped view keeps pointing at the memory it was made for, so a mapped buffer never moves. */
 	private boolean mapped;
@@ -37,6 +39,17 @@ class MetalBuffer extends BaseGpuBuffer {
 	long use() {
 		this.lastUse = this.encoder.recordingIndex();
 		return this.handle;
+	}
+
+	/** As {@link #use}, for a GPU command that writes the buffer. */
+	long useForWrite() {
+		this.lastWrite = this.encoder.recordingIndex();
+		return this.use();
+	}
+
+	/** True when every recorded GPU write has landed, so the CPU reads the current contents. */
+	boolean isReadableOnCpu(long completedIndex) {
+		return this.lastWrite <= completedIndex;
 	}
 
 	/** True when no recorded GPU command can still touch the buffer, so the CPU may read or write it directly. */
@@ -58,6 +71,7 @@ class MetalBuffer extends BaseGpuBuffer {
 		this.handle = spare != null ? spare : MetalNative.bufferCreate(ctx, this.size());
 		this.address = MetalNative.bufferContents(this.handle);
 		this.lastUse = 0L;
+		this.lastWrite = 0L;
 		this.encoder.afterGpu(() -> {
 			if (this.closed) {
 				MetalNative.release(old);

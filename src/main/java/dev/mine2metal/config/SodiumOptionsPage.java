@@ -17,6 +17,7 @@ public final class SodiumOptionsPage implements ConfigEntryPoint {
 	private static final Identifier UPSCALING = Identifier.fromNamespaceAndPath("mine2metal", "upscaling");
 	private static final Identifier RENDER_SCALE = Identifier.fromNamespaceAndPath("mine2metal", "render_scale");
 	private static final Identifier FRAME_INTERPOLATION = Identifier.fromNamespaceAndPath("mine2metal", "frame_interpolation");
+	private static final Identifier PERFORMANCE_HUD = Identifier.fromNamespaceAndPath("mine2metal", "performance_hud");
 
 	@Override
 	public void registerConfigLate(ConfigBuilder builder) {
@@ -57,6 +58,18 @@ public final class SodiumOptionsPage implements ConfigEntryPoint {
 										.setEnabled(false)
 										.setStorageHandler(settings::save)
 										.setDefaultValue(false)
-										.setBinding(value -> settings.frameInterpolation = value, () -> settings.frameInterpolation))));
+										.setBinding(value -> settings.frameInterpolation = value, () -> settings.frameInterpolation)))
+						.addOptionGroup(builder.createOptionGroup()
+								.setName(Component.translatable("mine2metal.options.group.diagnostics"))
+								.addOption(builder.createBooleanOption(PERFORMANCE_HUD)
+										.setName(Component.translatable("mine2metal.options.performance_hud"))
+										.setTooltip(value -> MetalOptionTexts.performanceHudTooltip())
+										.setEnabled(MetalRenderer.isActive())
+										.setStorageHandler(settings::save)
+										.setDefaultValue(false)
+										.setBinding(value -> {
+											settings.performanceHud = value;
+											MetalRenderer.setPerformanceHud(value);
+										}, () -> settings.performanceHud))));
 	}
 }

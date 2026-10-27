@@ -5,6 +5,7 @@ import com.mojang.renderpearl.api.textures.GpuTextureView;
 import com.mojang.renderpearl.backend.api.CommandEncoderBackend;
 import com.mojang.renderpearl.backend.api.GpuSurfaceBackend;
 import dev.mine2metal.Mine2Metal;
+import dev.mine2metal.config.MetalSettings;
 import org.lwjgl.sdl.SDLMetal;
 
 import java.util.Collection;
@@ -33,6 +34,11 @@ final class MetalSurface implements GpuSurfaceBackend {
 		boolean vsync = configuration.presentMode() == GpuSurface.PresentMode.FIFO;
 		Mine2Metal.LOGGER.debug("Configuring Metal surface {}x{} {}", configuration.width(), configuration.height(), configuration.presentMode());
 		MetalNative.layerConfigure(this.ctx, this.layer, configuration.width(), configuration.height(), vsync);
+		this.setPerformanceHud(MetalSettings.get().performanceHud);
+	}
+
+	void setPerformanceHud(boolean enabled) {
+		MetalNative.layerSetHud(this.layer, enabled);
 	}
 
 	@Override

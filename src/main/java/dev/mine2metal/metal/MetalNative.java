@@ -502,6 +502,58 @@ final class MetalNative {
 		}
 	}
 
+	static boolean clearRegion(long ctx, long color, float r, float g, float b, float a, long depth, boolean hasStencil, double depthValue, int x, int y,
+			int width, int height, int mipLevel) {
+		try {
+			return (int) Functions.CLEAR_REGION.invokeExact(ctx, color, r, g, b, a, depth, hasStencil ? 1 : 0, depthValue, x, y, width, height, mipLevel) != 0;
+		} catch (Throwable t) {
+			throw rethrow(t);
+		}
+	}
+
+	static long timestampPoolCreate(long size) {
+		try {
+			return (long) Functions.TIMESTAMP_POOL_CREATE.invokeExact(size);
+		} catch (Throwable t) {
+			throw rethrow(t);
+		}
+	}
+
+	/** Values in nanoseconds of host time, -1 where not available yet. */
+	static long[] timestampPoolRead(long pool, int first, int count) {
+		try (Arena arena = Arena.ofConfined()) {
+			MemorySegment out = arena.allocate(JAVA_LONG, count);
+			Functions.TIMESTAMP_POOL_READ.invokeExact(pool, (long) first, (long) count, out);
+			return out.toArray(JAVA_LONG);
+		} catch (Throwable t) {
+			throw rethrow(t);
+		}
+	}
+
+	static void timestampWrite(long ctx, long pool, int index) {
+		try {
+			Functions.TIMESTAMP_WRITE.invokeExact(ctx, pool, (long) index);
+		} catch (Throwable t) {
+			throw rethrow(t);
+		}
+	}
+
+	static long hostTimeNanos() {
+		try {
+			return (long) Functions.HOST_TIME_NANOS.invokeExact();
+		} catch (Throwable t) {
+			throw rethrow(t);
+		}
+	}
+
+	static void layerSetHud(long layer, boolean enabled) {
+		try {
+			Functions.LAYER_SET_HUD.invokeExact(layer, enabled ? 1 : 0);
+		} catch (Throwable t) {
+			throw rethrow(t);
+		}
+	}
+
 	static void layerDetach(long ctx) {
 		try {
 			Functions.LAYER_DETACH.invokeExact(ctx);
@@ -651,6 +703,13 @@ final class MetalNative {
 
 		static final MethodHandle TAKE_PRESENTED_TIMES = function("m2m_take_presented_times", JAVA_LONG, JAVA_LONG, ADDRESS, JAVA_LONG);
 		static final MethodHandle LAYER_CONFIGURE = function("m2m_layer_configure", null, JAVA_LONG, JAVA_LONG, JAVA_INT, JAVA_INT, JAVA_INT);
+		static final MethodHandle CLEAR_REGION = function("m2m_clear_region", JAVA_INT, JAVA_LONG, JAVA_LONG, JAVA_FLOAT, JAVA_FLOAT, JAVA_FLOAT, JAVA_FLOAT,
+				JAVA_LONG, JAVA_INT, JAVA_DOUBLE, JAVA_INT, JAVA_INT, JAVA_INT, JAVA_INT, JAVA_INT);
+		static final MethodHandle TIMESTAMP_POOL_CREATE = function("m2m_timestamp_pool_create", JAVA_LONG, JAVA_LONG);
+		static final MethodHandle TIMESTAMP_POOL_READ = function("m2m_timestamp_pool_read", null, JAVA_LONG, JAVA_LONG, JAVA_LONG, ADDRESS);
+		static final MethodHandle TIMESTAMP_WRITE = function("m2m_timestamp_write", null, JAVA_LONG, JAVA_LONG, JAVA_LONG);
+		static final MethodHandle HOST_TIME_NANOS = function("m2m_host_time_nanos", JAVA_LONG);
+		static final MethodHandle LAYER_SET_HUD = function("m2m_layer_set_hud", null, JAVA_LONG, JAVA_INT);
 		static final MethodHandle LAYER_DETACH = function("m2m_layer_detach", null, JAVA_LONG);
 		static final MethodHandle PRESENT = function("m2m_present", JAVA_INT, JAVA_LONG, JAVA_LONG, JAVA_LONG);
 
