@@ -103,7 +103,12 @@ final class MetalRenderPass implements RenderPassBackend {
 	}
 
 	@Override
-	public void setVertexBuffer(int slot, GpuBufferSlice slice) {
+	public void setVertexBuffer(int slot, @Nullable GpuBufferSlice slice) {
+		// A null slice unbinds the slot, as in Mojang's GL backend (the cloud renderer does this when it has no mesh).
+		if (slice == null) {
+			MetalNative.renderVertexBuffer(this.ctx, MetalRenderPipeline.VERTEX_BUFFER_BASE_SLOT + slot, 0L, 0L);
+			return;
+		}
 		MetalNative.renderVertexBuffer(this.ctx, MetalRenderPipeline.VERTEX_BUFFER_BASE_SLOT + slot, ((MetalBuffer) slice.buffer()).use(), slice.offset());
 	}
 
