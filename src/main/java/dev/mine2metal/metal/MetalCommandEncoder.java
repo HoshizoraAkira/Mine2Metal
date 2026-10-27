@@ -391,10 +391,22 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
 	public void writeTimestamp(GpuQueryPool pool, int index) {
 	}
 
+	/** MetalFX spatial upscale of input into output, in command order; false if MetalFX rejected the sizes or formats. */
+	boolean upscaleSpatial(MetalTexture input, MetalTexture output) {
+		this.flushPendingClears();
+		return MetalNative.metalFxSpatialUpscale(this.ctx, input.handle, output.handle);
+	}
+
 	/** Schedules the frame's present; it happens when the frame is committed in {@link #submit}. */
 	void present(long layer, MetalTextureView view) {
 		this.flushPendingClears();
+		if (this.stats == null) {
+			MetalNative.present(this.ctx, layer, view.handle);
+			return;
+		}
+		long start = System.nanoTime();
 		MetalNative.present(this.ctx, layer, view.handle);
+		this.stats.addPresent(System.nanoTime() - start);
 	}
 
 	private record Deferred(long index, Runnable action) {

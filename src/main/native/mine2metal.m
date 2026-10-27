@@ -75,10 +75,14 @@ int64_t m2m_context_create(int64_t device_handle, int32_t debug, char *error, in
 		ctx.debug = debug != 0;
 		ctx.errors = [NSMutableArray array];
 		ctx.queue = [ctx.device newCommandQueue];
+		ctx.presentQueue = [ctx.device newCommandQueue];
+		ctx.frameReady = [ctx.device newEvent];
+		ctx.presentDone = [ctx.device newEvent];
+		ctx.presentStaging = [NSMutableArray arrayWithObjects:[NSNull null], [NSNull null], nil];
 		ctx.inFlight = [NSMutableArray array];
 		ctx.gpuSecondsByLabel = [NSMutableDictionary dictionary];
 		ctx.firstInFlightIndex = 1;
-		if (!ctx.queue) {
+		if (!ctx.queue || !ctx.presentQueue) {
 			m2m_copy_string(error, error_capacity, @"Could not create a command queue");
 			return 0;
 		}

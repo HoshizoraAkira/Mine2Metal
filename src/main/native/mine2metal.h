@@ -149,6 +149,13 @@ M2M_EXPORT void m2m_render_draw_indirect(int64_t ctx, int32_t primitive, int64_t
 M2M_EXPORT int64_t m2m_buffer_texture_create(int64_t buffer, int64_t offset, int64_t length, int32_t pixel_format,
                                              int32_t bytes_per_pixel);
 
+// MetalFX
+
+M2M_EXPORT int32_t m2m_metalfx_spatial_supported(int64_t ctx);
+// Upscales input into output (both RGBA, sizes taken from the textures) on the current command buffer.
+// Returns 0 if MetalFX could not create a scaler for these sizes and formats.
+M2M_EXPORT int32_t m2m_metalfx_spatial_upscale(int64_t ctx, int64_t input, int64_t output);
+
 // Presentation
 
 M2M_EXPORT void m2m_layer_configure(int64_t ctx, int64_t layer, int32_t width, int32_t height, int32_t vsync);

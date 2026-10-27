@@ -21,6 +21,7 @@ final class FrameStats {
 	private double gpuSecondsAtStart;
 	private long[] encodersAtStart = {0L, 0L, 0L};
 	private long waitNanos;
+	private long presentNanos;
 	private int frames;
 	private long copyBytes;
 	private int copies;
@@ -34,6 +35,10 @@ final class FrameStats {
 
 	FrameStats(long ctx) {
 		this.ctx = ctx;
+	}
+
+	void addPresent(long nanos) {
+		this.presentNanos += nanos;
 	}
 
 	void addWait(long nanos) {
@@ -78,10 +83,12 @@ final class FrameStats {
 
 		double gpuSeconds = MetalNative.contextGpuSeconds(this.ctx);
 		long[] encoders = MetalNative.contextEncoderCounts(this.ctx);
-		Mine2Metal.LOGGER.info("Metal frame stats: {} fps, GPU {} ms/frame, CPU waiting on GPU {} ms/frame, {} render + {} blit encoders/frame, {} merged passes/frame",
+		Mine2Metal.LOGGER.info("Metal frame stats: {} fps, GPU {} ms/frame, CPU waiting on GPU {} ms/frame, present {} ms/frame, {} render + {} blit "
+						+ "encoders/frame, {} merged passes/frame",
 				Math.round(this.frames * 1e9 / elapsed),
 				String.format("%.3f", (gpuSeconds - this.gpuSecondsAtStart) * 1000.0 / this.frames),
 				String.format("%.3f", this.waitNanos / 1e6 / this.frames),
+				String.format("%.3f", this.presentNanos / 1e6 / this.frames),
 				String.format("%.1f", (double) (encoders[0] - this.encodersAtStart[0]) / this.frames),
 				String.format("%.1f", (double) (encoders[1] - this.encodersAtStart[1]) / this.frames),
 				String.format("%.1f", (double) (encoders[2] - this.encodersAtStart[2]) / this.frames));
@@ -100,6 +107,7 @@ final class FrameStats {
 		this.gpuSecondsAtStart = gpuSeconds;
 		this.encodersAtStart = encoders;
 		this.waitNanos = 0L;
+		this.presentNanos = 0L;
 		this.frames = 0;
 		this.copyBytes = 0L;
 		this.copies = 0;

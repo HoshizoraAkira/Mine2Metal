@@ -35,12 +35,14 @@ final class MetalDevice implements GpuDeviceBackend {
 	private final MetalCommandEncoder encoder;
 	private final DeviceInfo info;
 	private final boolean validation;
+	final boolean spatialUpscalingSupported;
 
 	/** Takes ownership of ctx. */
 	MetalDevice(long ctx, String name, boolean validation, boolean labels) {
 		this.ctx = ctx;
 		this.validation = validation;
 		this.encoder = new MetalCommandEncoder(ctx, labels);
+		this.spatialUpscalingSupported = MetalNative.metalFxSpatialSupported(ctx);
 		this.info = new DeviceInfo(
 				name,
 				"Apple",
@@ -135,8 +137,13 @@ final class MetalDevice implements GpuDeviceBackend {
 		return () -> pipeline;
 	}
 
+	MetalCommandEncoder encoder() {
+		return this.encoder;
+	}
+
 	@Override
 	public void close() {
+		MetalRenderer.deviceClosed(this);
 		this.encoder.close();
 		MetalNative.release(this.ctx);
 	}

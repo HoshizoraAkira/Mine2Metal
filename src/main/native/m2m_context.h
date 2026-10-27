@@ -30,6 +30,17 @@
 @property(nonatomic) BOOL layerVsync;
 @property(nonatomic) CFTimeInterval refreshInterval;
 @property(nonatomic) CFTimeInterval lastPresentTime;
+// Present runs on its own queue (see m2m_present), fed through two staging textures guarded by events.
+@property(nonatomic, strong) id<MTLCommandQueue> presentQueue;
+@property(nonatomic, strong) id<MTLEvent> frameReady;
+@property(nonatomic, strong) id<MTLEvent> presentDone;
+@property(nonatomic, strong) NSMutableArray *presentStaging;
+@property(nonatomic) int64_t presentCount;
+// Set while the last presented drawable has not reached the screen; cleared from Core Animation's thread.
+@property(atomic) BOOL awaitingDisplay;
+
+// MetalFX spatial scaler state (metalfx.m), kept untyped here so other files need not import MetalFX.
+@property(nonatomic, strong) id spatialUpscaler;
 
 // Committed command buffers not yet known to be finished, oldest first.
 @property(nonatomic, strong) NSMutableArray<id<MTLCommandBuffer>> *inFlight;

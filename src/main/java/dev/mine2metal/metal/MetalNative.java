@@ -467,6 +467,22 @@ final class MetalNative {
 		}
 	}
 
+	static boolean metalFxSpatialSupported(long ctx) {
+		try {
+			return (int) Functions.METALFX_SPATIAL_SUPPORTED.invokeExact(ctx) != 0;
+		} catch (Throwable t) {
+			throw rethrow(t);
+		}
+	}
+
+	static boolean metalFxSpatialUpscale(long ctx, long input, long output) {
+		try {
+			return (int) Functions.METALFX_SPATIAL_UPSCALE.invokeExact(ctx, input, output) != 0;
+		} catch (Throwable t) {
+			throw rethrow(t);
+		}
+	}
+
 	static void layerConfigure(long ctx, long layer, int width, int height, boolean vsync) {
 		try {
 			Functions.LAYER_CONFIGURE.invokeExact(ctx, layer, width, height, vsync ? 1 : 0);
@@ -610,6 +626,9 @@ final class MetalNative {
 				JAVA_LONG, JAVA_INT, JAVA_INT, JAVA_LONG, JAVA_LONG, JAVA_LONG, JAVA_INT, JAVA_INT);
 		static final MethodHandle RENDER_DRAW_INDIRECT = function("m2m_render_draw_indirect", null,
 				JAVA_LONG, JAVA_INT, JAVA_LONG, JAVA_LONG, JAVA_INT, JAVA_INT);
+
+		static final MethodHandle METALFX_SPATIAL_SUPPORTED = function("m2m_metalfx_spatial_supported", JAVA_INT, JAVA_LONG);
+		static final MethodHandle METALFX_SPATIAL_UPSCALE = function("m2m_metalfx_spatial_upscale", JAVA_INT, JAVA_LONG, JAVA_LONG, JAVA_LONG);
 
 		static final MethodHandle LAYER_CONFIGURE = function("m2m_layer_configure", null, JAVA_LONG, JAVA_LONG, JAVA_INT, JAVA_INT, JAVA_INT);
 		static final MethodHandle PRESENT = function("m2m_present", JAVA_INT, JAVA_LONG, JAVA_LONG, JAVA_LONG);

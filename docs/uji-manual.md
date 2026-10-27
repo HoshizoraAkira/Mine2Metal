@@ -36,5 +36,8 @@ Launcher resmi:
 | 12 | F2 (screenshot) | File di `screenshots/` tidak terbalik dan warnanya benar |
 | 13 | Main 15–30 menit | Tidak ada penurunan FPS terus-menerus atau memori yang terus naik |
 | 14 | Video Settings → Graphics API → OpenGL, lalu restart | F3 menunjukkan OpenGL (backend Metal mati); kembalikan ke Default untuk Metal lagi |
+| 15 | Video Settings → Metal (Sodium) atau Metal Settings... (vanilla): Upscaling Spatial, geser Render Scale 50% ↔ 100% | Dunia jadi lebih lembut di skala rendah tapi tetap tajam di tepi; menu, HUD, dan teks tetap tajam; tidak ada kedip saat menggeser |
+| 16 | Upscaling Spatial lalu ubah ukuran window dan F11 | Gambar langsung menyesuaikan, tidak gepeng |
+| 17 | Temporal dan Frame Interpolation | Terlihat tapi tidak bisa dipilih, dengan tooltip "menyusul" |
 
 Kalau ada yang salah: catat nomor barisnya, ambil screenshot (F2), dan simpan `logs/latest.log`. Untuk mencari tahu apakah masalahnya dari Metal, jalankan ulang dengan `-Dmine2metal.enabled=false` dan bandingkan.

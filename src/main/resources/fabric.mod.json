@@ -16,5 +16,10 @@
 	},
 	"suggests": {
 		"sodium": ">=0.9.3-"
+	},
+	"entrypoints": {
+		"sodium:config_api_user": [
+			"dev.mine2metal.config.SodiumOptionsPage"
+		]
 	}
 }

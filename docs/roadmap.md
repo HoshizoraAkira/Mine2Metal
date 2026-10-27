@@ -51,6 +51,23 @@ Screenshot layar judul dan titik spawn bisa berbeda 0,5–2,4% karena waktu peng
 
 Catatan pengukuran: FPS menghitung frame yang dirender. Saat vsync mati, backend Metal hanya mempresentasikan satu frame per refresh layar (frame lain tetap dirender penuh tapi tidak dikirim ke compositor), karena mempresentasikan semuanya membuat `nextDrawable` memblokir dan FPS turun ke ~60. Hasil yang terlihat di layar sama: layar memang tidak bisa menampilkan lebih dari refresh rate-nya.
 
+## Berikutnya: instalasi mudah dan GUI MetalFX (M9–M12)
+
+| Milestone | Isi |
+|---|---|
+| **M9 Instalasi** | Siap untuk Modrinth/CurseForge (metadata, ikon, deskripsi, dependensi: Fabric Loader wajib, Sodium disarankan, Fabric API tidak perlu), modpack `.mrpack` sekali klik untuk Modrinth App dan Prism Launcher, pesan jelas di game kalau Metal tidak bisa dipakai (Mac Intel, macOS lama) dan otomatis kembali ke OpenGL |
+| **M10 Layar pengaturan** ✅ | Halaman "mine2metal → Metal" di Video Settings Sodium lewat `ConfigEntryPoint` (`sodium:config_api_user`), dan tombol "Metal Settings..." + layar sendiri di Video Settings vanilla kalau Sodium tidak terpasang. Opsi: Upscaling (Off / Spatial; Temporal tampil sebagai "menyusul"), Render scale 50–100% (langkah 5), Frame interpolation (tampil tapi nonaktif, "menyusul"). Bahasa Inggris dan Indonesia. Disimpan di `config/mine2metal.properties` dan langsung berlaku tanpa restart |
+| **M11 Upscaling** (spatial ✅) | Dunia dan tangan dirender ke target lebih kecil (menukar `GameRenderer.mainRenderTarget` selama `renderLevel`), lalu diperbesar dengan `MTLFXSpatialScaler` (mode perceptual) ke target ukuran window sebelum post effect dan GUI. Berikutnya: temporal (`MTLFXTemporalScaler`), butuh jitter kamera, depth, dan motion vector |
+| **M12 Frame interpolation** | `MTLFXFrameInterpolator` (macOS 26+). Encode ke `MTLCommandBuffer` biasa, jadi **tidak** perlu Metal 4. Butuh warna frame sekarang dan sebelumnya, depth, motion, tekstur UI terpisah, matriks kamera, dan present dua frame per frame yang dirender. Menambah latensi input, jadi opsional |
+
+### Perbaikan selama M10–M11: antrean present terpisah
+
+Performa yang kadang anjlok (~100–150 FPS) ternyata bukan pekerjaan GPU. Metal System Trace saat mode lambat menunjukkan GPU menganggur ~84% dan latensi CPU→GPU p50 12 ms, maksimum 16,4 ms (satu periode refresh 60 Hz), dibanding 0,8 ms saat cepat. Command buffer frame yang berisi pass present ke drawable harus menunggu di GPU sampai compositor melepas drawable itu, dan karena antreannya berurutan, semua frame berikutnya ikut menunggu.
+
+Perbaikan: frame disalin ke salah satu dari dua tekstur staging di antrean render, lalu digambar ke drawable di **antrean present terpisah**, disinkronkan dengan dua `MTLEvent`. Saat vsync mati, frame baru dipresentasikan hanya setelah frame sebelumnya tampil di layar (`addPresentedHandler`), sehingga `nextDrawable` tidak pernah memblokir CPU. Setelah itu 3 dari 3 run cepat: skenario ringan 1607–2513 FPS, berat 935–1113 FPS, waktu present 0,001 ms/frame.
+
+Upscaling spasial di window gametest kecil (854×480, Retina 1708×960) justru lebih lambat (1075–1163 FPS vs 1607–2513 tanpa upscaling): di resolusi ini GPU tidak dibatasi jumlah piksel, jadi pass MetalFX hanya menambah kerja. Upscaling bermanfaat saat GPU sibuk dengan piksel (resolusi tinggi, shader berat); belum diukur di skenario seperti itu.
+
 ## Fitur khas Metal (setelah M5)
 
 | Fitur | API Apple | macOS | Input yang dibutuhkan | Kesulitan |
@@ -65,5 +82,5 @@ Catatan pengukuran: FPS menghitung frame yang dirender. Saat vsync mati, backend
 
 Catatan:
 - Minecraft tidak menghasilkan motion vector. Untuk geometri statis, motion vector bisa dihitung dari depth + matriks kamera frame sebelumnya. Entitas, partikel, dan tekstur animasi butuh penanganan khusus, atau akan ghosting.
-- `MTLFXFrameInterpolatorDescriptor` punya `makeFrameInterpolator(device:compiler:)` dan `supportsMetal4FX`. Kemungkinan besar interpolator perlu jalur Metal 4, padahal backend dimulai dengan Metal 3 **[inferensi, perlu dicek]**.
+- `MTLFXFrameInterpolator` meng-encode ke `MTLCommandBuffer` biasa (`encode(commandBuffer:)`); varian `MTL4FXFrameInterpolator` hanya untuk jalur Metal 4. Jadi backend Metal 3 cukup, asalkan macOS 26+ (dicek di dokumentasi Apple, 2026-10-27).
 - Frame interpolation menambah latensi input, yang terasa di game dengan gerakan kamera cepat seperti Minecraft. Fitur ini sebaiknya opsional.

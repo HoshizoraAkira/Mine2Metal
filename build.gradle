@@ -73,6 +73,7 @@ tasks.register('buildNative', Exec) {
 		'-framework', 'AppKit',
 		'-framework', 'Foundation',
 		'-framework', 'Metal',
+		'-framework', 'MetalFX',
 		'-framework', 'QuartzCore',
 		'-install_name', '@rpath/libmine2metal.dylib',
 		'-o', output.get().asFile.absolutePath,

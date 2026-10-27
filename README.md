@@ -2,7 +2,7 @@
 
 Mod Fabric yang menambahkan backend Apple Metal untuk lapisan GPU `renderpearl` di Minecraft Java, dan dirancang agar tetap berjalan bersama Sodium.
 
-Status: **M1–M8** (uji manual belum dilakukan, lihat [docs/uji-manual.md](docs/uji-manual.md)). Layar judul dan dunia singleplayer dirender lewat Metal, dengan maupun tanpa Sodium. Hasilnya nyaris identik piksel dengan OpenGL. Di uji otomatis pada MacBook Air M3, Metal + Sodium mencapai 2000–2700 FPS di skenario ringan dan 660–1500 FPS di 1920×1080 render distance 16 (tergantung suhu), dibanding 200–490 FPS untuk OpenGL + Sodium. Detail ada di [docs/roadmap.md](docs/roadmap.md#hasil-uji-otomatis-2026-10-27). Masih eksperimental: mod yang memanggil OpenGL langsung tidak akan menggambar, dan beberapa kasus langka (triangle fan ber-index, clear sebagian) belum didukung.
+Status: **M1–M8, M10, upscaling spasial M11** (uji manual belum dilakukan, lihat [docs/uji-manual.md](docs/uji-manual.md)). Layar judul dan dunia singleplayer dirender lewat Metal, dengan maupun tanpa Sodium. Hasilnya nyaris identik piksel dengan OpenGL. Di uji otomatis pada MacBook Air M3, Metal + Sodium mencapai 2000–2700 FPS di skenario ringan dan 660–1500 FPS di 1920×1080 render distance 16 (tergantung suhu), dibanding 200–490 FPS untuk OpenGL + Sodium. Detail ada di [docs/roadmap.md](docs/roadmap.md#hasil-uji-otomatis-2026-10-27). Masih eksperimental: mod yang memanggil OpenGL langsung tidak akan menggambar, dan beberapa kasus langka (triangle fan ber-index, clear sebagian) belum didukung.
 
 ![Dunia Minecraft 26.3 dengan Sodium, dirender dengan Metal](docs/screenshots/m6-world-sodium.png)
 
@@ -48,6 +48,13 @@ JAVA_HOME=/Library/Java/JavaVirtualMachines/openjdk.jdk/Contents/Home ./gradlew 
 ```
 
 Tambahkan `-PnoSodium` untuk menguji renderer chunk vanilla. Untuk pembanding OpenGL, jalankan dengan `JAVA_TOOL_OPTIONS="-Dmine2metal.enabled=false"`.
+
+### Pengaturan di game
+
+- Dengan Sodium: Options → Video Settings → di sidebar kiri "mine2metal" → "Metal".
+- Tanpa Sodium: Options → Video Settings → tombol "Metal Settings..." di bagian bawah.
+
+Isinya: **Upscaling** (Off / Spatial; Temporal menyusul), **Render Scale** 50–100%, dan **Frame Interpolation** (menyusul, butuh macOS 26+). Perubahan langsung berlaku dan disimpan di `config/mine2metal.properties`.
 
 ### Mematikan Metal
 

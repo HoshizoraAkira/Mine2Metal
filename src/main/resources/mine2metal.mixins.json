@@ -3,7 +3,10 @@
 	"package": "dev.mine2metal.mixin",
 	"compatibilityLevel": "JAVA_25",
 	"client": [
-		"PreferredGraphicsApiMixin"
+		"GameRendererMixin",
+		"PreferredGraphicsApiMixin",
+		"RenderTargetAccessor",
+		"VideoSettingsScreenMixin"
 	],
 	"injectors": {
 		"defaultRequire": 1

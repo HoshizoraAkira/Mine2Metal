@@ -49,7 +49,9 @@ public final class MetalBackend implements GpuBackend {
 			}
 			long ctx = MetalNative.contextCreate(device, validation || debugOptions.logLevel() > 0);
 			Mine2Metal.LOGGER.info("Rendering with Metal 3 on {}{}", name, validation ? " with API validation" : "");
-			return new FrontendGpuDevice(new MetalDevice(ctx, name, validation, debugOptions.useLabels()));
+			MetalDevice metal = new MetalDevice(ctx, name, validation, debugOptions.useLabels());
+			MetalRenderer.deviceCreated(metal);
+			return new FrontendGpuDevice(metal);
 		} finally {
 			// The context holds its own reference to the device.
 			MetalNative.release(device);

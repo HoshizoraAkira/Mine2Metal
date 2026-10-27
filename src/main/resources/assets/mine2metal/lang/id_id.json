@@ -1,0 +1,19 @@
+{
+	"mine2metal.options.page": "Metal",
+	"mine2metal.options.button": "Pengaturan Metal...",
+	"mine2metal.screen.title": "Pengaturan Metal",
+	"mine2metal.options.metal_inactive": "Tidak tersedia: game tidak sedang merender dengan Metal. Atur Graphics API ke Default lalu mulai ulang.",
+	"mine2metal.options.group.upscaling": "Upscaling MetalFX",
+	"mine2metal.options.upscaling": "Upscaling",
+	"mine2metal.options.upscaling.off": "Mati",
+	"mine2metal.options.upscaling.spatial": "Spasial",
+	"mine2metal.options.upscaling.temporal": "Temporal",
+	"mine2metal.options.upscaling.tooltip": "Merender dunia di resolusi lebih rendah lalu memperbesarnya dengan MetalFX agar frame rate lebih tinggi. Menu dan HUD tetap di resolusi penuh.\n\nSpasial: mempertajam setiap frame sendiri-sendiri.\nTemporal: menyusul di versi berikutnya.",
+	"mine2metal.options.upscaling.unsupported": "Tidak tersedia: Mac ini tidak mendukung upscaling spasial MetalFX.",
+	"mine2metal.options.render_scale": "Skala Render",
+	"mine2metal.options.render_scale.tooltip": "Seberapa besar resolusi window yang dipakai untuk merender dunia sebelum diperbesar. Makin rendah makin cepat, tetapi makin lembut.",
+	"mine2metal.options.render_scale.value": "%s%%",
+	"mine2metal.options.group.frame_generation": "Pembuatan Frame MetalFX",
+	"mine2metal.options.frame_interpolation": "Interpolasi Frame",
+	"mine2metal.options.frame_interpolation.tooltip": "Menyusul di versi berikutnya. Akan membuat satu frame tambahan di antara setiap pasang frame agar gerakan lebih halus, dengan sedikit tambahan latensi input. Butuh macOS 26 atau lebih baru."
+}
