@@ -1,0 +1,20 @@
+{
+	"schemaVersion": 1,
+	"id": "mine2metal",
+	"version": "${version}",
+	"name": "mine2metal",
+	"description": "Native Apple Metal backend for Minecraft's renderpearl GPU layer, built to run alongside Sodium.",
+	"authors": [],
+	"environment": "client",
+	"mixins": [
+		"mine2metal.mixins.json"
+	],
+	"depends": {
+		"fabricloader": ">=0.20.1",
+		"minecraft": "~26.3",
+		"java": ">=25"
+	},
+	"suggests": {
+		"sodium": ">=0.9.3-"
+	}
+}

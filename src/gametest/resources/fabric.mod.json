@@ -1,0 +1,16 @@
+{
+	"schemaVersion": 1,
+	"id": "mine2metal-gametest",
+	"version": "1.0.0",
+	"name": "mine2metal game tests",
+	"environment": "client",
+	"entrypoints": {
+		"fabric-client-gametest": [
+			"dev.mine2metal.gametest.MetalWorldGameTest"
+		]
+	},
+	"depends": {
+		"mine2metal": "*",
+		"fabric-client-gametest-api-v1": "*"
+	}
+}

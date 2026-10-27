@@ -1,0 +1,102 @@
+plugins {
+	id 'net.fabricmc.fabric-loom' version "${loom_version}"
+}
+
+repositories {
+	exclusiveContent {
+		forRepository {
+			maven {
+				name = 'Modrinth'
+				url = 'https://api.modrinth.com/maven'
+			}
+		}
+		filter {
+			includeGroup 'maven.modrinth'
+		}
+	}
+}
+
+loom {
+	runs {
+		client {
+			// FFM downcalls are "restricted" methods; without this Java 25 prints a warning per module
+			vmArg '--enable-native-access=ALL-UNNAMED'
+		}
+	}
+}
+
+dependencies {
+	minecraft "com.mojang:minecraft:${project.minecraft_version}"
+	implementation "net.fabricmc:fabric-loader:${project.loader_version}"
+	implementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_api_version}"
+
+	compileOnly "maven.modrinth:sodium:${project.sodium_version}"
+	// -PnoSodium runs the game on the vanilla chunk renderer, to tell backend bugs apart from Sodium ones.
+	if (!project.hasProperty('noSodium')) {
+		localRuntime "maven.modrinth:sodium:${project.sodium_version}"
+	}
+}
+
+fabricApi {
+	configureTests {
+		createSourceSet = true
+		modId = 'mine2metal-gametest'
+		enableGameTests = false
+		enableClientGameTests = true
+		eula = true
+	}
+}
+
+// The Objective-C side is a single dylib built with the system clang and shipped inside the jar.
+tasks.register('buildNative', Exec) {
+	def sources = fileTree('src/main/native') { include '**/*.m', '**/*.h' }
+	def output = layout.buildDirectory.file('native/libmine2metal.dylib')
+	def minVersion = project.macos_min_version
+	def isMac = System.getProperty('os.name').startsWith('Mac')
+
+	inputs.files(sources)
+	inputs.property 'macosMinVersion', minVersion
+	outputs.file(output)
+
+	onlyIf { isMac }
+
+	doFirst { output.get().asFile.parentFile.mkdirs() }
+
+	commandLine 'xcrun', 'clang',
+		'-dynamiclib',
+		'-fobjc-arc',
+		'-fvisibility=hidden',
+		'-O2',
+		'-Wall', '-Wextra', '-Werror',
+		'-arch', 'arm64',
+		"-mmacosx-version-min=${minVersion}",
+		'-framework', 'AppKit',
+		'-framework', 'Foundation',
+		'-framework', 'Metal',
+		'-framework', 'QuartzCore',
+		'-install_name', '@rpath/libmine2metal.dylib',
+		'-o', output.get().asFile.absolutePath,
+		*sources.filter { it.name.endsWith('.m') }.files.collect { it.absolutePath }.sort()
+}
+
+processResources {
+	def version = project.version
+	inputs.property 'version', version
+
+	filesMatching('fabric.mod.json') {
+		expand 'version': version
+	}
+
+	from(tasks.named('buildNative')) {
+		into 'natives/macos-arm64'
+	}
+}
+
+tasks.withType(JavaCompile).configureEach {
+	it.options.release = 25
+}
+
+java {
+	sourceCompatibility = JavaVersion.VERSION_25
+	targetCompatibility = JavaVersion.VERSION_25
+}
