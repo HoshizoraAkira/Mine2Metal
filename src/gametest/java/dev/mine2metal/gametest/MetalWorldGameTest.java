@@ -52,6 +52,14 @@ public class MetalWorldGameTest implements FabricClientGameTest {
 			openSettingsScreens(context);
 		}
 
+		if (backend.equals("Metal")) {
+			// Upscaling left on from an earlier session: the sky renderer is built while the world renders small.
+			context.runOnClient(client -> {
+				MetalSettings.get().upscaling = MetalSettings.Upscaling.SPATIAL;
+				MetalSettings.get().renderScale = 60;
+			});
+		}
+
 		try (TestSingleplayerContext singleplayer = context.worldBuilder()
 				.adjustSettings(settings -> {
 					settings.setWorldType(settings.getNormalPresetList().getFirst());
@@ -59,6 +67,8 @@ public class MetalWorldGameTest implements FabricClientGameTest {
 				})
 				.create()) {
 			singleplayer.getConnection().waitForChunksRender();
+			context.runOnClient(client -> MetalSettings.get().upscaling = MetalSettings.Upscaling.OFF);
+			context.waitTicks(5);
 			context.takeScreenshot("mine2metal-world");
 
 			// Creative flight keeps the player where the camera is put instead of falling to its death.
@@ -188,6 +198,18 @@ public class MetalWorldGameTest implements FabricClientGameTest {
 			context.waitTicks(1);
 		}
 		context.getInput().resizeWindow(854, 480);
+
+		// The same with a menu open, as players do it: the world keeps rendering behind the blurred settings screen.
+		context.setScreen(() -> new MetalSettingsScreen(null, Minecraft.getInstance().options));
+		for (int i = 0; i < 20; i++) {
+			int step = i;
+			context.runOnClient(client -> {
+				settings.upscaling = step % 2 == 0 ? MetalSettings.Upscaling.SPATIAL : MetalSettings.Upscaling.OFF;
+				settings.renderScale = MetalSettings.clampScale(50 + step * 11 % 50);
+			});
+			context.waitTicks(2);
+		}
+		context.setScreen(() -> null);
 		context.runOnClient(client -> settings.upscaling = MetalSettings.Upscaling.OFF);
 		context.waitTicks(10);
 	}

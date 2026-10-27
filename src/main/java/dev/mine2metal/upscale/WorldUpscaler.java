@@ -11,15 +11,22 @@ import org.joml.Vector4f;
 import org.jspecify.annotations.Nullable;
 
 /**
- * Renders the world (and the hand) into a smaller target and upscales it onto the window-sized main target with
- * MetalFX before post effects and the GUI, which stay at full resolution. Driven from {@code GameRendererMixin}, which
- * calls {@link #begin}, then {@link #end} if the world pass finished, then always {@link #abandonFrame}.
+ * Renders the world (and the hand) at a lower resolution and upscales it onto the window-sized main target with
+ * MetalFX before post effects and the GUI, which stay at full resolution.
+ * <p>
+ * The main target object itself stays in place; only its textures are swapped for smaller ones while renderLevel
+ * runs. Minecraft keeps references to that object across frames (the sky renderer captures it when it is rebuilt),
+ * so swapping the object would leave them drawing into, and later reading from, a target that no longer exists.
+ * Driven from {@code GameRendererMixin}: {@link #begin}, then {@link #end} if the world pass finished, then always
+ * {@link #abandonFrame}.
  */
 public final class WorldUpscaler {
 	private static final Vector4f CLEAR_COLOR = new Vector4f(0.0F, 0.0F, 0.0F, 0.0F);
 
+	/** Owns the small textures; while they are lent to the main target it holds the main target's own. */
 	private static @Nullable TextureTarget scaled;
-	private static @Nullable RenderTarget nativeTarget;
+	/** The main target while it is rendering with the small textures. */
+	private static @Nullable RenderTarget lentTo;
 	private static boolean warnedFailure;
 
 	private WorldUpscaler() {
@@ -32,21 +39,21 @@ public final class WorldUpscaler {
 				&& MetalRenderer.supportsSpatialUpscaling();
 	}
 
-	/** At the start of the world pass: returns the target to render into instead of main. */
-	public static RenderTarget begin(RenderTarget main) {
-		if (main == scaled) {
-			throw new IllegalStateException("The scaled world target leaked into GameRenderer.mainRenderTarget");
+	/** At the start of the world pass: gives main the smaller textures if upscaling is on. */
+	public static void begin(RenderTarget main) {
+		if (lentTo != null) {
+			throw new IllegalStateException("The previous world pass did not return the main render target's textures");
 		}
 		if (!isActive()) {
 			release();
-			return main;
+			return;
 		}
 
 		float scale = MetalSettings.get().renderScale / 100.0F;
 		int width = Math.max(1, Math.round(main.width * scale));
 		int height = Math.max(1, Math.round(main.height * scale));
 		TextureTarget target = scaled;
-		if (target == null) {
+		if (target == null || target.getColorTexture() == null) {
 			RenderTargetAccessor formats = (RenderTargetAccessor) main;
 			target = new TextureTarget("mine2metal scaled world", width, height, formats.mine2metal$colorFormat(), formats.mine2metal$depthFormat());
 			scaled = target;
@@ -55,18 +62,19 @@ public final class WorldUpscaler {
 		}
 
 		RenderSystem.getDevice().createCommandEncoder().clearColorAndDepthTextures(target.getColorTexture(), CLEAR_COLOR, target.getDepthTexture(), 1.0);
-		nativeTarget = main;
-		return target;
+		swapTextures(main, target);
+		lentTo = main;
 	}
 
-	/** At the end of the world pass: upscales the scaled world onto the main target, if this frame used one. */
+	/** At the end of the world pass: takes the textures back and upscales the world onto main. */
 	public static void end() {
-		RenderTarget main = nativeTarget;
+		RenderTarget main = lentTo;
 		TextureTarget target = scaled;
 		if (main == null || target == null) {
 			return;
 		}
-		nativeTarget = null;
+		swapTextures(main, target);
+		lentTo = null;
 
 		if (!MetalRenderer.upscaleSpatial(target.getColorTexture(), main.getColorTexture())) {
 			if (!warnedFailure) {
@@ -78,9 +86,40 @@ public final class WorldUpscaler {
 		}
 	}
 
-	/** Forgets the frame in progress; called whether or not the world pass finished. */
+	/** Makes sure main has its own textures back, whether or not the world pass finished. */
 	public static void abandonFrame() {
-		nativeTarget = null;
+		RenderTarget main = lentTo;
+		TextureTarget target = scaled;
+		if (main != null && target != null) {
+			swapTextures(main, target);
+		}
+		lentTo = null;
+	}
+
+	/** Exchanges size and textures between two targets with the same formats. */
+	private static void swapTextures(RenderTarget a, RenderTarget b) {
+		int width = a.width;
+		int height = a.height;
+		var color = a.getColorTexture();
+		var colorView = a.getColorTextureView();
+		var depth = a.getDepthTexture();
+		var depthView = a.getDepthTextureView();
+
+		a.width = b.width;
+		a.height = b.height;
+		RenderTargetAccessor first = (RenderTargetAccessor) a;
+		first.mine2metal$setColorTexture(b.getColorTexture());
+		first.mine2metal$setColorTextureView(b.getColorTextureView());
+		first.mine2metal$setDepthTexture(b.getDepthTexture());
+		first.mine2metal$setDepthTextureView(b.getDepthTextureView());
+
+		b.width = width;
+		b.height = height;
+		RenderTargetAccessor second = (RenderTargetAccessor) b;
+		second.mine2metal$setColorTexture(color);
+		second.mine2metal$setColorTextureView(colorView);
+		second.mine2metal$setDepthTexture(depth);
+		second.mine2metal$setDepthTextureView(depthView);
 	}
 
 	private static void release() {
