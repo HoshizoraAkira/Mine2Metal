@@ -38,7 +38,9 @@ Launcher resmi:
 | 14 | Video Settings → Graphics API → OpenGL, lalu restart | F3 menunjukkan OpenGL (backend Metal mati); kembalikan ke Default untuk Metal lagi |
 | 15 | Video Settings → Metal (Sodium) atau Metal Settings... (vanilla): Upscaling Spatial, geser Render Scale 50% ↔ 100% | Dunia jadi lebih lembut di skala rendah tapi tetap tajam di tepi; menu, HUD, dan teks tetap tajam; tidak ada kedip saat menggeser |
 | 16 | Upscaling Spatial lalu ubah ukuran window dan F11 | Gambar langsung menyesuaikan, tidak gepeng |
-| 17 | Temporal dan Frame Interpolation | Terlihat tapi tidak bisa dipilih, dengan tooltip "menyusul" |
+| 17 | Frame Interpolation | Terlihat tapi tidak bisa dipilih, dengan tooltip "menyusul" |
+| 20 | Upscaling Temporal, Render Scale 50% lalu 75% dan 100%; diam, lalu putar kamera dan terbang maju | Saat diam, dunia hampir setajam resolusi asli (lebih tajam dari Spatial 50%) dan tepi blok halus tanpa gerigi; saat bergerak tidak ada bayangan ganda di blok. Mob yang bergerak cepat boleh meninggalkan jejak samar. Tangan selalu tajam |
+| 21 | Upscaling Temporal, lalu /tp jauh, ganti dimensi, F11, ubah ukuran window | Tidak ada sisa gambar lama yang tercampur setelah pindah |
 | 18 | Menu Metal → Diagnostik → HUD Performa Metal: nyalakan, lalu matikan | Overlay Apple (FPS, grafik waktu frame, waktu GPU, memori) muncul di pojok window dan hilang lagi; tetap muncul setelah F11 atau restart selama opsinya nyala |
 | 19 | Buka inventory dengan kompas dan jam di hotbar, tunggu beberapa detik | Ikon kompas dan jam berganti gambar dengan bersih, tanpa sisa gambar lama di slot |
 

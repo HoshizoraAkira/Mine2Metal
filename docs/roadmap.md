@@ -56,8 +56,8 @@ Catatan pengukuran: FPS menghitung frame yang dirender. Saat vsync mati, backend
 | Milestone | Isi |
 |---|---|
 | **M9 Instalasi** | Siap untuk Modrinth/CurseForge (metadata, ikon, deskripsi, dependensi: Fabric Loader wajib, Sodium disarankan, Fabric API tidak perlu), modpack `.mrpack` sekali klik untuk Modrinth App dan Prism Launcher, pesan jelas di game kalau Metal tidak bisa dipakai (Mac Intel, macOS lama) dan otomatis kembali ke OpenGL |
-| **M10 Layar pengaturan** ✅ | Halaman "mine2metal → Metal" di Video Settings Sodium lewat `ConfigEntryPoint` (`sodium:config_api_user`), dan tombol "Metal Settings..." + layar sendiri di Video Settings vanilla kalau Sodium tidak terpasang. Opsi: Upscaling (Off / Spatial; Temporal tampil sebagai "menyusul"), Render scale 50–100% (langkah 5), Frame interpolation (tampil tapi nonaktif, "menyusul"). Bahasa Inggris dan Indonesia. Disimpan di `config/mine2metal.properties` dan langsung berlaku tanpa restart |
-| **M11 Upscaling** (spatial ✅) | Dunia dan tangan dirender ke target lebih kecil (menukar `GameRenderer.mainRenderTarget` selama `renderLevel`), lalu diperbesar dengan `MTLFXSpatialScaler` (mode perceptual) ke target ukuran window sebelum post effect dan GUI. Berikutnya: temporal (`MTLFXTemporalScaler`), butuh jitter kamera, depth, dan motion vector |
+| **M10 Layar pengaturan** ✅ | Halaman "mine2metal → Metal" di Video Settings Sodium lewat `ConfigEntryPoint` (`sodium:config_api_user`), dan tombol "Metal Settings..." + layar sendiri di Video Settings vanilla kalau Sodium tidak terpasang. Opsi: Upscaling (Off / Spatial / Temporal, hanya mode yang didukung Mac ini), Render scale 50–100% (langkah 5), Frame interpolation (tampil tapi nonaktif, "menyusul"). Bahasa Inggris dan Indonesia. Disimpan di `config/mine2metal.properties` dan langsung berlaku tanpa restart |
+| **M11 Upscaling** ✅ | Dunia dirender ke target lebih kecil (tekstur `GameRenderer.mainRenderTarget` dipinjamkan selama `renderLevel`), lalu diperbesar dengan MetalFX di awal `render3dHud`, sehingga tangan, efek layar, post effect, dan GUI digambar di resolusi penuh. **Spatial**: `MTLFXSpatialScaler` (mode perceptual). **Temporal**: `MTLFXTemporalScaler`; proyeksi dunia digeser subpiksel tiap frame (Halton 2,3; jumlah fase 8 × rasio², minimal 8) lewat `CameraRenderState.projectionMatrix`, jadi Sodium ikut tergeser; proyeksi akhir (dengan bobbing dan nausea) ditangkap di `ProjectionMatrixBuffer.getBuffer` lalu jitter-nya dibuang lagi. Motion vector dihitung pass sendiri dari depth: tiap piksel di-unproject dengan matriks frame ini dan di-project dengan matriks frame sebelumnya, ditambah perpindahan kamera (posisi relatif kamera, presisi double di CPU). Pass yang sama menyalin depth ke Depth32Float, karena depth game punya stencil. History di-reset saat pertama, ukuran berubah, atau kamera berpindah > 16 blok. Temporal 100% = anti-aliasing saja |
 | **M12 Frame interpolation** | `MTLFXFrameInterpolator` (macOS 26+). Encode ke `MTLCommandBuffer` biasa, jadi **tidak** perlu Metal 4. Butuh warna frame sekarang dan sebelumnya, depth, motion, tekstur UI terpisah, matriks kamera, dan present dua frame per frame yang dirender. Menambah latensi input, jadi opsional |
 
 ### Perbaikan selama M10–M11: antrean present terpisah
@@ -67,6 +67,21 @@ Performa yang kadang anjlok (~100–150 FPS) ternyata bukan pekerjaan GPU. Metal
 Perbaikan: frame disalin ke salah satu dari dua tekstur staging di antrean render, lalu digambar ke drawable di **antrean present terpisah**, disinkronkan dengan dua `MTLEvent`. Saat vsync mati, frame baru dipresentasikan hanya setelah frame sebelumnya tampil di layar (`addPresentedHandler`), sehingga `nextDrawable` tidak pernah memblokir CPU (kemudian diganti thread present, lihat di bawah). Setelah itu 3 dari 3 run cepat: skenario ringan 1607–2513 FPS, berat 935–1113 FPS, waktu present 0,001 ms/frame.
 
 Upscaling spasial di window gametest kecil (854×480, Retina 1708×960) justru lebih lambat (1075–1163 FPS vs 1607–2513 tanpa upscaling): di resolusi ini GPU tidak dibatasi jumlah piksel, jadi pass MetalFX hanya menambah kerja. Upscaling bermanfaat saat GPU sibuk dengan piksel (resolusi tinggi, shader berat); belum diukur di skenario seperti itu.
+
+### Hasil upscaling temporal (2026-10-28)
+
+Gametest membandingkan screenshot dengan resolusi asli dari posisi dan arah kamera yang sama (PSNR, makin tinggi makin mirip; window 854×480):
+
+| Mode | Diam | Tepat setelah putar 30° dalam 10 tick |
+|---|---|---|
+| Temporal 50% | 30,3–30,5 dB | 29,1–29,2 dB |
+| Temporal 75% | 31,8 dB | — |
+| Temporal 100% (hanya AA) | 34,6–34,8 dB | — |
+
+- **Tanda jitter** untuk MetalFX dipilih dengan mengukur keempat kombinasi: (+1, +1) terbaik di dua run, (−1, −1) terburuk (~0,8 dB lebih rendah). Bisa diganti untuk eksperimen dengan `-Dmine2metal.temporal.jitterSign=x,y`.
+- **Motion vector benar**: setelah kamera berputar, kualitas hanya turun ~1 dB. Sebagai pembanding, gambar asli sebelum vs sesudah putaran itu bedanya 18 dB, jadi history yang tidak ikut digeser akan terlihat jelas.
+- Di window gametest yang kecil, temporal lebih lambat daripada render asli (MetalFX + pass motion vector lebih mahal daripada piksel yang dihemat), sama seperti spatial. Manfaatnya baru terasa di resolusi besar; belum diukur di window 4K.
+- Belum ditangani: entity, partikel, dan tekstur animasi bergerak sendiri, tapi motion vector hanya tahu gerak kamera, jadi bisa meninggalkan jejak samar. Bisa dikurangi nanti dengan reactive mask.
 
 ### Perbaikan setelah uji manual: thread present untuk vsync mati
 
@@ -81,7 +96,7 @@ Perbaikan ("fast sync"): saat vsync mati, layer tetap `displaySyncEnabled`, tapi
 | Overlay performa ✅ | `CAMetalLayer.developerHUDProperties` | 13 | — | Rendah |
 | Frame pacing / ProMotion | `present(afterMinimumDuration:)`, `displaySyncEnabled` | 10.15.4 | — | Rendah |
 | **Upscaling spasial** | `MTLFXSpatialScaler` | 13 | Warna dunia saja (GUI dirender terpisah di resolusi native) | Sedang |
-| **Upscaling temporal** | `MTLFXTemporalScaler` | 13 | Warna + depth + **motion vector** + jitter kamera | Tinggi |
+| **Upscaling temporal** ✅ | `MTLFXTemporalScaler` | 13 | Warna + depth + **motion vector** + jitter kamera | Tinggi |
 | Upscaling temporal + denoise | `MTLFXTemporalDenoisedScaler` | 26 | Seperti temporal, plus buffer untuk ray tracing | Di luar lingkup |
 | **Frame interpolation** | `MTLFXFrameInterpolator` | 26 | Warna, depth, motion, **tekstur UI terpisah**, frame sebelumnya | Sangat tinggi |
 | HDR/EDR | `CAMetalLayer.wantsExtendedDynamicRangeContent` | 10.11 | Shader yang menghasilkan nilai > 1.0 | Tinggi (butuh shader sendiri) |

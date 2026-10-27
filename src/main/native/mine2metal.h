@@ -162,6 +162,16 @@ M2M_EXPORT int32_t m2m_clear_region(int64_t ctx, int64_t color, float r, float g
                                     int32_t has_stencil, double depth_value, int32_t x, int32_t y, int32_t width,
                                     int32_t height, int32_t mip_level);
 
+M2M_EXPORT int32_t m2m_metalfx_temporal_supported(int64_t ctx);
+// The range of output/input size ratios the temporal scaler supports on this device.
+M2M_EXPORT void m2m_metalfx_temporal_scale_range(int64_t ctx, float *min_scale, float *max_scale);
+// Upscales color (rendered with a jitter of jitter_x, jitter_y pixels) into output with MetalFX temporal scaling.
+// matrices holds 36 floats, column-major: this frame's inverse unjittered view-projection, the previous frame's
+// view-projection, and the camera's movement since then (xyz, then padding). Motion vectors are derived from these
+// and depth. reset drops the history (first frame, cuts, teleports). Returns 0 if MetalFX refused the textures.
+M2M_EXPORT int32_t m2m_metalfx_temporal_upscale(int64_t ctx, int64_t color, int64_t depth, int64_t output,
+                                                const float *matrices, float jitter_x, float jitter_y, int32_t reset);
+
 // Timestamps
 
 // A pool of GPU timestamps, released with m2m_release.

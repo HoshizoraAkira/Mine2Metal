@@ -30,6 +30,29 @@ public final class MetalRenderer {
 		return current != null && current.spatialUpscalingSupported;
 	}
 
+	public static boolean supportsTemporalUpscaling() {
+		MetalDevice current = device;
+		return current != null && current.temporalUpscalingSupported;
+	}
+
+	/** True when the temporal scaler accepts upscaling by this output/input size ratio. */
+	public static boolean supportsTemporalRatio(float ratio) {
+		MetalDevice current = device;
+		return current != null && current.temporalUpscalingSupported && ratio >= current.temporalMinScale - 1.0e-3F
+				&& ratio <= current.temporalMaxScale + 1.0e-3F;
+	}
+
+	/**
+	 * Upscales color onto output with MetalFX temporal scaling; see {@code m2m_metalfx_temporal_upscale} for the matrices.
+	 * False if Metal is not active or MetalFX refused these textures.
+	 */
+	public static boolean upscaleTemporal(GpuTexture color, GpuTexture depth, GpuTexture output, float[] matrices, float jitterX, float jitterY,
+			boolean reset) {
+		MetalDevice current = device;
+		return current != null && current.encoder().upscaleTemporal((MetalTexture) color, (MetalTexture) depth, (MetalTexture) output, matrices, jitterX,
+				jitterY, reset);
+	}
+
 	/** Shows or hides the Metal Performance HUD over the game window; does nothing when Metal is not active. */
 	public static void setPerformanceHud(boolean enabled) {
 		MetalDevice current = device;

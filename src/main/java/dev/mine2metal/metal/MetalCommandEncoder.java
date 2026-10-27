@@ -401,6 +401,12 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
 		MetalNative.timestampWrite(this.ctx, ((MetalTimestampQueryPool) pool).handle, index);
 	}
 
+	/** MetalFX temporal upscale of color into output, in command order; false if MetalFX rejected the sizes or formats. */
+	boolean upscaleTemporal(MetalTexture color, MetalTexture depth, MetalTexture output, float[] matrices, float jitterX, float jitterY, boolean reset) {
+		this.flushPendingClears();
+		return MetalNative.metalFxTemporalUpscale(this.ctx, color.handle, depth.handle, output.handle, matrices, jitterX, jitterY, reset);
+	}
+
 	/** MetalFX spatial upscale of input into output, in command order; false if MetalFX rejected the sizes or formats. */
 	boolean upscaleSpatial(MetalTexture input, MetalTexture output) {
 		this.flushPendingClears();

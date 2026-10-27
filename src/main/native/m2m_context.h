@@ -51,6 +51,11 @@
 @property(nonatomic, strong) id<MTLLibrary> clearLibrary;
 @property(nonatomic, strong) NSMutableDictionary<NSNumber *, id<MTLRenderPipelineState>> *clearPipelines;
 @property(nonatomic, strong) id<MTLDepthStencilState> clearDepthState;
+// MetalFX temporal scaler state (temporal.m); the last one used, to reset history when it is rebuilt.
+@property(nonatomic, strong) id temporalUpscaler;
+@property(nonatomic, weak) id lastTemporalUpscaler;
+@property(nonatomic, strong) id<MTLRenderPipelineState> motionPipeline;
+@property(nonatomic, strong) id<MTLDepthStencilState> motionDepthState;
 // MetalFX spatial scaler state (metalfx.m), kept untyped here so other files need not import MetalFX.
 @property(nonatomic, strong) id spatialUpscaler;
 

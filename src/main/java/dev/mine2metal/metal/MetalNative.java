@@ -475,6 +475,34 @@ final class MetalNative {
 		}
 	}
 
+	static boolean metalFxTemporalSupported(long ctx) {
+		try {
+			return (int) Functions.METALFX_TEMPORAL_SUPPORTED.invokeExact(ctx) != 0;
+		} catch (Throwable t) {
+			throw rethrow(t);
+		}
+	}
+
+	/** {min, max} output/input size ratios the temporal scaler accepts. */
+	static float[] metalFxTemporalScaleRange(long ctx) {
+		try (Arena arena = Arena.ofConfined()) {
+			MemorySegment out = arena.allocate(JAVA_FLOAT, 2);
+			Functions.METALFX_TEMPORAL_SCALE_RANGE.invokeExact(ctx, out, out.asSlice(JAVA_FLOAT.byteSize()));
+			return out.toArray(JAVA_FLOAT);
+		} catch (Throwable t) {
+			throw rethrow(t);
+		}
+	}
+
+	static boolean metalFxTemporalUpscale(long ctx, long color, long depth, long output, float[] matrices, float jitterX, float jitterY, boolean reset) {
+		try (Arena arena = Arena.ofConfined()) {
+			MemorySegment params = arena.allocateFrom(JAVA_FLOAT, matrices);
+			return (int) Functions.METALFX_TEMPORAL_UPSCALE.invokeExact(ctx, color, depth, output, params, jitterX, jitterY, reset ? 1 : 0) != 0;
+		} catch (Throwable t) {
+			throw rethrow(t);
+		}
+	}
+
 	static boolean metalFxSpatialUpscale(long ctx, long input, long output) {
 		try {
 			return (int) Functions.METALFX_SPATIAL_UPSCALE.invokeExact(ctx, input, output) != 0;
@@ -699,6 +727,10 @@ final class MetalNative {
 				JAVA_LONG, JAVA_INT, JAVA_LONG, JAVA_LONG, JAVA_INT, JAVA_INT);
 
 		static final MethodHandle METALFX_SPATIAL_SUPPORTED = function("m2m_metalfx_spatial_supported", JAVA_INT, JAVA_LONG);
+		static final MethodHandle METALFX_TEMPORAL_SUPPORTED = function("m2m_metalfx_temporal_supported", JAVA_INT, JAVA_LONG);
+		static final MethodHandle METALFX_TEMPORAL_SCALE_RANGE = function("m2m_metalfx_temporal_scale_range", null, JAVA_LONG, ADDRESS, ADDRESS);
+		static final MethodHandle METALFX_TEMPORAL_UPSCALE = function("m2m_metalfx_temporal_upscale", JAVA_INT, JAVA_LONG, JAVA_LONG, JAVA_LONG, JAVA_LONG,
+				ADDRESS, JAVA_FLOAT, JAVA_FLOAT, JAVA_INT);
 		static final MethodHandle METALFX_SPATIAL_UPSCALE = function("m2m_metalfx_spatial_upscale", JAVA_INT, JAVA_LONG, JAVA_LONG, JAVA_LONG);
 
 		static final MethodHandle TAKE_PRESENTED_TIMES = function("m2m_take_presented_times", JAVA_LONG, JAVA_LONG, ADDRESS, JAVA_LONG);

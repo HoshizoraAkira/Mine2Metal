@@ -115,8 +115,13 @@ public class MetalWorldGameTest implements FabricClientGameTest {
 				singleplayer.getServer().runCommand(returnAbove);
 			}
 
+			if (Boolean.getBoolean("mine2metal.test.temporalOnly")) {
+				checkTemporalUpscaling(context, singleplayer, above);
+				return;
+			}
 			if (backend.equals("Metal")) {
 				checkSpatialUpscaling(context, singleplayer, returnAbove);
+				checkTemporalUpscaling(context, singleplayer, above);
 			}
 
 			singleplayer.getServer().runCommand("time set midnight");
@@ -311,6 +316,70 @@ public class MetalWorldGameTest implements FabricClientGameTest {
 			}
 		}
 		LOGGER.info("Partial clear checks passed");
+	}
+
+	/**
+	 * Temporal upscaling against native resolution, for each sign of the jitter MetalFX is told about: still, where only
+	 * the jitter matters, and right after a turn, where the motion vectors must carry the history along. The
+	 * screenshots are compared afterwards (PSNR against the native ones).
+	 */
+	private static void checkTemporalUpscaling(ClientGameTestContext context, TestSingleplayerContext singleplayer, Vec3 above) {
+		MetalSettings settings = MetalSettings.get();
+		String still = String.format(Locale.ROOT, "tp @a %.3f %.3f %.3f 0 50", above.x, above.y, above.z);
+		String turned = String.format(Locale.ROOT, "tp @a %.3f %.3f %.3f 30 50", above.x, above.y, above.z);
+
+		context.runOnClient(client -> settings.upscaling = MetalSettings.Upscaling.OFF);
+		hover(context, singleplayer, turned);
+		context.takeScreenshot("mine2metal-native-turned");
+		hover(context, singleplayer, still);
+		context.takeScreenshot("mine2metal-native-still");
+
+		String[] signs = Boolean.getBoolean("mine2metal.test.jitterSigns") ? new String[] {"1,1", "-1,-1", "-1,1", "1,-1"} : new String[] {"1,1"};
+		for (String sign : signs) {
+			String name = sign.replace(",", "_").replace("-1", "m").replace("1", "p");
+			System.setProperty("mine2metal.temporal.jitterSign", sign);
+			context.runOnClient(client -> {
+				settings.upscaling = MetalSettings.Upscaling.TEMPORAL;
+				settings.renderScale = 50;
+			});
+			hover(context, singleplayer, still);
+			context.takeScreenshot("mine2metal-temporal-50-still-" + name);
+			// Turn by 3 degrees a tick, then capture right away: stale history shows as ghosting.
+			for (int yaw = 3; yaw <= 30; yaw += 3) {
+				singleplayer.getServer().runCommand(String.format(Locale.ROOT, "tp @a %.3f %.3f %.3f %d 50", above.x, above.y, above.z, yaw));
+				context.waitTicks(1);
+			}
+			context.takeScreenshot("mine2metal-temporal-50-turned-" + name);
+			LOGGER.info("Average FPS from above with MetalFX temporal at 50% (jitter sign {}): {}", sign, averageFps(context));
+		}
+		System.clearProperty("mine2metal.temporal.jitterSign");
+
+		for (int scale : new int[] {75, 100}) {
+			context.runOnClient(client -> {
+				settings.upscaling = MetalSettings.Upscaling.TEMPORAL;
+				settings.renderScale = scale;
+			});
+			hover(context, singleplayer, still);
+			context.takeScreenshot("mine2metal-temporal-" + scale + "-still");
+			LOGGER.info("Average FPS from above with MetalFX temporal at {}%: {}", scale, averageFps(context));
+		}
+		context.runOnClient(client -> settings.upscaling = MetalSettings.Upscaling.OFF);
+		context.waitTicks(10);
+	}
+
+	/**
+	 * Teleports and keeps flying there, so screenshots taken the same number of ticks later show the same view. The
+	 * teleport stops flight, so flying is switched on again after it.
+	 */
+	private static void hover(ClientGameTestContext context, TestSingleplayerContext singleplayer, String teleport) {
+		singleplayer.getServer().runCommand(teleport);
+		context.waitTicks(1);
+		context.runOnClient(client -> {
+			client.player.getAbilities().flying = true;
+			client.player.onUpdateAbilities();
+		});
+		singleplayer.getServer().runCommand(teleport);
+		context.waitTicks(30);
 	}
 
 	/** Metal comes first only for the "Default" graphics API, and the config file can turn it off. */

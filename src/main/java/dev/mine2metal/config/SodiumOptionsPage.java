@@ -7,7 +7,6 @@ import net.caffeinemc.mods.sodium.api.config.structure.ConfigBuilder;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.Identifier;
 
-import java.util.EnumSet;
 
 /**
  * The "Metal" page in Sodium's video settings, registered through the {@code sodium:config_api_user} entrypoint. Only
@@ -33,9 +32,9 @@ public final class SodiumOptionsPage implements ConfigEntryPoint {
 										.setName(Component.translatable("mine2metal.options.upscaling"))
 										.setTooltip(value -> MetalOptionTexts.upscalingTooltip())
 										.setElementNameProvider(MetalOptionTexts::upscalingName)
-										.setAllowedValues(EnumSet.of(MetalSettings.Upscaling.OFF, MetalSettings.Upscaling.SPATIAL))
+										.setAllowedValues(MetalOptionTexts.upscalingModes())
 										.setImpact(OptionImpact.VARIES)
-										.setEnabled(MetalRenderer.supportsSpatialUpscaling())
+										.setEnabled(MetalOptionTexts.upscalingAvailable())
 										.setStorageHandler(settings::save)
 										.setDefaultValue(MetalSettings.Upscaling.OFF)
 										.setBinding(value -> settings.upscaling = value, () -> settings.upscaling))
@@ -45,7 +44,7 @@ public final class SodiumOptionsPage implements ConfigEntryPoint {
 										.setRange(MetalSettings.MIN_RENDER_SCALE, MetalSettings.MAX_RENDER_SCALE, MetalSettings.RENDER_SCALE_STEP)
 										.setValueFormatter(MetalOptionTexts::percent)
 										.setImpact(OptionImpact.HIGH)
-										.setEnabledProvider(state -> MetalRenderer.supportsSpatialUpscaling()
+										.setEnabledProvider(state -> MetalOptionTexts.upscalingAvailable()
 												&& state.readEnumOption(UPSCALING, MetalSettings.Upscaling.class) != MetalSettings.Upscaling.OFF, UPSCALING)
 										.setStorageHandler(settings::save)
 										.setDefaultValue(75)

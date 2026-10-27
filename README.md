@@ -54,7 +54,7 @@ Tambahkan `-PnoSodium` untuk menguji renderer chunk vanilla. Untuk pembanding Op
 - Dengan Sodium: Options → Video Settings → di sidebar kiri "mine2metal" → "Metal".
 - Tanpa Sodium: Options → Video Settings → tombol "Metal Settings..." di bagian bawah.
 
-Isinya: **Upscaling** (Off / Spatial; Temporal menyusul), **Render Scale** 50–100%, dan **Frame Interpolation** (menyusul, butuh macOS 26+). Perubahan langsung berlaku dan disimpan di `config/mine2metal.properties`.
+Isinya: **Upscaling** (Off / Spatial / Temporal), **Render Scale** 50–100%, dan **Frame Interpolation** (menyusul, butuh macOS 26+). Perubahan langsung berlaku dan disimpan di `config/mine2metal.properties`.
 
 ### Mematikan Metal
 

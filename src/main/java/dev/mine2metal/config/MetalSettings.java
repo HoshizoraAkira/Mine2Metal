@@ -22,7 +22,6 @@ public final class MetalSettings {
 	public enum Upscaling {
 		OFF,
 		SPATIAL,
-		/** Not implemented yet; listed so the settings screens can show it as coming. */
 		TEMPORAL
 	}
 
@@ -87,8 +86,8 @@ public final class MetalSettings {
 				enabled=%s
 				#
 				# off: render the world at full resolution
-				# spatial: render the world at renderScale percent and upscale it with MetalFX
-				# temporal: not available yet
+				# spatial: render the world at renderScale percent and upscale it with MetalFX, frame by frame
+				# temporal: the same, combining several frames for more detail; at 100 it only smooths edges
 				upscaling=%s
 				renderScale=%d
 				#

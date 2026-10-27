@@ -21,13 +21,13 @@ public final class MetalSettingsScreen extends OptionsSubScreen {
 	@Override
 	protected void addOptions() {
 		MetalSettings settings = MetalSettings.get();
-		boolean upscalingAvailable = MetalRenderer.supportsSpatialUpscaling();
+		boolean upscalingAvailable = MetalOptionTexts.upscalingAvailable();
 
 		RenderScaleSlider scale = new RenderScaleSlider(settings);
 		scale.active = upscalingAvailable && settings.upscaling != MetalSettings.Upscaling.OFF;
 
 		CycleButton<MetalSettings.Upscaling> upscaling = CycleButton.builder(MetalOptionTexts::upscalingName, settings.upscaling)
-				.withValues(MetalSettings.Upscaling.OFF, MetalSettings.Upscaling.SPATIAL)
+				.withValues(MetalOptionTexts.upscalingModes())
 				.withTooltip(value -> Tooltip.create(MetalOptionTexts.upscalingTooltip()))
 				.create(Component.translatable("mine2metal.options.upscaling"), (button, value) -> {
 					settings.upscaling = value;
