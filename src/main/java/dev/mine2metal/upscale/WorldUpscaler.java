@@ -12,7 +12,8 @@ import org.jspecify.annotations.Nullable;
 
 /**
  * Renders the world (and the hand) into a smaller target and upscales it onto the window-sized main target with
- * MetalFX before post effects and the GUI, which stay at full resolution. Driven from {@code GameRendererMixin}.
+ * MetalFX before post effects and the GUI, which stay at full resolution. Driven from {@code GameRendererMixin}, which
+ * calls {@link #begin}, then {@link #end} if the world pass finished, then always {@link #abandonFrame}.
  */
 public final class WorldUpscaler {
 	private static final Vector4f CLEAR_COLOR = new Vector4f(0.0F, 0.0F, 0.0F, 0.0F);
@@ -33,6 +34,9 @@ public final class WorldUpscaler {
 
 	/** At the start of the world pass: returns the target to render into instead of main. */
 	public static RenderTarget begin(RenderTarget main) {
+		if (main == scaled) {
+			throw new IllegalStateException("The scaled world target leaked into GameRenderer.mainRenderTarget");
+		}
 		if (!isActive()) {
 			release();
 			return main;
@@ -55,12 +59,12 @@ public final class WorldUpscaler {
 		return target;
 	}
 
-	/** At the end of the world pass: upscales onto the main target and returns it. */
-	public static RenderTarget end(RenderTarget current) {
+	/** At the end of the world pass: upscales the scaled world onto the main target, if this frame used one. */
+	public static void end() {
 		RenderTarget main = nativeTarget;
 		TextureTarget target = scaled;
 		if (main == null || target == null) {
-			return current;
+			return;
 		}
 		nativeTarget = null;
 
@@ -72,7 +76,11 @@ public final class WorldUpscaler {
 			}
 			target.blitAndBlendToTexture(main.getColorTextureView(), main.getDepthTextureView());
 		}
-		return main;
+	}
+
+	/** Forgets the frame in progress; called whether or not the world pass finished. */
+	public static void abandonFrame() {
+		nativeTarget = null;
 	}
 
 	private static void release() {

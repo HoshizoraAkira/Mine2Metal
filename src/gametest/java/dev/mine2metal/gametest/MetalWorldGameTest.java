@@ -174,6 +174,20 @@ public class MetalWorldGameTest implements FabricClientGameTest {
 			context.takeScreenshot("mine2metal-spatial-" + scale);
 			LOGGER.info("Average FPS from above with MetalFX spatial at {}%: {}", scale, averageFps(context));
 		}
+		// Players flip these while the world keeps rendering behind the settings screen; the scaled target is created,
+		// resized and destroyed under them. Includes a window resize with upscaling on.
+		for (int i = 0; i < 30; i++) {
+			int step = i;
+			context.runOnClient(client -> {
+				settings.upscaling = step % 3 == 2 ? MetalSettings.Upscaling.OFF : MetalSettings.Upscaling.SPATIAL;
+				settings.renderScale = MetalSettings.clampScale(50 + step * 7 % 50);
+			});
+			if (step == 10) {
+				context.getInput().resizeWindow(1100, 700);
+			}
+			context.waitTicks(1);
+		}
+		context.getInput().resizeWindow(854, 480);
 		context.runOnClient(client -> settings.upscaling = MetalSettings.Upscaling.OFF);
 		context.waitTicks(10);
 	}
