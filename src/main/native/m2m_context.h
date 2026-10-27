@@ -26,22 +26,27 @@
 @property(nonatomic) NSUInteger passWidth;
 @property(nonatomic) NSUInteger passHeight;
 
-// Presentation pacing for vsync-off: see m2m_present.
+// Presentation (present.m). With vsync on, frames go through two staging textures to a separate present queue.
 @property(nonatomic) BOOL layerVsync;
-@property(nonatomic) CFTimeInterval refreshInterval;
-@property(nonatomic) CFTimeInterval lastPresentTime;
-// Present runs on its own queue (see m2m_present), fed through two staging textures guarded by events.
 @property(nonatomic, strong) id<MTLCommandQueue> presentQueue;
 @property(nonatomic, strong) id<MTLEvent> frameReady;
 @property(nonatomic, strong) id<MTLEvent> presentDone;
 @property(nonatomic, strong) NSMutableArray *presentStaging;
 @property(nonatomic) int64_t presentCount;
-// Presents sent but not yet shown (or dropped) by the compositor; changed under @synchronized(ctx) because Core
-// Animation's thread decrements it.
-@property(nonatomic) int32_t presentsInFlight;
-// When presented drawables actually reached the screen (CACurrentMediaTime seconds), for the frame stats.
+// With vsync off, a present thread shows the newest finished frame from these slots once per refresh. All of
+// the following are guarded by latestLock.
+@property(nonatomic, strong) NSCondition *latestLock;
+@property(nonatomic, strong) NSMutableArray *latestSlots;
+@property(nonatomic) int32_t latestSlot;
+// Bit i is set while a present command buffer still reads slot i.
+@property(nonatomic) uint32_t presentingSlots;
+@property(nonatomic) int32_t writingSlot;
+@property(nonatomic) uint64_t latestFrame;
+@property(nonatomic) uint64_t frameCounter;
+@property(nonatomic) BOOL presentThreadRunning;
+@property(nonatomic, strong) dispatch_semaphore_t presentThreadStopped;
+// When presented drawables actually reached the screen (CACurrentMediaTime seconds, 0 if dropped), for the stats.
 @property(nonatomic, strong) NSMutableArray<NSNumber *> *presentedTimes;
-
 // MetalFX spatial scaler state (metalfx.m), kept untyped here so other files need not import MetalFX.
 @property(nonatomic, strong) id spatialUpscaler;
 

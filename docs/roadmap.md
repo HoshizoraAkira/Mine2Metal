@@ -64,9 +64,15 @@ Catatan pengukuran: FPS menghitung frame yang dirender. Saat vsync mati, backend
 
 Performa yang kadang anjlok (~100–150 FPS) ternyata bukan pekerjaan GPU. Metal System Trace saat mode lambat menunjukkan GPU menganggur ~84% dan latensi CPU→GPU p50 12 ms, maksimum 16,4 ms (satu periode refresh 60 Hz), dibanding 0,8 ms saat cepat. Command buffer frame yang berisi pass present ke drawable harus menunggu di GPU sampai compositor melepas drawable itu, dan karena antreannya berurutan, semua frame berikutnya ikut menunggu.
 
-Perbaikan: frame disalin ke salah satu dari dua tekstur staging di antrean render, lalu digambar ke drawable di **antrean present terpisah**, disinkronkan dengan dua `MTLEvent`. Saat vsync mati, frame baru dipresentasikan hanya setelah frame sebelumnya tampil di layar (`addPresentedHandler`), sehingga `nextDrawable` tidak pernah memblokir CPU. Setelah itu 3 dari 3 run cepat: skenario ringan 1607–2513 FPS, berat 935–1113 FPS, waktu present 0,001 ms/frame.
+Perbaikan: frame disalin ke salah satu dari dua tekstur staging di antrean render, lalu digambar ke drawable di **antrean present terpisah**, disinkronkan dengan dua `MTLEvent`. Saat vsync mati, frame baru dipresentasikan hanya setelah frame sebelumnya tampil di layar (`addPresentedHandler`), sehingga `nextDrawable` tidak pernah memblokir CPU (kemudian diganti thread present, lihat di bawah). Setelah itu 3 dari 3 run cepat: skenario ringan 1607–2513 FPS, berat 935–1113 FPS, waktu present 0,001 ms/frame.
 
 Upscaling spasial di window gametest kecil (854×480, Retina 1708×960) justru lebih lambat (1075–1163 FPS vs 1607–2513 tanpa upscaling): di resolusi ini GPU tidak dibatasi jumlah piksel, jadi pass MetalFX hanya menambah kerja. Upscaling bermanfaat saat GPU sibuk dengan piksel (resolusi tinggi, shader berat); belum diukur di skenario seperti itu.
+
+### Perbaikan setelah uji manual: thread present untuk vsync mati
+
+Saat uji manual di window hampir 4K dengan vsync mati, game terasa patah-patah walau FPS tinggi. Statistik `presentedTime` menunjukkan hanya ~25–40 frame per detik yang benar-benar tampil di layar, dengan jeda p95 33,3 ms dan hampir separuh frame terlambat satu refresh. Saat GPU sibuk (~150 FPS), frame yang dipresentasikan dari thread render sering selesai sedikit setelah batas refresh, jadi tampilnya bergantian 16,7 dan 33,3 ms. Dengan vsync nyala semuanya mulus (gap 16,7 ms, 0 terlambat).
+
+Perbaikan ("fast sync"): saat vsync mati, layer tetap `displaySyncEnabled`, tapi thread render tidak lagi mempresentasikan. Setiap frame disalin ke salah satu dari tiga slot, lalu ditandai sebagai frame terbaru setelah GPU selesai. Thread present terpisah (`mine2metal present`) menunggu `nextDrawable`, yang berdetak sesuai refresh layar, lalu selalu menampilkan frame terbaru yang sudah selesai. Game tetap merender tanpa batas tanpa pernah menunggu layar, dan layar mendapat satu frame baru di setiap refresh tanpa tearing. Thread dihentikan saat surface dikonfigurasi ulang atau ditutup. Di gametest (window terlihat, vsync mati, render ~1400 FPS) hasilnya 300 frame tampil per 5 detik, gap p50/p95 16,7 ms, 0 terlambat. Saat vsync nyala, jalurnya tetap seperti sebelumnya.
 
 ## Fitur khas Metal (setelah M5)
 

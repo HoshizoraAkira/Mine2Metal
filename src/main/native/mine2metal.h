@@ -162,10 +162,14 @@ M2M_EXPORT int32_t m2m_metalfx_spatial_upscale(int64_t ctx, int64_t input, int64
 // compositor dropped; returns how many.
 M2M_EXPORT int64_t m2m_take_presented_times(int64_t ctx, double *out, int64_t capacity);
 
+// With vsync off this starts a present thread that shows the newest finished frame once per refresh; with vsync
+// on frames are presented from the render thread and nextDrawable caps the frame rate.
 M2M_EXPORT void m2m_layer_configure(int64_t ctx, int64_t layer, int32_t width, int32_t height, int32_t vsync);
-// Draws texture onto the layer's next drawable and schedules its present on the current
-// command buffer. Returns 1 when presented, 0 when no drawable is available (for example a
-// hidden window), and 2 when skipped because vsync is off and this refresh already has a frame.
+// Stops the present thread before the layer goes away.
+M2M_EXPORT void m2m_layer_detach(int64_t ctx);
+// Hands the finished frame to the display: with vsync on it is presented now (1, or 0 without a drawable,
+// for example in a hidden window); with vsync off it is published for the present thread (1), or skipped
+// (2) while the previous frame's copy is still in flight.
 M2M_EXPORT int32_t m2m_present(int64_t ctx, int64_t layer, int64_t texture);
 
 #endif

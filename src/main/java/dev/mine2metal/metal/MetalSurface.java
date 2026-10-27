@@ -62,6 +62,8 @@ final class MetalSurface implements GpuSurfaceBackend {
 
 	@Override
 	public void close() {
+		// With vsync off a native thread presents to the layer; it has to stop before the view goes away.
+		MetalNative.layerDetach(this.ctx);
 		SDLMetal.SDL_Metal_DestroyView(this.view);
 	}
 }

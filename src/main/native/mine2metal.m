@@ -79,6 +79,10 @@ int64_t m2m_context_create(int64_t device_handle, int32_t debug, char *error, in
 		ctx.frameReady = [ctx.device newEvent];
 		ctx.presentDone = [ctx.device newEvent];
 		ctx.presentStaging = [NSMutableArray arrayWithObjects:[NSNull null], [NSNull null], nil];
+		ctx.latestLock = [NSCondition new];
+		ctx.latestSlots = [NSMutableArray arrayWithObjects:[NSNull null], [NSNull null], [NSNull null], nil];
+		ctx.latestSlot = -1;
+		ctx.writingSlot = -1;
 		ctx.inFlight = [NSMutableArray array];
 		ctx.gpuSecondsByLabel = [NSMutableDictionary dictionary];
 		ctx.presentedTimes = [NSMutableArray array];

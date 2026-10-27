@@ -145,6 +145,8 @@ final class MetalDevice implements GpuDeviceBackend {
 	public void close() {
 		MetalRenderer.deviceClosed(this);
 		this.encoder.close();
+		// The present thread holds the context; a no-op if the surface already stopped it.
+		MetalNative.layerDetach(this.ctx);
 		MetalNative.release(this.ctx);
 	}
 

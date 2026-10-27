@@ -502,6 +502,14 @@ final class MetalNative {
 		}
 	}
 
+	static void layerDetach(long ctx) {
+		try {
+			Functions.LAYER_DETACH.invokeExact(ctx);
+		} catch (Throwable t) {
+			throw rethrow(t);
+		}
+	}
+
 	static boolean present(long ctx, long layer, long texture) {
 		try {
 			return (int) Functions.PRESENT.invokeExact(ctx, layer, texture) != 0;
@@ -643,6 +651,7 @@ final class MetalNative {
 
 		static final MethodHandle TAKE_PRESENTED_TIMES = function("m2m_take_presented_times", JAVA_LONG, JAVA_LONG, ADDRESS, JAVA_LONG);
 		static final MethodHandle LAYER_CONFIGURE = function("m2m_layer_configure", null, JAVA_LONG, JAVA_LONG, JAVA_INT, JAVA_INT, JAVA_INT);
+		static final MethodHandle LAYER_DETACH = function("m2m_layer_detach", null, JAVA_LONG);
 		static final MethodHandle PRESENT = function("m2m_present", JAVA_INT, JAVA_LONG, JAVA_LONG, JAVA_LONG);
 
 		private Functions() {
