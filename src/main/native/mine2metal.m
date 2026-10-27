@@ -1,4 +1,5 @@
 #import <Foundation/Foundation.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "m2m_context.h"
@@ -35,8 +36,11 @@ void m2m_copy_string(char *out, int64_t capacity, NSString *message) {
 	out[copied] = '\0';
 }
 
-int64_t m2m_device_create(void) {
+int64_t m2m_device_create(int32_t validation) {
 	@autoreleasepool {
+		if (validation) {
+			setenv("MTL_DEBUG_LAYER", "1", 1);
+		}
 		id<MTLDevice> device = MTLCreateSystemDefaultDevice();
 		return device ? m2m_retain(device) : 0;
 	}
@@ -50,6 +54,10 @@ int64_t m2m_device_name(int64_t device, char *out, int64_t capacity) {
 	}
 }
 
+int32_t m2m_device_validation_active(int64_t device) {
+	return [NSStringFromClass([m2m_borrow(device) class]) containsString:@"Debug"] ? 1 : 0;
+}
+
 int32_t m2m_device_supports_metal3(int64_t device) {
 	return [(id<MTLDevice>)m2m_borrow(device) supportsFamily:MTLGPUFamilyMetal3] ? 1 : 0;
 }
@@ -60,10 +68,12 @@ void m2m_release(int64_t object) {
 	}
 }
 
-int64_t m2m_context_create(int64_t device_handle, char *error, int64_t error_capacity) {
+int64_t m2m_context_create(int64_t device_handle, int32_t debug, char *error, int64_t error_capacity) {
 	@autoreleasepool {
 		M2MContext *ctx = [M2MContext new];
 		ctx.device = m2m_borrow(device_handle);
+		ctx.debug = debug != 0;
+		ctx.errors = [NSMutableArray array];
 		ctx.queue = [ctx.device newCommandQueue];
 		ctx.inFlight = [NSMutableArray array];
 		ctx.gpuSecondsByLabel = [NSMutableDictionary dictionary];
@@ -106,9 +116,34 @@ int64_t m2m_context_max_buffer_length(int64_t ctx) {
 
 id<MTLCommandBuffer> m2m_command_buffer(M2MContext *ctx) {
 	if (!ctx.commandBuffer) {
-		ctx.commandBuffer = [ctx.queue commandBuffer];
+		if (ctx.debug) {
+			MTLCommandBufferDescriptor *descriptor = [MTLCommandBufferDescriptor new];
+			descriptor.errorOptions = MTLCommandBufferErrorOptionEncoderExecutionStatus;
+			ctx.commandBuffer = [ctx.queue commandBufferWithDescriptor:descriptor];
+		} else {
+			ctx.commandBuffer = [ctx.queue commandBuffer];
+		}
 	}
 	return ctx.commandBuffer;
+}
+
+static void m2m_record_error(M2MContext *ctx, id<MTLCommandBuffer> failed) {
+	NSError *error = failed.error;
+	NSMutableString *message = [NSMutableString stringWithFormat:@"Command buffer failed: %@", error.localizedDescription];
+	for (id<MTLCommandBufferEncoderInfo> info in error.userInfo[MTLCommandBufferEncoderInfoErrorKey]) {
+		if (info.errorState == MTLCommandEncoderErrorStateFaulted) {
+			[message appendFormat:@" (faulted in encoder \"%@\")", info.label];
+		}
+	}
+	@synchronized(ctx.errors) {
+		if (ctx.errors.count < 32) {
+			[ctx.errors addObject:message];
+		}
+	}
+	if (error.code == MTLCommandBufferErrorDeviceRemoved || error.code == MTLCommandBufferErrorAccessRevoked) {
+		ctx.deviceLost = YES;
+	}
+	ctx.errorCount += 1;
 }
 
 void m2m_end_encoding(M2MContext *ctx) {
@@ -144,6 +179,9 @@ int64_t m2m_context_commit(int64_t handle, const char *label) {
 		// Completion order on one queue is submission order, so the latest index covers all before it.
 		[commandBuffer addCompletedHandler:^(id<MTLCommandBuffer> finished) {
 			M2MContext *strongCtx = weakCtx;
+			if (finished.status == MTLCommandBufferStatusError) {
+				m2m_record_error(strongCtx, finished);
+			}
 			double seconds = finished.GPUEndTime - finished.GPUStartTime;
 			strongCtx.gpuSeconds += seconds;
 			if (timingLabel) {
@@ -192,6 +230,23 @@ int64_t m2m_context_take_label_times(int64_t handle, char *out, int64_t capacity
 		}
 		m2m_copy_string(out, capacity, text);
 		return (int64_t)text.length;
+	}
+}
+
+int64_t m2m_context_error_count(int64_t ctx) {
+	return m2m_ctx(ctx).errorCount;
+}
+
+int32_t m2m_context_take_errors(int64_t handle, char *out, int64_t capacity) {
+	@autoreleasepool {
+		M2MContext *ctx = m2m_ctx(handle);
+		NSString *text;
+		@synchronized(ctx.errors) {
+			text = [ctx.errors componentsJoinedByString:@"\n"];
+			[ctx.errors removeAllObjects];
+		}
+		m2m_copy_string(out, capacity, text);
+		return ctx.deviceLost ? 1 : 0;
 	}
 }
 

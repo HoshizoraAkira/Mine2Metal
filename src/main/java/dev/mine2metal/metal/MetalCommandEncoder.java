@@ -7,6 +7,7 @@ import com.mojang.renderpearl.api.buffers.TransientMemory;
 import com.mojang.renderpearl.api.commands.GpuFence;
 import com.mojang.renderpearl.api.commands.GpuQueryPool;
 import com.mojang.renderpearl.api.commands.RenderPassDescriptor;
+import com.mojang.renderpearl.api.device.GpuDeviceLossException;
 import com.mojang.renderpearl.api.textures.GpuTexture;
 import com.mojang.renderpearl.backend.api.CommandEncoderBackend;
 import com.mojang.renderpearl.backend.api.RenderPassBackend;
@@ -19,6 +20,7 @@ import org.jspecify.annotations.Nullable;
 
 import java.nio.ByteBuffer;
 import java.util.ArrayDeque;
+import java.util.ArrayList;
 import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
@@ -31,8 +33,6 @@ import java.util.OptionalDouble;
  */
 final class MetalCommandEncoder implements CommandEncoderBackend {
 	private static final int MAX_FRAMES_IN_FLIGHT = 3;
-	/** Names render encoders after their renderpearl pass, for Xcode captures and Instruments traces. */
-	private static final boolean LABELS = Boolean.getBoolean("mine2metal.labels") || FrameStats.ENABLED;
 
 	private final long ctx;
 	private final MetalTransientMemory transientMemory;
@@ -40,11 +40,17 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
 	/** Index the commands being recorded will get when committed. */
 	private long recordingIndex = 1L;
 	private final @Nullable FrameStats stats;
+	/** Names render encoders after their renderpearl pass, for Xcode captures and Instruments traces. */
+	private final boolean labels;
+	private long gpuErrorsSeen;
+	/** GPU errors logged but not yet handed to {@link MetalDevice#getLastDebugMessages}. */
+	private final List<String> gpuErrors = new ArrayList<>();
 	private boolean warnedPartialClear;
 	private final Map<MetalTexture, PendingClear> pendingClears = new IdentityHashMap<>();
 
-	MetalCommandEncoder(long ctx) {
+	MetalCommandEncoder(long ctx, boolean labels) {
 		this.ctx = ctx;
+		this.labels = labels || Boolean.getBoolean("mine2metal.labels") || FrameStats.ENABLED;
 		this.transientMemory = new MetalTransientMemory(ctx, this);
 		this.stats = FrameStats.ENABLED ? new FrameStats(ctx) : null;
 	}
@@ -67,9 +73,33 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
 		this.commit();
 		this.waitForGpu(this.recordingIndex - MAX_FRAMES_IN_FLIGHT);
 		this.runCompleted();
+		this.checkGpuErrors();
 		if (this.stats != null) {
 			this.stats.endFrame();
 		}
+	}
+
+	/** Logs command buffers that failed on the GPU; a lost device ends the game with a crash report. */
+	private void checkGpuErrors() {
+		long count = MetalNative.contextErrorCount(this.ctx);
+		if (count == this.gpuErrorsSeen) {
+			return;
+		}
+		this.gpuErrorsSeen = count;
+		MetalNative.GpuErrors errors = MetalNative.contextTakeErrors(this.ctx);
+		for (String message : errors.messages()) {
+			Mine2Metal.LOGGER.error("Metal: {}", message);
+		}
+		this.gpuErrors.addAll(errors.messages());
+		if (errors.deviceLost()) {
+			throw new GpuDeviceLossException("The Metal device was lost: " + String.join("; ", errors.messages()));
+		}
+	}
+
+	List<String> takeGpuErrors() {
+		List<String> messages = List.copyOf(this.gpuErrors);
+		this.gpuErrors.clear();
+		return messages;
 	}
 
 	private void waitForGpu(long index) {
@@ -148,7 +178,7 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
 			stencilFormat = format.hasStencilAspect() ? depthFormat : 0;
 		}
 
-		if (LABELS) {
+		if (this.labels) {
 			MetalNative.passOpen(this.ctx, descriptor.label().get());
 		} else {
 			MetalNative.passOpen(this.ctx);
@@ -229,7 +259,7 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
 			} else {
 				MetalNative.passDepth(this.ctx, texture.handle, texture.getFormat().hasStencilAspect(), true, clear.depth());
 			}
-			if (LABELS) {
+			if (this.labels) {
 				MetalNative.passOpen(this.ctx, "Clear");
 			} else {
 				MetalNative.passOpen(this.ctx);

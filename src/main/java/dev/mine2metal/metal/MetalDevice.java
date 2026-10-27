@@ -34,11 +34,13 @@ final class MetalDevice implements GpuDeviceBackend {
 	private final long ctx;
 	private final MetalCommandEncoder encoder;
 	private final DeviceInfo info;
+	private final boolean validation;
 
 	/** Takes ownership of ctx. */
-	MetalDevice(long ctx, String name) {
+	MetalDevice(long ctx, String name, boolean validation, boolean labels) {
 		this.ctx = ctx;
-		this.encoder = new MetalCommandEncoder(ctx);
+		this.validation = validation;
+		this.encoder = new MetalCommandEncoder(ctx, labels);
 		this.info = new DeviceInfo(
 				name,
 				"Apple",
@@ -119,12 +121,12 @@ final class MetalDevice implements GpuDeviceBackend {
 
 	@Override
 	public List<String> getLastDebugMessages() {
-		return List.of();
+		return this.encoder.takeGpuErrors();
 	}
 
 	@Override
 	public boolean isDebuggingEnabled() {
-		return false;
+		return this.validation;
 	}
 
 	@Override

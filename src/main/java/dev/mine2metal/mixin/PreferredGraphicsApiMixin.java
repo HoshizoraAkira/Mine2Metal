@@ -9,14 +9,15 @@ import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 
 /**
- * Puts Metal first in whatever order the player's graphics API setting produces. No enum value is added: Sodium's
- * options screen labels exactly the three vanilla values.
+ * Puts Metal first when the graphics API setting is "Default"; an explicit OpenGL or Vulkan choice is respected, which
+ * doubles as the in-game way to turn Metal off. No enum value is added: Sodium's options screen labels exactly the
+ * three vanilla values.
  */
 @Mixin(PreferredGraphicsApi.class)
 abstract class PreferredGraphicsApiMixin {
 	@ModifyReturnValue(method = "getBackendsToTry", at = @At("RETURN"))
 	private GpuBackend[] mine2metal$preferMetal(GpuBackend[] backends) {
-		if (!Mine2Metal.isEnabled() || !Mine2Metal.isSupportedPlatform()) {
+		if ((Object) this != PreferredGraphicsApi.DEFAULT || !Mine2Metal.isSupportedPlatform() || !Mine2Metal.isEnabled()) {
 			return backends;
 		}
 

@@ -33,7 +33,7 @@ public final class MetalBackend implements GpuBackend {
 
 	@Override
 	public GpuDevice createDevice(GpuDebugOptions debugOptions) throws BackendCreationException {
-		long device = MetalNative.deviceCreate();
+		long device = MetalNative.deviceCreate(debugOptions.useValidationLayers());
 		if (device == 0L) {
 			throw new BackendCreationException("No Metal device available", BackendCreationException.Reason.PLATFORM_ERROR);
 		}
@@ -43,9 +43,13 @@ public final class MetalBackend implements GpuBackend {
 			if (!MetalNative.deviceSupportsMetal3(device)) {
 				throw new BackendCreationException(name + " does not support Metal 3", BackendCreationException.Reason.PLATFORM_ERROR);
 			}
-			long ctx = MetalNative.contextCreate(device);
-			Mine2Metal.LOGGER.info("Rendering with Metal 3 on {}", name);
-			return new FrontendGpuDevice(new MetalDevice(ctx, name));
+			boolean validation = MetalNative.deviceValidationActive(device);
+			if (debugOptions.useValidationLayers() && !validation) {
+				Mine2Metal.LOGGER.warn("Metal API validation was requested but could not be enabled; set MTL_DEBUG_LAYER=1 before launching instead");
+			}
+			long ctx = MetalNative.contextCreate(device, validation || debugOptions.logLevel() > 0);
+			Mine2Metal.LOGGER.info("Rendering with Metal 3 on {}{}", name, validation ? " with API validation" : "");
+			return new FrontendGpuDevice(new MetalDevice(ctx, name, validation, debugOptions.useLabels()));
 		} finally {
 			// The context holds its own reference to the device.
 			MetalNative.release(device);

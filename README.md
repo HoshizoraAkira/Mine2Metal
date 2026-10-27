@@ -2,7 +2,7 @@
 
 Mod Fabric yang menambahkan backend Apple Metal untuk lapisan GPU `renderpearl` di Minecraft Java, dan dirancang agar tetap berjalan bersama Sodium.
 
-Status: **M1–M7**. Layar judul dan dunia singleplayer dirender lewat Metal, dengan maupun tanpa Sodium. Hasilnya nyaris identik piksel dengan OpenGL. Di uji otomatis pada MacBook Air M3, Metal + Sodium mencapai 2000–2700 FPS di skenario ringan dan 660–1500 FPS di 1920×1080 render distance 16 (tergantung suhu), dibanding 200–490 FPS untuk OpenGL + Sodium. Detail ada di [docs/roadmap.md](docs/roadmap.md#hasil-uji-otomatis-2026-10-27). Masih eksperimental: mod yang memanggil OpenGL langsung tidak akan menggambar, dan beberapa kasus langka (triangle fan ber-index, clear sebagian) belum didukung.
+Status: **M1–M8** (uji manual belum dilakukan, lihat [docs/uji-manual.md](docs/uji-manual.md)). Layar judul dan dunia singleplayer dirender lewat Metal, dengan maupun tanpa Sodium. Hasilnya nyaris identik piksel dengan OpenGL. Di uji otomatis pada MacBook Air M3, Metal + Sodium mencapai 2000–2700 FPS di skenario ringan dan 660–1500 FPS di 1920×1080 render distance 16 (tergantung suhu), dibanding 200–490 FPS untuk OpenGL + Sodium. Detail ada di [docs/roadmap.md](docs/roadmap.md#hasil-uji-otomatis-2026-10-27). Masih eksperimental: mod yang memanggil OpenGL langsung tidak akan menggambar, dan beberapa kasus langka (triangle fan ber-index, clear sebagian) belum didukung.
 
 ![Dunia Minecraft 26.3 dengan Sodium, dirender dengan Metal](docs/screenshots/m6-world-sodium.png)
 
@@ -48,6 +48,18 @@ JAVA_HOME=/Library/Java/JavaVirtualMachines/openjdk.jdk/Contents/Home ./gradlew 
 ```
 
 Tambahkan `-PnoSodium` untuk menguji renderer chunk vanilla. Untuk pembanding OpenGL, jalankan dengan `JAVA_TOOL_OPTIONS="-Dmine2metal.enabled=false"`.
+
+### Mematikan Metal
+
+- Di game: Options → Video Settings → Graphics API → OpenGL (atau Vulkan), lalu restart. Metal hanya dipakai saat pilihan ini "Default".
+- Di file: `config/mine2metal.properties` (dibuat otomatis) dengan `enabled=false`.
+- Lewat JVM: `-Dmine2metal.enabled=false`, yang mengalahkan file config.
+
+### Debug
+
+- `--vulkanValidation` (argumen game) atau variabel lingkungan `MTL_DEBUG_LAYER=1` menyalakan Metal API validation. `MTL_SHADER_VALIDATION=1` menambah pemeriksaan di dalam shader (lambat).
+- `--renderDebugLabels` memberi nama render encoder untuk Xcode GPU capture dan Instruments.
+- Command buffer yang gagal di GPU dicatat sebagai error `Metal: Command buffer failed ...` di log.
 
 Opsi JVM:
 

@@ -4,11 +4,19 @@ import com.mojang.blaze3d.systems.RenderSystem;
 import net.fabricmc.fabric.api.client.gametest.v1.FabricClientGameTest;
 import net.fabricmc.fabric.api.client.gametest.v1.context.ClientGameTestContext;
 import net.fabricmc.fabric.api.client.gametest.v1.context.TestSingleplayerContext;
+import com.mojang.renderpearl.api.device.GpuBackend;
+import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.client.InactivityFpsLimit;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.Options;
+import net.minecraft.client.PreferredGraphicsApi;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
+import java.io.IOException;
+import java.io.UncheckedIOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 
 /**
  * Creates a singleplayer world and screenshots it through Minecraft's own readback path, so the images exercise the
@@ -25,6 +33,9 @@ public class MetalWorldGameTest implements FabricClientGameTest {
 			throw new AssertionError("Expected the Metal backend, got " + backend);
 		}
 		LOGGER.info("Sodium draw backend: {}", sodiumDrawBackend());
+		if (backend.equals("Metal")) {
+			checkBackendSelection();
+		}
 
 		context.takeScreenshot("mine2metal-title");
 
@@ -54,6 +65,14 @@ public class MetalWorldGameTest implements FabricClientGameTest {
 			context.waitTicks(20);
 			context.takeScreenshot("mine2metal-world-night");
 
+			// Improved transparency (formerly Fabulous) renders translucency into extra targets and composites them
+			// with depth sampling, a path the plain screenshots above never take.
+			singleplayer.getServer().runCommand("time set noon");
+			context.runOnClient(client -> client.options.improvedTransparency().set(true));
+			context.waitTicks(40);
+			context.takeScreenshot("mine2metal-world-improved-transparency");
+			context.runOnClient(client -> client.options.improvedTransparency().set(false));
+
 			// A heavier load: a large window and render distance 16, looking at the horizon.
 			singleplayer.getServer().runCommand("time set noon");
 			context.getInput().resizeWindow(1920, 1080);
@@ -64,6 +83,48 @@ public class MetalWorldGameTest implements FabricClientGameTest {
 			context.waitTicks(45 * 20);
 			context.takeScreenshot("mine2metal-world-far");
 			LOGGER.info("Average FPS at 1920x1080, render distance 16: {}", averageFps(context));
+
+			// The surface has to follow fullscreen switches and window resizes.
+			context.runOnClient(client -> client.options.fullscreen().set(true));
+			context.waitTicks(40);
+			context.takeScreenshot("mine2metal-fullscreen");
+			context.runOnClient(client -> client.options.fullscreen().set(false));
+			context.waitTicks(40);
+			context.getInput().resizeWindow(1000, 600);
+			context.waitTicks(20);
+			int[] size = context.computeOnClient(client -> new int[] {client.getWindow().getWidth(), client.getWindow().getHeight()});
+			LOGGER.info("Framebuffer after fullscreen and resize: {}x{}", size[0], size[1]);
+			context.takeScreenshot("mine2metal-resized");
+		}
+	}
+
+	/** Metal comes first only for the "Default" graphics API, and the config file can turn it off. */
+	private static void checkBackendSelection() {
+		check(PreferredGraphicsApi.DEFAULT.getBackendsToTry()[0].getName().equals("Metal"), "Default should try Metal first");
+		for (PreferredGraphicsApi explicit : new PreferredGraphicsApi[] {PreferredGraphicsApi.OPENGL, PreferredGraphicsApi.VULKAN}) {
+			for (GpuBackend candidate : explicit.getBackendsToTry()) {
+				check(!candidate.getName().equals("Metal"), explicit + " should not try Metal");
+			}
+		}
+
+		Path config = FabricLoader.getInstance().getConfigDir().resolve("mine2metal.properties");
+		try {
+			String original = Files.readString(config);
+			Files.writeString(config, original.replace("enabled=true", "enabled=false"));
+			try {
+				check(!PreferredGraphicsApi.DEFAULT.getBackendsToTry()[0].getName().equals("Metal"), "enabled=false should skip Metal");
+			} finally {
+				Files.writeString(config, original);
+			}
+		} catch (IOException e) {
+			throw new UncheckedIOException(e);
+		}
+		LOGGER.info("Backend selection checks passed");
+	}
+
+	private static void check(boolean condition, String message) {
+		if (!condition) {
+			throw new AssertionError(message);
 		}
 	}
 

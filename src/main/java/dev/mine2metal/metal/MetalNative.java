@@ -1,6 +1,7 @@
 package dev.mine2metal.metal;
 
 import com.mojang.renderpearl.api.device.BackendCreationException;
+import net.fabricmc.loader.api.FabricLoader;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -14,6 +15,12 @@ import java.lang.invoke.MethodHandle;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.Comparator;
+import java.util.HexFormat;
+import java.util.List;
+import java.util.stream.Stream;
 
 import static java.lang.foreign.ValueLayout.ADDRESS;
 import static java.lang.foreign.ValueLayout.JAVA_DOUBLE;
@@ -46,9 +53,9 @@ final class MetalNative {
 		}
 	}
 
-	static long deviceCreate() {
+	static long deviceCreate(boolean validation) {
 		try {
-			return (long) Functions.DEVICE_CREATE.invokeExact();
+			return (long) Functions.DEVICE_CREATE.invokeExact(validation ? 1 : 0);
 		} catch (Throwable t) {
 			throw rethrow(t);
 		}
@@ -59,6 +66,14 @@ final class MetalNative {
 			MemorySegment buffer = arena.allocate(256);
 			long length = (long) Functions.DEVICE_NAME.invokeExact(device, buffer, buffer.byteSize());
 			return buffer.getString(0);
+		} catch (Throwable t) {
+			throw rethrow(t);
+		}
+	}
+
+	static boolean deviceValidationActive(long device) {
+		try {
+			return (int) Functions.DEVICE_VALIDATION_ACTIVE.invokeExact(device) != 0;
 		} catch (Throwable t) {
 			throw rethrow(t);
 		}
@@ -81,12 +96,12 @@ final class MetalNative {
 	}
 
 	/** Returns the new context; on failure throws with the native error message. */
-	static long contextCreate(long device) throws BackendCreationException {
+	static long contextCreate(long device, boolean debug) throws BackendCreationException {
 		long ctx;
 		String error;
 		try (Arena arena = Arena.ofConfined()) {
 			MemorySegment buffer = arena.allocate(ERROR_CAPACITY);
-			ctx = (long) Functions.CONTEXT_CREATE.invokeExact(device, buffer, (long) ERROR_CAPACITY);
+			ctx = (long) Functions.CONTEXT_CREATE.invokeExact(device, debug ? 1 : 0, buffer, (long) ERROR_CAPACITY);
 			error = buffer.getString(0);
 		} catch (Throwable t) {
 			throw rethrow(t);
@@ -95,6 +110,29 @@ final class MetalNative {
 			throw new BackendCreationException("Could not set up Metal: " + error, BackendCreationException.Reason.PLATFORM_ERROR);
 		}
 		return ctx;
+	}
+
+	static long contextErrorCount(long ctx) {
+		try {
+			return (long) Functions.CONTEXT_ERROR_COUNT.invokeExact(ctx);
+		} catch (Throwable t) {
+			throw rethrow(t);
+		}
+	}
+
+	/** Failed command buffer messages since the last call, and whether one of them lost the device. */
+	static GpuErrors contextTakeErrors(long ctx) {
+		try (Arena arena = Arena.ofConfined()) {
+			MemorySegment out = arena.allocate(ERROR_CAPACITY * 8);
+			boolean deviceLost = (int) Functions.CONTEXT_TAKE_ERRORS.invokeExact(ctx, out, out.byteSize()) != 0;
+			String text = out.getString(0);
+			return new GpuErrors(text.isEmpty() ? List.of() : List.of(text.split("\n")), deviceLost);
+		} catch (Throwable t) {
+			throw rethrow(t);
+		}
+	}
+
+	record GpuErrors(List<String> messages, boolean deviceLost) {
 	}
 
 	static long contextMaxBufferLength(long ctx) {
@@ -455,17 +493,52 @@ final class MetalNative {
 		return new IllegalStateException(t);
 	}
 
+	/**
+	 * Copies the dylib to {@code .mine2metal/natives/<sha-256>/} in the game directory. A copy whose contents still
+	 * match is reused, the write is atomic so a crash cannot leave a half-written library, and directories of other
+	 * versions are removed.
+	 */
 	private static Path extractLibrary() throws IOException {
+		byte[] bytes;
 		try (InputStream in = MetalNative.class.getResourceAsStream(LIBRARY_RESOURCE)) {
 			if (in == null) {
 				throw new IOException(LIBRARY_RESOURCE + " is missing from the mod jar");
 			}
-			Path directory = Files.createTempDirectory("mine2metal");
-			Path file = directory.resolve("libmine2metal.dylib");
-			Files.copy(in, file, StandardCopyOption.REPLACE_EXISTING);
-			file.toFile().deleteOnExit();
-			directory.toFile().deleteOnExit();
-			return file;
+			bytes = in.readAllBytes();
+		}
+		String hash = sha256(bytes);
+		Path natives = FabricLoader.getInstance().getGameDir().resolve(".mine2metal").resolve("natives");
+		Path file = natives.resolve(hash).resolve("libmine2metal.dylib");
+
+		if (!Files.isRegularFile(file) || !hash.equals(sha256(Files.readAllBytes(file)))) {
+			Files.createDirectories(file.getParent());
+			Path partial = Files.createTempFile(file.getParent(), "libmine2metal", ".partial");
+			Files.write(partial, bytes);
+			Files.move(partial, file, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+		}
+		removeOtherVersions(natives, hash);
+		return file;
+	}
+
+	private static void removeOtherVersions(Path natives, String keep) {
+		try (Stream<Path> versions = Files.list(natives)) {
+			for (Path version : versions.filter(path -> !path.getFileName().toString().equals(keep)).toList()) {
+				try (Stream<Path> files = Files.walk(version)) {
+					for (Path path : files.sorted(Comparator.reverseOrder()).toList()) {
+						Files.deleteIfExists(path);
+					}
+				}
+			}
+		} catch (IOException e) {
+			// Stale copies only cost disk space; never fail startup over them.
+		}
+	}
+
+	private static String sha256(byte[] bytes) {
+		try {
+			return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes));
+		} catch (NoSuchAlgorithmException e) {
+			throw new IllegalStateException(e);
 		}
 	}
 
@@ -473,12 +546,15 @@ final class MetalNative {
 	private static final class Functions {
 		private static final Linker LINKER = Linker.nativeLinker();
 
-		static final MethodHandle DEVICE_CREATE = function("m2m_device_create", JAVA_LONG);
+		static final MethodHandle DEVICE_CREATE = function("m2m_device_create", JAVA_LONG, JAVA_INT);
+		static final MethodHandle DEVICE_VALIDATION_ACTIVE = function("m2m_device_validation_active", JAVA_INT, JAVA_LONG);
 		static final MethodHandle DEVICE_NAME = function("m2m_device_name", JAVA_LONG, JAVA_LONG, ADDRESS, JAVA_LONG);
 		static final MethodHandle DEVICE_SUPPORTS_METAL3 = function("m2m_device_supports_metal3", JAVA_INT, JAVA_LONG);
 		static final MethodHandle RELEASE = function("m2m_release", null, JAVA_LONG);
 
-		static final MethodHandle CONTEXT_CREATE = function("m2m_context_create", JAVA_LONG, JAVA_LONG, ADDRESS, JAVA_LONG);
+		static final MethodHandle CONTEXT_CREATE = function("m2m_context_create", JAVA_LONG, JAVA_LONG, JAVA_INT, ADDRESS, JAVA_LONG);
+		static final MethodHandle CONTEXT_ERROR_COUNT = function("m2m_context_error_count", JAVA_LONG, JAVA_LONG);
+		static final MethodHandle CONTEXT_TAKE_ERRORS = function("m2m_context_take_errors", JAVA_INT, JAVA_LONG, ADDRESS, JAVA_LONG);
 		static final MethodHandle CONTEXT_MAX_BUFFER_LENGTH = function("m2m_context_max_buffer_length", JAVA_LONG, JAVA_LONG);
 		static final MethodHandle CONTEXT_COMMIT = function("m2m_context_commit", JAVA_LONG, JAVA_LONG, ADDRESS);
 		static final MethodHandle CONTEXT_TAKE_LABEL_TIMES = function("m2m_context_take_label_times", JAVA_LONG, JAVA_LONG, ADDRESS, JAVA_LONG);

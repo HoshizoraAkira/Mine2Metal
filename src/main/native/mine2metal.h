@@ -12,12 +12,16 @@
 
 // Device probe
 
-// Returns a retained id<MTLDevice> for the system default GPU, or 0.
-M2M_EXPORT int64_t m2m_device_create(void);
+// Returns a retained id<MTLDevice> for the system default GPU, or 0. With validation set, Metal's API
+// validation layer is switched on first; it only takes effect if no Metal device existed in the process yet.
+M2M_EXPORT int64_t m2m_device_create(int32_t validation);
 
 // Writes the device name as NUL-terminated UTF-8 into out (truncated to capacity).
 // Returns the full name length in bytes, excluding the terminator.
 M2M_EXPORT int64_t m2m_device_name(int64_t device, char *out, int64_t capacity);
+
+// 1 when Metal's validation layer wraps the device, else 0.
+M2M_EXPORT int32_t m2m_device_validation_active(int64_t device);
 
 // 1 when the device supports MTLGPUFamilyMetal3, else 0.
 M2M_EXPORT int32_t m2m_device_supports_metal3(int64_t device);
@@ -27,8 +31,14 @@ M2M_EXPORT void m2m_release(int64_t object);
 
 // Context: device, command queue and the command buffer being recorded
 
-// Returns a retained context for device, or 0 with a message written to error.
-M2M_EXPORT int64_t m2m_context_create(int64_t device, char *error, int64_t error_capacity);
+// Returns a retained context for device, or 0 with a message written to error. With debug set, command
+// buffers record per-encoder execution status so GPU errors name the failing encoder.
+M2M_EXPORT int64_t m2m_context_create(int64_t device, int32_t debug, char *error, int64_t error_capacity);
+// Number of command buffers that have failed on the GPU so far.
+M2M_EXPORT int64_t m2m_context_error_count(int64_t ctx);
+// Writes the messages of failed command buffers since the last call, one per line, then forgets them.
+// Returns 1 if any of them reported a lost or removed device.
+M2M_EXPORT int32_t m2m_context_take_errors(int64_t ctx, char *out, int64_t capacity);
 M2M_EXPORT int64_t m2m_context_max_buffer_length(int64_t ctx);
 
 // Ends any open encoder and commits the current command buffer. Returns its submit index

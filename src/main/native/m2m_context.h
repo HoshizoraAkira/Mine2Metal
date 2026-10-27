@@ -38,6 +38,11 @@
 // Written from Metal's completion thread.
 @property(atomic) int64_t completed;
 @property(atomic) double gpuSeconds;
+@property(nonatomic) BOOL debug;
+// Failed command buffers, filled from the completion thread under @synchronized.
+@property(nonatomic, strong) NSMutableArray<NSString *> *errors;
+@property(atomic) int64_t errorCount;
+@property(atomic) BOOL deviceLost;
 // Encoders created so far, for the frame stats.
 @property(nonatomic) int64_t renderEncoderCount;
 @property(nonatomic) int64_t blitEncoderCount;

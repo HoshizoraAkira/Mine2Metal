@@ -2,8 +2,9 @@
 
 int64_t m2m_buffer_create(int64_t ctx, int64_t size) {
 	@autoreleasepool {
-		// Metal rejects zero-length buffers; renderpearl allows them.
-		NSUInteger length = size > 0 ? (NSUInteger)size : 1;
+		// Rounded up to 16 bytes: a std140 block ending in a vec3 is 12 bytes in GL, but its MSL struct is 16, and
+		// Metal must not read past the buffer's end. This also keeps zero-length buffers, which Metal rejects, valid.
+		NSUInteger length = ((NSUInteger)(size > 0 ? size : 1) + 15) & ~(NSUInteger)15;
 		id<MTLBuffer> buffer = [m2m_ctx(ctx).device newBufferWithLength:length
 		                                                        options:MTLResourceStorageModeShared];
 		return buffer ? m2m_retain(buffer) : 0;
