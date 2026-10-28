@@ -1,6 +1,5 @@
-package dev.mine2metal.upscale;
+package dev.mine2metal.frame;
 
-import com.mojang.blaze3d.pipeline.RenderTarget;
 import com.mojang.renderpearl.api.textures.GpuTexture;
 import dev.mine2metal.Mine2Metal;
 import dev.mine2metal.config.MetalSettings;
@@ -23,10 +22,9 @@ import java.util.Objects;
  * what was drawn over the world is laid over the generated frame unmoved. Frames without a world (menus over no
  * level) are shown as they are.
  * <p>
- * Driven from {@code GameRendererMixin}: {@link #beginFrame} at the start of renderLevel and {@link #capture} once the
- * world is done.
+ * Driven by {@link WorldPass}, which hands it each frame's world once it is done.
  */
-public final class FrameInterpolation {
+final class FrameGeneration {
 	/**
 	 * Scale MetalFX applies to the motion vectors, which are in pixels of the world's depth. A system property so the
 	 * game test can compare the alternatives; read again whenever it changes.
@@ -34,15 +32,14 @@ public final class FrameInterpolation {
 	private static final String MOTION_SCALE_PROPERTY = "mine2metal.interpolation.motionScale";
 	private static final String DEFAULT_MOTION_SCALE = "1,1";
 
-	private static final CameraMotion motion = new CameraMotion();
+	private final CameraMotion motion = new CameraMotion();
 	private static final SystemToast.SystemToastId PAUSE_TOAST = new SystemToast.SystemToastId(10_000L);
-	private static String motionScaleText = DEFAULT_MOTION_SCALE;
-	private static float[] motionScale = parseScale(DEFAULT_MOTION_SCALE);
-	private static long previousCaptureNanos;
-	private static boolean captured;
+	private String motionScaleText = DEFAULT_MOTION_SCALE;
+	private float[] motionScale = parseScale(DEFAULT_MOTION_SCALE);
+	private long previousCaptureNanos;
 	/** True while the native side holds textures for it. */
-	private static boolean active;
-	private static boolean warnedFailure;
+	private boolean active;
+	private boolean warnedFailure;
 
 	/**
 	 * The guard: frame generation pays off only while it costs less than half the time between rendered frames (two
@@ -53,19 +50,16 @@ public final class FrameInterpolation {
 	private static final long HEAVY_NANOS = 3_000_000_000L;
 	private static final long PAUSE_NANOS = 30_000_000_000L;
 	/** Smoothed seconds between captures. */
-	private static double frameInterval;
+	private double frameInterval;
 	/** When frame generation first cost too much in the current run of such frames; 0 if it does not now. */
-	private static long heavySince;
+	private long heavySince;
 	/** While paused, until this System.nanoTime(). */
-	private static long pausedUntil;
-	private static boolean pausedBefore;
-	private static MetalSettings.FrameGeneration guardedEngine = MetalSettings.FrameGeneration.OFF;
-
-	private FrameInterpolation() {
-	}
+	private long pausedUntil;
+	private boolean pausedBefore;
+	private MetalSettings.FrameGeneration guardedEngine = MetalSettings.FrameGeneration.OFF;
 
 	/** The engine that will generate frames next, after checking what this Mac supports. */
-	public static MetalSettings.FrameGeneration activeEngine() {
+	static MetalSettings.FrameGeneration activeEngine() {
 		return switch (MetalSettings.get().frameGeneration) {
 			case OFF -> MetalSettings.FrameGeneration.OFF;
 			case METALFX -> MetalRenderer.supportsFrameInterpolation() ? MetalSettings.FrameGeneration.METALFX : MetalSettings.FrameGeneration.OFF;
@@ -73,20 +67,9 @@ public final class FrameInterpolation {
 		};
 	}
 
-	public static boolean enabled() {
-		return activeEngine() != MetalSettings.FrameGeneration.OFF;
-	}
-
-	public static void beginFrame() {
-		captured = false;
-	}
-
-	/** Once the world is drawn into main (and upscaled): captures it with its depth and camera. At most once a frame. */
-	public static void capture(RenderTarget main, CameraRenderState camera) {
-		if (captured) {
-			return;
-		}
-		captured = true;
+	/** Once the world is drawn into main (and upscaled): captures it with its depth and camera. */
+	void capture(WorldFrame frame) {
+		CameraRenderState camera = frame.camera;
 		MetalSettings.FrameGeneration engine = activeEngine();
 		if (engine != guardedEngine) {
 			// A new choice starts without a pause.
@@ -108,13 +91,13 @@ public final class FrameInterpolation {
 			return;
 		}
 		pausedUntil = 0L;
-		Matrix4f projection = WorldUpscaler.worldProjection();
+		Matrix4f projection = frame.projection();
 		if (projection == null) {
 			motion.reset();
 			return;
 		}
 
-		GpuTexture depth = WorldUpscaler.worldDepth(main);
+		GpuTexture depth = frame.depth();
 		Matrix4f viewProjection = new Matrix4f(projection).mul(camera.viewRotationMatrix);
 		boolean reset = motion.begin(viewProjection, camera.pos, depth.getWidth(0), depth.getHeight(0));
 		String scaleText = System.getProperty(MOTION_SCALE_PROPERTY, DEFAULT_MOTION_SCALE);
@@ -126,19 +109,19 @@ public final class FrameInterpolation {
 		long now = System.nanoTime();
 		float deltaTime = reset ? 0.0F : (now - previousCaptureNanos) / 1.0e9F;
 		previousCaptureNanos = now;
-		guard(engine, deltaTime, now);
+		this.guard(engine, deltaTime, now);
 
 		float[] values = new float[9];
 		CameraMotion.planes(projection, camera.depthFar, values);
 		values[2] = (float) Math.toDegrees(2.0 * Math.atan(1.0 / projection.m11()));
 		values[3] = projection.m11() / projection.m00();
-		values[4] = WorldUpscaler.worldJitterX();
-		values[5] = WorldUpscaler.worldJitterY();
+		values[4] = frame.toldJitterX();
+		values[5] = frame.toldJitterY();
 		values[6] = deltaTime;
 		values[7] = motionScale[0];
 		values[8] = motionScale[1];
 
-		GpuTexture color = Objects.requireNonNull(main.getColorTexture(), "color texture");
+		GpuTexture color = Objects.requireNonNull(frame.main.getColorTexture(), "color texture");
 		boolean done = MetalRenderer.captureForInterpolation(engine == MetalSettings.FrameGeneration.FSR3, color, depth, motion.matrices, values, reset);
 		if (!done && !warnedFailure) {
 			warnedFailure = true;
@@ -149,7 +132,7 @@ public final class FrameInterpolation {
 		motion.finish(done);
 	}
 
-	private static void guard(MetalSettings.FrameGeneration engine, float deltaTime, long now) {
+	private void guard(MetalSettings.FrameGeneration engine, float deltaTime, long now) {
 		if (!Boolean.parseBoolean(System.getProperty(GUARD_PROPERTY, "true")) || deltaTime <= 0.0F || deltaTime > 0.5F) {
 			return;
 		}

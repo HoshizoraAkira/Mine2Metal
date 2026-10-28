@@ -1,4 +1,4 @@
-package dev.mine2metal.upscale;
+package dev.mine2metal.frame;
 
 import net.minecraft.world.phys.Vec3;
 import org.joml.Matrix4f;

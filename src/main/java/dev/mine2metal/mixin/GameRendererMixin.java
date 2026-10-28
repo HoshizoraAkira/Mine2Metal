@@ -6,9 +6,7 @@ import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
 import com.mojang.blaze3d.pipeline.RenderTarget;
 import com.mojang.renderpearl.api.buffers.GpuBufferSlice;
 import dev.mine2metal.metal.MetalRenderer;
-import dev.mine2metal.upscale.FrameInterpolation;
-import dev.mine2metal.upscale.HdrOutput;
-import dev.mine2metal.upscale.WorldUpscaler;
+import dev.mine2metal.frame.WorldPass;
 import net.minecraft.client.renderer.GameRenderer;
 import net.minecraft.client.renderer.ProjectionMatrixBuffer;
 import net.minecraft.client.renderer.state.GameRenderState;
@@ -16,7 +14,6 @@ import org.joml.Matrix4f;
 import org.spongepowered.asm.mixin.Final;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
-import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
@@ -38,15 +35,13 @@ abstract class GameRendererMixin {
 
 	@WrapMethod(method = "renderLevel")
 	private void mine2metal$renderWorldScaled(Operation<Void> original) {
-		FrameInterpolation.beginFrame();
-		HdrOutput.beginFrame();
-		WorldUpscaler.begin(this.mainRenderTarget, this.gameRenderState.levelRenderState.cameraRenderState);
+		WorldPass.begin(this.mainRenderTarget, this.gameRenderState.levelRenderState.cameraRenderState);
 		try {
 			original.call();
-			WorldUpscaler.end();
-			this.mine2metal$captureWorld();
+			WorldPass.upscale();
+			WorldPass.capture();
 		} finally {
-			WorldUpscaler.abandonFrame();
+			WorldPass.end();
 		}
 	}
 
@@ -54,7 +49,7 @@ abstract class GameRendererMixin {
 	@WrapOperation(method = "renderLevel", at = @At(value = "INVOKE",
 			target = "Lnet/minecraft/client/renderer/ProjectionMatrixBuffer;getBuffer(Lorg/joml/Matrix4f;)Lcom/mojang/renderpearl/api/buffers/GpuBufferSlice;"))
 	private GpuBufferSlice mine2metal$captureProjection(ProjectionMatrixBuffer buffer, Matrix4f projection, Operation<GpuBufferSlice> original) {
-		WorldUpscaler.captureProjection(projection);
+		WorldPass.captureProjection(projection);
 		return original.call(buffer, projection);
 	}
 
@@ -65,15 +60,9 @@ abstract class GameRendererMixin {
 	@Inject(method = "render3dHud", at = @At("HEAD"))
 	private void mine2metal$upscaleBeforeHand(CallbackInfo ci) {
 		MetalRenderer.markStage("upscaling");
-		WorldUpscaler.end();
+		WorldPass.upscale();
 		MetalRenderer.markStage("world capture");
-		this.mine2metal$captureWorld();
+		WorldPass.capture();
 		MetalRenderer.markStage("hand, effects and GUI");
-	}
-
-	@Unique
-	private void mine2metal$captureWorld() {
-		FrameInterpolation.capture(this.mainRenderTarget, this.gameRenderState.levelRenderState.cameraRenderState);
-		HdrOutput.capture(this.mainRenderTarget);
 	}
 }

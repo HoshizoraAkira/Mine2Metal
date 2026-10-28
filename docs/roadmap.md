@@ -115,6 +115,24 @@ Hasil gametest di jendela yang terlihat (MacBook Air M3, 60 Hz):
 
 Kualitas frame buatan tidak berubah (FSR 31,21 dB, MetalFX 31,20 dB), dan gametest penuh lolos di bawah validation. Belum diukur: game di bawah 30 FPS dengan frame gen (penahanan > 1 refresh) dan layar ProMotion.
 
+### R8: arsitektur frame dunia (2026-10-28)
+
+Kelas-kelas di sekitar pass dunia pindah dari `upscale` ke paket `dev.mine2metal.frame`:
+- **`WorldPass`** adalah satu-satunya pintu dari `GameRendererMixin`, dengan urutan `begin` → `captureProjection` → `upscale` → `capture` → `end`.
+- **`WorldFrame`** dibuat baru setiap frame dan berisi semua yang dipakai pass itu: target utama, kamera, mode upscaling, target kecil yang dipinjamkan, jitter dan tandanya, proyeksi tanpa jitter, depth dunia, serta status tangkap. Upscaler mengisinya; frame gen dan EDR membacanya.
+- **`WorldUpscaler`, `FrameGeneration` (dulu `FrameInterpolation`), dan `HdrOutput`** sekarang instance yang hanya menyimpan state lintas-frame: riwayat kamera, fase jitter, target kecil, dan pengaman frame gen.
+- Sebelumnya `FrameInterpolation` membaca proyeksi, depth, dan jitter lewat static `WorldUpscaler`, dan ketiga kelas punya flag "sudah ditangkap" masing-masing yang harus di-reset bersamaan.
+- Satu-satunya pergeseran: tanda jitter (properti tes) dibaca sekali di awal frame, bukan saat upscaling.
+
+Gametest penuh lolos di bawah validation, dan angkanya sama dengan sebelumnya dalam batas noise:
+- temporal 30,52 dB, FSR 3.1 30,79 dB, FSR 1 29,82 dB;
+- frame gen 31,20 / 31,24 dB;
+- partikel dengan reactive mask tetap lebih terang daripada tanpa mask.
+
+**Barrier Metal 4 tidak dipersempit.** Setiap encoder masih punya barrier penuh di awal dan akhir. Barrier akhir sebenarnya redundan dengan barrier awal encoder berikutnya, kecuali sebelum encoder MetalFX yang tidak punya barrier dari kita. Uji A/B/A/B tanpa barrier akhir (1920×1080, render distance 16, berjalan ke hutan) menunjukkan waktu GPU hanya 0,5–0,7 ms per frame di kedua varian. Adegan itu dibatasi CPU, dan FPS-nya berubah 400–1400 antar-run karena panas. Tidak ada biaya yang bisa dihemat, jadi barrier yang konservatif tetap dipakai. Mempersempit render→render juga tidak aman: shader inti Minecraft membaca lightmap di stage vertex, dan lightmap ditulis pass fragment sebelumnya.
+
+Masih tersisa dari R3: objek MetalFX dan konteks FSR dibuat di thread render saat pengaturan diganti.
+
 ### R7: upscaler FSR sebagai pilihan (2026-10-28)
 
 Menu Upscaling sekarang berisi Mati / MetalFX Spasial / MetalFX Temporal / FSR 1 / FSR 3.1. Pilihan ini terpisah dari Pembuatan Frame, jadi kombinasi seperti MetalFX Temporal + FSR 3.1 frame gen atau FSR 3.1 + FSR 3.1 frame gen bisa dipakai. Semuanya lewat Metal.
@@ -301,7 +319,7 @@ Urutan di bawah adalah prioritas. Instalasi (M9) tetap terakhir, sesuai kesepaka
 | R5 ✅ | **Reactive mask untuk upscaling temporal** (hasil di bagian "R5" di bawah) | `reactiveMaskTexture` MetalFX (macOS 14.4+): tandai piksel mob, partikel, dan air yang bergerak sendiri, supaya tidak meninggalkan jejak | Jejak samar di uji mob bergerak berkurang (diukur dengan screenshot) |
 | R6 ✅ | **Optimasi shader FSR** (F3; hasil di [fsr-frame-gen.md](fsr-frame-gen.md#hasil-r6-optimasi-fsr-frame-gen-2026-10-28)) | FP16 manual untuk pass interpolasi utama dan optical flow, disocclusion di render penuh, dispatch concurrent untuk pass kecil | ≤ 6 ms di 1080p dengan render 50% (sebelumnya 8,7 ms; sekarang 3,7 ms) |
 | R7 ✅ | **Upscaler FSR sebagai pilihan** (hasil di bagian "R7" di bawah) | FSR 1 dan FSR 3.1 di menu Upscaling di samping MetalFX. Sudah terbukti jalan, tapi 2–2,5× lebih berat; nilainya sebagai pilihan dan perbandingan kualitas | Kualitas dibandingkan dengan MetalFX di uji temporal; lolos validation |
-| R8 | **Rapikan arsitektur** | Satu objek alur "frame dunia" (tangkap/proyeksi/depth/jitter) menggantikan state statis di `WorldUpscaler`, `FrameInterpolation`, `HdrOutput`; paket di luar `upscale`; barrier Metal 4 dipersempit | Gametest penuh tetap lolos; tidak ada perubahan perilaku |
+| R8 ✅ | **Rapikan arsitektur** (hasil di bagian "R8" di bawah) | Satu objek alur "frame dunia" (tangkap/proyeksi/depth/jitter) menggantikan state statis di `WorldUpscaler`, `FrameInterpolation`, `HdrOutput`; paket di luar `upscale`; barrier Metal 4 dipersempit | Gametest penuh tetap lolos; tidak ada perubahan perilaku |
 | R10 | **Upgrade ke FSR 3.1.6** (SDK v2.3.0, MIT) | Kode FSR 3 di SDK 2.x ternyata MIT (lihat ralat di fsr-frame-gen.md), dengan frame interpolation 3.1.6 dan upscaler 3.1.5. Shadernya hanya HLSL, jadi terjemahan beralih ke `dxc` → SPIR-V → spirv-cross; host code dan backend `ffx_metal` tetap | Kualitas uji yaw ≥ v1.1.4; validation bersih |
 | R9 | **Instalasi (M9)** | Seperti di atas: rilis Modrinth/CurseForge, `.mrpack`, pesan jelas di Mac yang tidak didukung | — |
 
