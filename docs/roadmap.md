@@ -98,6 +98,23 @@ Presentasi sebelumnya punya tiga jalur: VSync nyala dipresentasikan dari thread 
 
 Hasil: gametest penuh lolos di bawah validation (Metal 4 dan Metal 3), termasuk fullscreen, resize, upscaling, interpolasi (31,2 dB), dan HDR. VSync mati tetap tanpa batas (~2700 FPS, present 0,005 ms per frame). Pacing VSync nyala di layar sungguhan belum terukur karena jendela tes tidak terlihat (macOS melaporkan semua frame sebagai tidak tampil), jadi perlu dicek manual: uji-manual nomor 9.
 
+### R2: present lewat `CAMetalDisplayLink` (2026-10-28)
+
+Thread present tidak lagi memanggil `nextDrawable` dalam loop. Thread itu menjalankan run loop dengan `CAMetalDisplayLink` (macOS 14+, `preferredFrameLatency` 1), yang memanggil `M2MPresenter` sekali per refresh dengan drawable siap:
+- **Tanpa frame gen:** frame terbaru yang sudah selesai ditampilkan, kalau ada yang baru.
+- **Dengan frame gen:** frame buatan ditampilkan dulu dan ditahan kira-kira setengah interval frame asli (dalam refresh, dibulatkan, 1–4), baru frame aslinya. Contoh: game 15 FPS di 60 Hz kini tampil 2 + 2 refresh, sebelumnya 1 + 3. Interval diukur dari waktu frame selesai di GPU, yang tidak ikut memanjang karena menunggu layar, jadi tidak ada putaran balik seperti pacing pertama di M12.
+- **Jendela tertutup:** macOS menghentikan display link untuk jendela yang tertutup penuh. Kalau tidak ada callback selama 100 ms, thread present masuk mode idle. Frame baru langsung dianggap diambil (tidak ditampilkan), dan thread render hanya menunggu salinan GPU, supaya riwayat frame gen tidak putus. Tanpa ini, game dengan VSync nyala atau frame gen jatuh ke ~4 FPS selama jendela tertutup (terlihat di gametest).
+
+Hasil gametest di jendela yang terlihat (MacBook Air M3, 60 Hz):
+
+| Mode | Frame tampil / 5 s | Jarak p50 / p95 | Terlambat | CPU per frame |
+|---|---|---|---|---|
+| VSync mati | 299–300 | 16,7 / 16,7 ms | 0–1 | 0,4 ms (tanpa batas) |
+| VSync nyala | 301 | 16,7 / 16,7 ms | 0 | 16,66 ms |
+| Frame gen MetalFX | 300–302 | 16,7 / 16,7 ms | 0 | 33,3 ms (30 asli + 30 buatan) |
+
+Kualitas frame buatan tidak berubah (FSR 31,21 dB, MetalFX 31,20 dB), dan gametest penuh lolos di bawah validation. Belum diukur: game di bawah 30 FPS dengan frame gen (penahanan > 1 refresh) dan layar ProMotion.
+
 ## M13 Metal 4 (2026-10-28)
 
 Satu kode native dengan dua model perintah. Default **Otomatis**: Metal 4 kalau `MTLGPUFamilyMetal4` didukung dan macOS ≥ 26, selain itu Metal 3. Bisa dipaksa di menu Metal → API Grafis → Versi Metal (berlaku setelah restart), di `metalVersion=` pada `config/mine2metal.properties`, atau `-Dmine2metal.metal=auto|metal4|metal3`. Kalau Metal 4 gagal dibuat, otomatis kembali ke Metal 3. Vulkan/OpenGL tetap lewat Graphics API vanilla.
@@ -196,7 +213,7 @@ Urutan di bawah adalah prioritas. Instalasi (M9) tetap terakhir, sesuai kesepaka
 | # | Pekerjaan | Isi | Gerbang selesai |
 |---|---|---|---|
 | R1 ✅ | **FSR 3.1 frame gen di game** (F1 + F2; hasil di [fsr-frame-gen.md](fsr-frame-gen.md#hasil-r1-fsr-31-frame-generation-di-game-2026-10-28)) | Backend FFX masuk dylib (kode AMD C++ + `ffx_metal.mm`, MSL di jar, dikompilasi di thread latar + cache). Jalur Metal 4: encoder compute MTL4, argument table, barrier antar pass, residency. Input: W tanpa HUD, F, depth, motion vector (skala dan tanda dikalibrasi dengan uji PSNR yaw), kamera; HDR lewat transfer scRGB. Output ke slot thread present. Menu: Frame gen Mati / MetalFX / FSR 3.1 (satu saja) | ≥ 31 dB di uji yaw; lebih cepat dari MetalFX di uji jalan-ke-hutan; validation bersih di Metal 3 dan 4 |
-| R2 | **Pacing dengan `CAMetalDisplayLink`** | Thread present memakai display link (macOS 14+). Frame buatan diletakkan di tengah dua frame asli menurut `targetPresentationTimestamp`, dan latensi diatur lewat `preferredFrameLatency`. Sekalian ukur VSync nyala di layar sungguhan | Jarak antar frame tampil rata (p95 ≈ 1 refresh) dengan frame gen nyala |
+| R2 ✅ | **Pacing dengan `CAMetalDisplayLink`** (hasil di bagian "R2" di bawah) | Thread present memakai display link (macOS 14+). Frame buatan diletakkan di tengah dua frame asli menurut `targetPresentationTimestamp`, dan latensi diatur lewat `preferredFrameLatency`. Sekalian ukur VSync nyala di layar sungguhan | Jarak antar frame tampil rata (p95 ≈ 1 refresh) dengan frame gen nyala |
 | R3 | **Lonjakan CPU saat chunk dimuat** | Tes jalan-ke-hutan yang sama di backend OpenGL/Vulkan bawaan sebagai pembanding (sekarang frame bisa tertahan 200–600 ms). Kalau dari backend kita, telusuri (upload buffer, kompilasi pipeline, sinkronisasi) | Penyebab diketahui; kalau dari kita, lonjakan ≤ backend bawaan |
 | R4 | **Waktu GPU per tahap + pengaman frame gen** | Timestamp di batas encoder (counter sample buffer) untuk dunia, upscaling, frame gen, HDR, present. Dari situ frame gen mati sendiri (dengan pesan) kalau biayanya melebihi anggaran | Statistik per tahap di `-Dmine2metal.stats`; frame gen tidak pernah menurunkan FPS di bawah separuh tanpa memberi tahu |
 | R5 | **Reactive mask untuk upscaling temporal** | `reactiveMaskTexture` MetalFX (macOS 14.4+): tandai piksel mob, partikel, dan air yang bergerak sendiri, supaya tidak meninggalkan jejak | Jejak samar di uji mob bergerak berkurang (diukur dengan screenshot) |

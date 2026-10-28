@@ -145,6 +145,11 @@ static const NSUInteger M2M_PRESENT_SLOTS = 3;
 @property(nonatomic) uint32_t presentingSlots;
 @property(nonatomic) int32_t writingSlot;
 @property(nonatomic) uint64_t latestFrame;
+// Set while the display link is silent (a covered window): the render thread then does not wait for frames to be
+// taken.
+@property(nonatomic) BOOL presentIdle;
+// When the GPU finished latestFrame (CACurrentMediaTime), for pacing generated frames.
+@property(nonatomic) CFTimeInterval latestReadyTime;
 @property(nonatomic) uint64_t frameCounter;
 @property(nonatomic) BOOL presentThreadRunning;
 @property(nonatomic, strong) dispatch_semaphore_t presentThreadStopped;

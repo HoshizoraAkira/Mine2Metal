@@ -1,4 +1,5 @@
 #import <AppKit/AppKit.h>
+#import <QuartzCore/CAMetalDisplayLink.h>
 
 #include "m2m_context.h"
 
@@ -7,7 +8,7 @@
 
 // Every frame goes the same way. The render thread copies it into one of these slots (usually one being written,
 // one holding the latest finished frame and one being shown) and publishes it once the GPU has finished it; a
-// present thread shows the newest published frame on each refresh.
+// present thread, driven by a CAMetalDisplayLink, shows the newest published frame on each refresh.
 //
 // What differs is how far the render thread may run ahead. With vsync off it never waits: a frame whose slot is not
 // free yet is skipped, so the game renders uncapped while the screen still gets a new frame every refresh, without
@@ -105,63 +106,188 @@ static void m2m_present_on_queue(M2MContext *ctx, id<MTLTexture> source, id<CAMe
 	[commandBuffer commit];
 }
 
-// Shows the newest finished frame once per refresh: nextDrawable on a display-synced layer blocks until the
-// compositor frees a drawable, which paces the loop to the display. With frame interpolation the frame's generated
-// one comes first, on a refresh of its own.
+// Longest a generated frame is held before its real one, in refreshes.
+static const NSInteger M2M_MAX_HOLD_REFRESHES = 4;
+// A gap between finished frames longer than this is a hitch, not a frame rate to pace generated frames for.
+static const CFTimeInterval M2M_PACING_HITCH_SECONDS = 0.25;
+// macOS stops the display link of a window that is fully covered; after this long without a callback, frames are
+// dropped as they finish so the render thread does not wait for a display that is not showing them.
+static const CFTimeInterval M2M_DISPLAY_IDLE_SECONDS = 0.1;
+
+// Called by a CAMetalDisplayLink once per refresh, with a drawable, on the present thread: shows the newest finished
+// frame. A frame with a generated one shows that first and holds it for about half the time between finished frames
+// (at least one refresh), then the real one, so both get even time on screen also when the game renders well below
+// half the refresh rate. The hold comes from when frames finish on the GPU, which waiting for the display does not
+// stretch.
+@interface M2MPresenter : NSObject <CAMetalDisplayLinkDelegate>
+@property(nonatomic, weak) M2MContext *ctx;
+@property(nonatomic) uint64_t shownFrame;
+// The real frame waiting behind its generated one, its slot, and the refreshes it still waits.
+@property(nonatomic, strong) id<MTLTexture> waitingSource;
+@property(nonatomic) int32_t waitingSlot;
+@property(nonatomic) NSInteger holdRefreshes;
+// Smoothed: the refresh interval, and the interval between finished frames in refreshes.
+@property(nonatomic) CFTimeInterval refreshInterval;
+@property(nonatomic) double frameRefreshes;
+@property(nonatomic) CFTimeInterval lastTarget;
+@property(nonatomic) CFTimeInterval lastReadyTime;
+@property(nonatomic) CFTimeInterval lastCallback;
+@end
+
+@implementation M2MPresenter
+
+- (void)releaseSlot:(int32_t)slot {
+	M2MContext *ctx = self.ctx;
+	[ctx.latestLock lock];
+	ctx.presentingSlots &= ~(1u << slot);
+	[ctx.latestLock broadcast];
+	[ctx.latestLock unlock];
+}
+
+- (void)show:(id<MTLTexture>)source slot:(int32_t)slot drawable:(id<CAMetalDrawable>)drawable {
+	__weak M2MPresenter *weakSelf = self;
+	m2m_present_on_queue(self.ctx, source, drawable, ^(CFTimeInterval gpuStart, CFTimeInterval gpuEnd, NSError *failure) {
+		(void)gpuStart;
+		(void)gpuEnd;
+		(void)failure;
+		[weakSelf releaseSlot:slot];
+	});
+}
+
+// While the display link is silent: frames count as taken (and are not shown) as soon as they finish.
+- (void)dropWhileIdle {
+	M2MContext *ctx = self.ctx;
+	if (CACurrentMediaTime() - self.lastCallback < M2M_DISPLAY_IDLE_SECONDS) {
+		return;
+	}
+	[ctx.latestLock lock];
+	ctx.presentIdle = YES;
+	if (ctx.latestFrame > self.shownFrame) {
+		self.shownFrame = ctx.latestFrame;
+		ctx.takenFrame = ctx.latestFrame;
+	}
+	if (self.waitingSource) {
+		ctx.presentingSlots &= ~(1u << self.waitingSlot);
+		self.waitingSource = nil;
+	}
+	[ctx.latestLock broadcast];
+	[ctx.latestLock unlock];
+}
+
+- (void)measureRefresh:(CFTimeInterval)target {
+	CFTimeInterval interval = target - self.lastTarget;
+	self.lastTarget = target;
+	// Consecutive callbacks are a refresh apart; anything else (a pause, a hidden window) says nothing.
+	if (interval < 1.0 / 500.0 || interval > 1.0 / 20.0) {
+		return;
+	}
+	self.refreshInterval = self.refreshInterval > 0.0 ? MIN(interval, self.refreshInterval * 0.95 + interval * 0.05) : interval;
+}
+
+// Refreshes to hold a generated frame: half the time between finished frames, rounded.
+- (NSInteger)holdFor:(CFTimeInterval)readyTime {
+	CFTimeInterval gap = readyTime - self.lastReadyTime;
+	self.lastReadyTime = readyTime;
+	double refresh = self.refreshInterval > 0.0 ? self.refreshInterval : 1.0 / 60.0;
+	if (gap <= 0.0 || gap > M2M_PACING_HITCH_SECONDS) {
+		self.frameRefreshes = 2.0;
+	} else {
+		self.frameRefreshes = self.frameRefreshes * 0.8 + (gap / refresh) * 0.2;
+	}
+	return MAX(1, MIN(M2M_MAX_HOLD_REFRESHES, (NSInteger)lround(self.frameRefreshes / 2.0)));
+}
+
+- (void)metalDisplayLink:(CAMetalDisplayLink *)link needsUpdate:(CAMetalDisplayLinkUpdate *)update {
+	(void)link;
+	M2MContext *ctx = self.ctx;
+	if (!ctx) {
+		return;
+	}
+	self.lastCallback = CACurrentMediaTime();
+	if (ctx.presentIdle) {
+		[ctx.latestLock lock];
+		ctx.presentIdle = NO;
+		[ctx.latestLock unlock];
+	}
+	[self measureRefresh:update.targetPresentationTimestamp];
+	if (m2m_tracing()) {
+		static int calls;
+		static CFTimeInterval since;
+		calls++;
+		CFTimeInterval now = CACurrentMediaTime();
+		if (now - since > 1.0) {
+			NSLog(@"mine2metal trace: display link %d calls/s, latest frame %llu, shown %llu", calls, ctx.latestFrame, self.shownFrame);
+			calls = 0;
+			since = now;
+		}
+	}
+	if (self.waitingSource) {
+		if (--self.holdRefreshes > 0) {
+			// The generated frame stays on screen.
+			return;
+		}
+		[self show:self.waitingSource slot:self.waitingSlot drawable:update.drawable];
+		self.waitingSource = nil;
+		return;
+	}
+
+	[ctx.latestLock lock];
+	if (ctx.latestFrame <= self.shownFrame) {
+		[ctx.latestLock unlock];
+		return;
+	}
+	int32_t slot = ctx.latestSlot;
+	uint64_t frame = ctx.latestFrame;
+	CFTimeInterval readyTime = ctx.latestReadyTime;
+	id<MTLTexture> source = ctx.latestSlots[(NSUInteger)slot];
+	id<MTLTexture> generated = (ctx.generatedSlots & (1u << slot)) ? ctx.latestGenerated[(NSUInteger)slot] : nil;
+	ctx.presentingSlots |= 1u << slot;
+	ctx.takenFrame = frame;
+	[ctx.latestLock broadcast];
+	[ctx.latestLock unlock];
+	self.shownFrame = frame;
+
+	if (!generated) {
+		self.lastReadyTime = readyTime;
+		[self show:source slot:slot drawable:update.drawable];
+		return;
+	}
+	self.holdRefreshes = [self holdFor:readyTime];
+	m2m_present_on_queue(ctx, generated, update.drawable, nil);
+	self.waitingSource = source;
+	self.waitingSlot = slot;
+}
+
+@end
+
 static void m2m_present_loop(M2MContext *ctx, CAMetalLayer *layer, dispatch_semaphore_t stopped) {
-	uint64_t shownFrame = 0;
-	while (YES) {
-		@autoreleasepool {
+	@autoreleasepool {
+		if (m2m_tracing()) {
+			NSLog(@"mine2metal trace: present thread starts on %@ (window %@)", layer, layer.delegate);
+		}
+		M2MPresenter *presenter = [M2MPresenter new];
+		presenter.ctx = ctx;
+		CAMetalDisplayLink *link = [[CAMetalDisplayLink alloc] initWithMetalLayer:layer];
+		link.delegate = presenter;
+		// The present pass is short, so the drawable can be handed out a single frame ahead.
+		link.preferredFrameLatency = 1.0f;
+		[link addToRunLoop:[NSRunLoop currentRunLoop] forMode:NSDefaultRunLoopMode];
+		while (YES) {
 			[ctx.latestLock lock];
-			while (ctx.presentThreadRunning && ctx.latestFrame <= shownFrame) {
-				[ctx.latestLock waitUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.1]];
-			}
 			BOOL running = ctx.presentThreadRunning;
 			[ctx.latestLock unlock];
 			if (!running) {
 				break;
 			}
-
-			id<CAMetalDrawable> drawable = [layer nextDrawable];
-			if (!drawable) {
-				continue;
+			@autoreleasepool {
+				[[NSRunLoop currentRunLoop] runMode:NSDefaultRunLoopMode beforeDate:[NSDate dateWithTimeIntervalSinceNow:0.05]];
+				[presenter dropWhileIdle];
 			}
-
-			// Taken after the wait for a drawable, so the frame shown is the newest one at that moment.
-			[ctx.latestLock lock];
-			int32_t slot = ctx.latestSlot;
-			uint64_t frame = ctx.latestFrame;
-			id<MTLTexture> source = ctx.latestSlots[(NSUInteger)slot];
-			id<MTLTexture> generated = (ctx.generatedSlots & (1u << slot)) ? ctx.latestGenerated[(NSUInteger)slot] : nil;
-			ctx.presentingSlots |= 1u << slot;
-			ctx.takenFrame = frame;
-			[ctx.latestLock broadcast];
-			[ctx.latestLock unlock];
-
-			if (generated) {
-				m2m_present_on_queue(ctx, generated, drawable, nil);
-				drawable = [layer nextDrawable];
-			}
-			__weak M2MContext *weakCtx = ctx;
-			if (!drawable) {
-				[ctx.latestLock lock];
-				ctx.presentingSlots &= ~(1u << slot);
-				[ctx.latestLock broadcast];
-				[ctx.latestLock unlock];
-				shownFrame = frame;
-				continue;
-			}
-			m2m_present_on_queue(ctx, source, drawable, ^(CFTimeInterval gpuStart, CFTimeInterval gpuEnd, NSError *failure) {
-				                     (void)gpuStart;
-				                     (void)gpuEnd;
-				                     (void)failure;
-				                     M2MContext *strongCtx = weakCtx;
-				                     [strongCtx.latestLock lock];
-				                     strongCtx.presentingSlots &= ~(1u << slot);
-				                     [strongCtx.latestLock broadcast];
-				                     [strongCtx.latestLock unlock];
-			                     });
-			shownFrame = frame;
+		}
+		[link invalidate];
+		if (presenter.waitingSource) {
+			// A real frame still behind its generated one is not shown.
+			[presenter releaseSlot:presenter.waitingSlot];
 		}
 	}
 	dispatch_semaphore_signal(stopped);
@@ -189,7 +315,7 @@ static void m2m_stop_present_thread(M2MContext *ctx) {
 	[ctx.latestLock broadcast];
 	[ctx.latestLock unlock];
 	if (wasRunning) {
-		// nextDrawable gives up after a second, so the loop is out well within this.
+		// The thread's run loop wakes at least every 50 ms, so it is out well within this.
 		dispatch_semaphore_wait(ctx.presentThreadStopped, dispatch_time(DISPATCH_TIME_NOW, 2 * NSEC_PER_SEC));
 	}
 }
@@ -283,7 +409,8 @@ static int32_t m2m_publish_latest(M2MContext *ctx, id<MTLTexture> source) {
 		// skipped: with vsync on every frame is shown, and with interpolation a skipped frame breaks its history (a
 		// generated frame replaced before it is shown would be GPU time wasted as well).
 		NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:M2M_TAKE_TIMEOUT];
-		while ((ctx.frameCounter > ctx.takenFrame || ctx.writingSlot != M2M_NO_SLOT) && ctx.presentThreadRunning &&
+		// While the display is not showing the window, only the copy is waited for.
+		while (((!ctx.presentIdle && ctx.frameCounter > ctx.takenFrame) || ctx.writingSlot != M2M_NO_SLOT) && ctx.presentThreadRunning &&
 		       [ctx.latestLock waitUntilDate:deadline]) {
 		}
 	}
@@ -296,6 +423,13 @@ static int32_t m2m_publish_latest(M2MContext *ctx, id<MTLTexture> source) {
 		}
 	}
 	if (slot == M2M_NO_SLOT) {
+		if (m2m_tracing()) {
+			static int skips;
+			if (++skips % 500 == 1) {
+				NSLog(@"mine2metal trace: frame skipped (%d): writing %d, latest %d, presenting 0x%x, counter %llu, taken %llu, idle %d",
+				      skips, ctx.writingSlot, ctx.latestSlot, ctx.presentingSlots, ctx.frameCounter, ctx.takenFrame, ctx.presentIdle);
+			}
+		}
 		[ctx.latestLock unlock];
 		m2m_frame_interpolation_presented(ctx, nil);
 		return 2;
@@ -330,6 +464,7 @@ static int32_t m2m_publish_latest(M2MContext *ctx, id<MTLTexture> source) {
 		if (frame > strongCtx.latestFrame) {
 			strongCtx.latestSlot = slot;
 			strongCtx.latestFrame = frame;
+			strongCtx.latestReadyTime = CACurrentMediaTime();
 		}
 		[strongCtx.latestLock broadcast];
 		[strongCtx.latestLock unlock];
