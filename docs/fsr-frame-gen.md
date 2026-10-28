@@ -234,3 +234,29 @@ Yang dicoba dan tidak membantu:
 Belum dikerjakan: FP16 manual dan dispatch concurrent. Bench memakai depth datar dan motion vector nol, sehingga cabang berat disocclusion jarang jalan. Optimasi selanjutnya perlu profil dengan data game, misalnya dengan menangkap input FSR dari gametest.
 
 Di game (jendela gametest tertutup, 2560×1600, FSR saja), biaya yang dicatat pengaman R4 turun dari 22,5 ke 15,3 ms. Angka dari jendela tertutup tidak stabil (lihat R4), jadi bench tetap jadi acuan. Gametest penuh lolos di bawah validation di Metal 4, begitu juga interpolasi dan HDR di Metal 3.
+
+## Riset R10: FSR 3.1.6 dari SDK v2.3.0 (2026-10-28)
+
+Sebelum memporting, kode FSR 3 di v2.3.0 dibandingkan dengan v1.1.4 yang sudah dipakai. Perbandingan mengabaikan komentar dan spasi, dan menormalkan nama `FFX_API_*`/`FfxApi*` yang diganti di v2.
+
+| Bagian | Perbedaan |
+|---|---|
+| Header algoritma GPU: frame interpolation (14 file), optical flow (10), upscaler FSR 3 | **0 baris**, kecuali callback HLSL (binding dan root signature) |
+| Header inti GPU (`ffx_core*.h`, `ffx_common_types.h`) | `;;` ganda di 3 baris dan path include |
+| RCAS upscaler | Path include |
+| Host frame interpolation, optical flow, upscaler | Restrukturisasi: deskripsi resource dipindah ke fungsi, validasi parameter dengan flag debug, query memori GPU. Juga dibuang: tabel Lanczos frame interpolation yang tidak dipakai jalur kita (`UPSAMPLE_USE_LANCZOS_TYPE=2`) |
+
+Jadi "3.1.6" (frame interpolation) dan "3.1.5" (upscaler) adalah versi paket DLL/provider AMD; cara menghitungnya sama dengan v1.1.4. Upgrade tidak akan mengubah kualitas atau kecepatan.
+
+Biaya portnya besar:
+- **Antarmuka backend berubah.** `fpCreatePipeline` menerima `FfxShaderBlob` hasil kompilasi, kode host meng-include header `*_permutations.h` (blob DXIL dari alat build AMD, tidak ada di repo), dan ada tipe `FfxApiResource`, heap, serta `fpQueryNextGpuJob`. `ffx_metal.mm` perlu diporting dan tabel blob untuk tiga efek perlu dibuat ulang.
+- **FSR 1** tidak punya kode host di v2. Host v1.1.4-nya perlu diporting ke antarmuka baru.
+- **Override R6** (`src/main/native/fsr/glsl`) perlu ditulis ulang dalam HLSL.
+
+Yang sudah terbukti kalau port tetap dikerjakan:
+- `dxc` tidak diperlukan. Front-end HLSL `glslangValidator` (`-D -e CS --auto-map-bindings`) menerjemahkan pass interpolasi utama v2.3.0 ke SPIR-V, dan `spirv-cross` mengubahnya ke MSL.
+- Dua nama perlu dirapikan setelah terjemahan, karena host AMD mencocokkan binding lewat nama: constant buffer keluar anonim (`_418` alih-alih `cbFI`), dan buffer counters keluar sebagai `r_counters_1`.
+- Microsoft tidak merilis `dxc` untuk macOS, dan Homebrew tidak menyediakannya.
+
+Saran: tetap di v1.1.4 sampai AMD mengubah algoritmanya. Perbandingan di atas bisa diulang untuk rilis berikutnya.
+
