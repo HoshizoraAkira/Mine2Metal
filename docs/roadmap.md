@@ -89,6 +89,15 @@ Saat uji manual di window hampir 4K dengan vsync mati, game terasa patah-patah w
 
 Perbaikan ("fast sync"): saat vsync mati, layer tetap `displaySyncEnabled`, tapi thread render tidak lagi mempresentasikan. Setiap frame disalin ke salah satu dari tiga slot, lalu ditandai sebagai frame terbaru setelah GPU selesai. Thread present terpisah (`mine2metal present`) menunggu `nextDrawable`, yang berdetak sesuai refresh layar, lalu selalu menampilkan frame terbaru yang sudah selesai. Game tetap merender tanpa batas tanpa pernah menunggu layar, dan layar mendapat satu frame baru di setiap refresh tanpa tearing. Thread dihentikan saat surface dikonfigurasi ulang atau ditutup. Di gametest (window terlihat, vsync mati, render ~1400 FPS) hasilnya 300 frame tampil per 5 detik, gap p50/p95 16,7 ms, 0 terlambat. Uji manual di MacBook Air M3 (window 1920×1243 Retina, Sodium, render distance 16, vsync mati): 153–203 FPS, 300 frame tampil per 5 detik, gap p50/p95 16,7 ms, 0 terlambat (sebelumnya ~200 tampil, p95 33,3 ms, ~90 terlambat). Saat vsync nyala, jalurnya tetap seperti sebelumnya.
 
+### Satu jalur present (2026-10-28)
+
+Presentasi sebelumnya punya tiga jalur: VSync nyala dipresentasikan dari thread render (dua tekstur staging, event `frameReady`/`presentDone`, antrean present), VSync mati lewat thread present, dan interpolasi lewat thread present yang dinyalakan khusus. Dua bug interpolasi berasal dari interaksi jalur-jalur ini. Sekarang **semua frame lewat thread present**:
+- Thread present berjalan selama layer dipasang, dan menampilkan frame terbaru yang sudah selesai sekali per refresh (frame buatan dulu kalau ada).
+- Bedanya hanya seberapa jauh thread render boleh mendahului. VSync mati: tidak pernah menunggu, frame dilewati kalau slotnya belum bebas (game tanpa batas, layar tetap dapat frame baru tiap refresh tanpa tearing). VSync nyala atau interpolasi: menunggu sampai thread present mengambil frame sebelumnya, jadi setiap frame tampil dan game mengikuti refresh rate (atau separuhnya dengan interpolasi). Batas tunggu 250 ms supaya layar yang macet (window tersembunyi) tidak menahan game.
+- Dihapus: `m2m_present_synced`, tekstur staging, event `frameReady`/`presentDone`, dan flag thread khusus interpolasi. Thread render tidak pernah memegang drawable.
+
+Hasil: gametest penuh lolos di bawah validation (Metal 4 dan Metal 3), termasuk fullscreen, resize, upscaling, interpolasi (31,2 dB), dan HDR. VSync mati tetap tanpa batas (~2700 FPS, present 0,005 ms per frame). Pacing VSync nyala di layar sungguhan belum terukur karena jendela tes tidak terlihat (macOS melaporkan semua frame sebagai tidak tampil), jadi perlu dicek manual: uji-manual nomor 9.
+
 ## M13 Metal 4 (2026-10-28)
 
 Satu kode native dengan dua model perintah. Default **Otomatis**: Metal 4 kalau `MTLGPUFamilyMetal4` didukung dan macOS ≥ 26, selain itu Metal 3. Bisa dipaksa di menu Metal → API Grafis → Versi Metal (berlaku setelah restart), di `metalVersion=` pada `config/mine2metal.properties`, atau `-Dmine2metal.metal=auto|metal4|metal3`. Kalau Metal 4 gagal dibuat, otomatis kembali ke Metal 3. Vulkan/OpenGL tetap lewat Graphics API vanilla.

@@ -85,11 +85,6 @@ int64_t m2m_context_create(int64_t device_handle, int32_t debug, int32_t metal4,
 		ctx.errors = [NSMutableArray array];
 		ctx.queue = [ctx.device newCommandQueue];
 		ctx.presentQueue = [ctx.device newCommandQueue];
-		ctx.frameReady = [ctx.device newEvent];
-		ctx.frameReady.label = @"frameReady";
-		ctx.presentDone = [ctx.device newEvent];
-		ctx.presentDone.label = @"presentDone";
-		ctx.presentStaging = [NSMutableArray arrayWithObjects:[NSNull null], [NSNull null], nil];
 		ctx.latestLock = [NSCondition new];
 		ctx.latestSlots = [NSMutableArray arrayWithObjects:[NSNull null], [NSNull null], [NSNull null], nil];
 		ctx.latestGenerated = [NSMutableArray arrayWithObjects:[NSNull null], [NSNull null], [NSNull null], nil];

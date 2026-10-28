@@ -12,8 +12,8 @@ import java.util.Collection;
 import java.util.List;
 
 /**
- * A CAMetalLayer on the SDL window. The drawable is taken at blit time, not at frame start: holding it for the whole
- * frame only adds latency.
+ * A CAMetalLayer on the SDL window. Finished frames are handed to a native present thread, which takes a drawable
+ * and shows the newest frame on each refresh; the render thread never holds a drawable.
  */
 final class MetalSurface implements GpuSurfaceBackend {
 	private final long ctx;
@@ -75,7 +75,7 @@ final class MetalSurface implements GpuSurfaceBackend {
 
 	@Override
 	public void close() {
-		// With vsync off a native thread presents to the layer; it has to stop before the view goes away.
+		// A native thread presents to the layer; it has to stop before the view goes away.
 		MetalNative.layerDetach(this.ctx);
 		SDLMetal.SDL_Metal_DestroyView(this.view);
 	}

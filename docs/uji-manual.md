@@ -30,7 +30,7 @@ Launcher resmi:
 | 6 | Nether dan End | Langit, fog, dan portal benar |
 | 7 | Inventory, chat, menu pause, Options | GUI, teks, dan item 3D di slot benar |
 | 8 | Video Settings: ubah render distance, GUI scale, Graphics preset, Improved Transparency | Berganti tanpa crash atau gambar rusak |
-| 9 | Vsync on/off, Max Framerate | Dengan vsync gerakan halus; tanpa vsync FPS naik dan tidak ada stutter berkala |
+| 9 | Vsync on/off, Max Framerate; dengan HUD Performa Metal nyala | Dengan vsync gerakan halus dan FPS menempel di refresh rate (60); tanpa vsync FPS naik dan tidak ada stutter berkala. Input dengan vsync nyala tidak terasa lebih telat dari sebelumnya |
 | 10 | F11 (fullscreen), keluar fullscreen, ubah ukuran window dengan mouse | Gambar langsung menyesuaikan, tidak gepeng atau buram |
 | 11 | Pindah window ke monitor lain (jika ada), minimize lalu restore, Cmd+Tab | Tetap tampil normal setelah kembali |
 | 12 | F2 (screenshot) | File di `screenshots/` tidak terbalik dan warnanya benar |

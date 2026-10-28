@@ -124,25 +124,19 @@ static const NSUInteger M2M_PRESENT_SLOTS = 3;
 @property(nonatomic) NSUInteger passWidth;
 @property(nonatomic) NSUInteger passHeight;
 
-// Presentation (present.m). With vsync on, frames go through two staging textures to a separate present queue.
+// Presentation (present.m): a present thread shows the newest finished frame from these slots once per refresh (a
+// generated frame and then the real one with interpolation), drawing it on a separate present queue. All of the
+// following are guarded by latestLock.
 @property(nonatomic) BOOL layerVsync;
 @property(nonatomic, strong) id<MTLCommandQueue> presentQueue;
-@property(nonatomic, strong) id<MTLEvent> frameReady;
-@property(nonatomic, strong) id<MTLEvent> presentDone;
-@property(nonatomic, strong) NSMutableArray *presentStaging;
-@property(nonatomic) int64_t presentCount;
-// With vsync off, or with frame interpolation, a present thread shows the newest finished frame from these slots
-// once per refresh (a generated frame and then the real one with interpolation). All of the following are guarded
-// by latestLock.
 @property(nonatomic, strong) NSCondition *latestLock;
 @property(nonatomic, strong) NSMutableArray *latestSlots;
 @property(nonatomic, strong) NSMutableArray *latestGenerated;
 // Bit i is set while slot i has a generated frame to show before its real one.
 @property(nonatomic) uint32_t generatedSlots;
-// The newest frame the present thread has taken; with interpolation the render thread waits for it to catch up.
+// The newest frame the present thread has taken; with vsync on or interpolation the render thread waits for it to
+// catch up.
 @property(nonatomic) uint64_t takenFrame;
-// Started for frame interpolation while vsync is on; stopped again once interpolation is.
-@property(nonatomic) BOOL presentThreadForInterpolation;
 @property(nonatomic) int32_t latestSlot;
 // Bit i is set while a present command buffer still reads slot i.
 @property(nonatomic) uint32_t presentingSlots;
