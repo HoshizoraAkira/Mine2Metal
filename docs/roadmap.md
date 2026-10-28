@@ -115,6 +115,15 @@ Hasil gametest di jendela yang terlihat (MacBook Air M3, 60 Hz):
 
 Kualitas frame buatan tidak berubah (FSR 31,21 dB, MetalFX 31,20 dB), dan gametest penuh lolos di bawah validation. Belum diukur: game di bawah 30 FPS dengan frame gen (penahanan > 1 refresh) dan layar ProMotion.
 
+### Frame gen 2 FPS di install sungguhan (2026-10-28)
+
+Temporal + FSR 3 frame gen di fullscreen Retina sempat jatuh ke ±4 FPS. Log mencatat frame gen 156 ms GPU per frame dan jarak antar frame 250 ms. Dengan Mac dan setelan yang sama, sesi pukul 19:09 hanya 24 ms. Benchmark dengan build yang sama langsung sesudahnya (jendela 1440×900, temporal 75% + FSR) mencatat 5–7 ms. Jadi kodenya tidak melambat. Yang paling mungkin adalah kondisi Mac saat itu: panas setelah beberapa gametest berat beruntun, dan swap terpakai 3,8 GB. Hal itu tidak bisa dipastikan dari log.
+
+Yang diperbaiki adalah pengamannya. Sebelumnya, frame gen yang jauh terlalu mahal tetap jalan 3 detik sebelum dijeda, lalu jatuh lagi ke beberapa FPS setiap 30 detik saat dicoba ulang.
+- Kalau biayanya melebihi seluruh jarak antar frame (FPS lebih dari separuh hilang), jeda terjadi setelah 0,5 detik, bukan 3 detik.
+- Kalau percobaan ulang setelah jeda masih terlalu mahal, frame gen dimatikan sampai dipilih lagi. Teksturnya dilepas, muncul toast "Pembuatan frame dimatikan", dan baris F3 menulis `off: too heavy here`. Hitungan jeda mulai dari nol setelah frame gen ringan selama 10 detik, atau saat pilihan engine diganti.
+- Uji: di jendela tes yang merender tanpa batas, FSR dijeda, dicoba ulang 30 detik kemudian, lalu dimatikan. Off lalu FSR 3 lagi memulai hitungannya dari awal.
+
 ### Kedip HDR di layar sungguhan (2026-10-28)
 
 Uji di install sungguhan (MacBook Air M3, auto-brightness nyala, HDR + temporal + frame gen) melaporkan bagian terang yang terang-redup bergantian dan piksel/blok yang berkedip. Perbaikan:

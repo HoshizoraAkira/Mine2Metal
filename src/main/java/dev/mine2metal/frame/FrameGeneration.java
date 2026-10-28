@@ -45,11 +45,17 @@ final class FrameGeneration {
 	/**
 	 * The guard: frame generation pays off only while it costs less than half the time between rendered frames (two
 	 * images in T beat one in T - cost exactly when T > 2 cost). When it costs more for a few seconds in a row, it pauses
-	 * for a while and then tries again. -Dmine2metal.frameGenerationGuard=false turns this off.
+	 * for a while and then tries again; costing more than the whole time between frames, it pauses within half a
+	 * second. Too heavy again on the retry, it stays off until the choice changes, rather than dragging the game down
+	 * every half minute. -Dmine2metal.frameGenerationGuard=false turns this off.
 	 */
 	private static final String GUARD_PROPERTY = "mine2metal.frameGenerationGuard";
 	private static final long HEAVY_NANOS = 3_000_000_000L;
+	private static final long SEVERE_NANOS = 500_000_000L;
 	private static final long PAUSE_NANOS = 30_000_000_000L;
+	/** Light for this long after a pause, a retry has worked: a later pause starts counting again. */
+	private static final long RECOVERED_NANOS = 10_000_000_000L;
+	private static final long STOPPED = Long.MAX_VALUE;
 	/** Smoothed seconds between captures. */
 	private double frameInterval;
 	/** When frame generation first cost too much in the current run of such frames; 0 if it does not now. */
@@ -57,6 +63,10 @@ final class FrameGeneration {
 	/** While paused, until this System.nanoTime(). */
 	private long pausedUntil;
 	private boolean pausedBefore;
+	/** Pauses since frame generation last ran light for a while; the second one stops it. */
+	private int pausesInARow;
+	/** Since when frame generation has cost little enough; 0 while it costs too much. */
+	private long lightSince;
 	private MetalSettings.FrameGeneration guardedEngine = MetalSettings.FrameGeneration.OFF;
 
 	/** Frames on screen per second for the debug screen, counted like Minecraft's own fps: over about a second. */
@@ -82,6 +92,8 @@ final class FrameGeneration {
 			guardedEngine = engine;
 			pausedUntil = 0L;
 			heavySince = 0L;
+			pausesInARow = 0;
+			lightSince = 0L;
 		}
 		if (engine == MetalSettings.FrameGeneration.OFF) {
 			if (active) {
@@ -92,7 +104,12 @@ final class FrameGeneration {
 			return;
 		}
 		if (pausedUntil != 0L && System.nanoTime() < pausedUntil) {
-			// Paused by the guard: frames are shown as rendered, and the engine keeps its state for the retry.
+			// Paused by the guard: frames are shown as rendered, and the engine keeps its state for the retry; turned
+			// off, it gives its textures back.
+			if (pausedUntil == STOPPED && active) {
+				MetalRenderer.releaseFrameInterpolation();
+				active = false;
+			}
 			motion.reset();
 			return;
 		}
@@ -159,9 +176,9 @@ final class FrameGeneration {
 			shownSince = now;
 		}
 		String name = engine == MetalSettings.FrameGeneration.METALFX ? "MetalFX" : "FSR 3";
-		boolean paused = pausedUntil != 0L && now < pausedUntil;
-		return String.format(Locale.ROOT, "%d fps on screen, %s frame generation%s", shownPerSecond, name,
-				paused ? " paused: costs more than it gains" : "");
+		String state = pausedUntil == STOPPED ? " off: too heavy here"
+				: pausedUntil != 0L && now < pausedUntil ? " paused: costs more than it gains" : "";
+		return String.format(Locale.ROOT, "%d fps on screen, %s frame generation%s", shownPerSecond, name, state);
 	}
 
 	private void guard(MetalSettings.FrameGeneration engine, float deltaTime, long now) {
@@ -172,24 +189,38 @@ final class FrameGeneration {
 		double cost = MetalRenderer.frameGenerationGpuMillis() / 1000.0;
 		if (cost <= frameInterval / 2.0) {
 			heavySince = 0L;
+			if (lightSince == 0L) {
+				lightSince = now;
+			} else if (now - lightSince >= RECOVERED_NANOS) {
+				pausesInARow = 0;
+			}
 			return;
 		}
+		lightSince = 0L;
 		if (heavySince == 0L) {
 			heavySince = now;
 			return;
 		}
-		if (now - heavySince < HEAVY_NANOS) {
+		if (now - heavySince < (cost > frameInterval ? SEVERE_NANOS : HEAVY_NANOS)) {
 			return;
 		}
 		heavySince = 0L;
-		pausedUntil = now + PAUSE_NANOS;
+		boolean stop = ++pausesInARow >= 2;
+		pausedUntil = stop ? STOPPED : now + PAUSE_NANOS;
 		String millis = String.format(Locale.ROOT, "%.1f", cost * 1000.0);
 		String interval = String.format(Locale.ROOT, "%.1f", frameInterval * 1000.0);
+		Minecraft client = Minecraft.getInstance();
+		if (stop) {
+			Mine2Metal.LOGGER.warn("{} frame generation still costs {} ms of GPU time per frame with {} ms between rendered frames; turning it off until it is chosen again",
+					engine, millis, interval);
+			SystemToast.addOrUpdate(client.gui.toastManager(), PAUSE_TOAST, Component.translatable("mine2metal.toast.frame_generation_stopped"),
+					Component.translatable("mine2metal.toast.frame_generation_stopped.detail", millis, interval));
+			return;
+		}
 		Mine2Metal.LOGGER.warn("{} frame generation costs {} ms of GPU time per frame with {} ms between rendered frames, more than it gains; pausing it for 30 s",
 				engine, millis, interval);
 		if (!pausedBefore) {
 			pausedBefore = true;
-			Minecraft client = Minecraft.getInstance();
 			SystemToast.add(client.gui.toastManager(), PAUSE_TOAST, Component.translatable("mine2metal.toast.frame_generation_paused"),
 					Component.translatable("mine2metal.toast.frame_generation_paused.detail", millis, interval));
 		}
