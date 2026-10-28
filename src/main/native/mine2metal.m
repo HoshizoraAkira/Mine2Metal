@@ -92,6 +92,7 @@ int64_t m2m_context_create(int64_t device_handle, int32_t debug, int32_t metal4,
 		ctx.presentStaging = [NSMutableArray arrayWithObjects:[NSNull null], [NSNull null], nil];
 		ctx.latestLock = [NSCondition new];
 		ctx.latestSlots = [NSMutableArray arrayWithObjects:[NSNull null], [NSNull null], [NSNull null], nil];
+		ctx.latestGenerated = [NSMutableArray arrayWithObjects:[NSNull null], [NSNull null], [NSNull null], nil];
 		ctx.latestSlot = -1;
 		ctx.writingSlot = -1;
 		ctx.inFlight = [NSMutableArray array];

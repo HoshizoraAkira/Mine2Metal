@@ -118,7 +118,8 @@ public final class MetalSettings {
 				#
 				# MetalFX frame interpolation (macOS 26 or newer): shows a generated frame between each pair the game
 				# renders, for up to twice the frame rate on screen, capped at the display's refresh rate. Frames are
-				# paced to the display even with vsync off, and input lags by about one rendered frame.
+				# paced to the display even with vsync off, and input lags by about one rendered frame. Heavy on the
+				# GPU at large window sizes; best together with temporal upscaling.
 				frameInterpolation=%s
 				#
 				# HDR (EDR) output on displays that can show brighter than SDR white: the world's brightest parts (sky,

@@ -122,9 +122,8 @@ Alurnya:
 - **Tangkap dunia** di awal `render3dHud`, setelah upscaling dan sebelum tangan, efek layar, dan GUI. Warna dunia disalin ke salah satu dari dua tekstur bergantian (frame ini dan frame sebelumnya). Motion vector dan depth Depth32Float dibuat oleh pass yang sama dengan upscaling temporal (`m2m_encode_motion`), dari depth yang dipakai dunia. Saat upscaling, depth itu berukuran kecil, dan MetalFX menerimanya sebagai input yang lebih kecil dari output.
 - **Data kamera:** near/far dibaca dari matriks proyeksi (device melaporkan depth zero-to-one, jadi `m22 = f/(n−f)` dan `m32 = nf/(n−f)`), FOV vertikal dari `m11`, aspek dari `m11/m00`, jitter temporal, dan selisih waktu antar tangkapan.
 - **Lapisan UI:** frame jadi (dunia + tangan + GUI) dipakai sebagai tekstur UI *composited*. MetalFX memisahkan apa yang digambar di atas dunia lalu menempelkannya tanpa digeser, jadi hotbar, crosshair, teks, dan tangan tidak ikut melengkung.
-- **Present:** interpolasi di-encode di command buffer frame itu sendiri, setelah salinan staging. Antrean present menggambar frame buatan ke drawable pertama, lalu frame asli ke drawable kedua. Dua slot output bergantian dijaga oleh event `presentDone`, seperti tekstur staging.
-- **Pacing:** dengan `present(afterMinimumDuration:)`, setiap gambar ditahan sebanyak refresh utuh yang muat di setengah interval frame asli, dibulatkan ke bawah. Kalau game ≥ setengah refresh rate, keduanya cukup tampil di refresh berturut-turut, dan nextDrawable yang memblokir membatasi game ke setengah refresh rate (30 + 30 di layar 60 Hz). Membulatkan ke atas akan menahan game lebih lama dari waktu render-nya, interval jadi naik, dan game makin lambat.
-- **VSync mati:** frame yang ditangkap tetap dipresentasikan dari thread render dengan pacing di atas. Thread present menunggu karena tidak ada frame baru yang diterbitkan.
+- **Present lewat thread present:** interpolasi di-encode di command buffer frame itu sendiri, setelah frame disalin ke salah satu dari tiga slot thread present (satu tekstur frame buatan per slot). Thread present (yang juga dipakai saat VSync mati) mengambil frame terbaru yang sudah selesai, menggambar frame buatan ke satu drawable, lalu frame asli ke drawable berikutnya, sehingga keduanya tampil di refresh berturut-turut. Thread render tidak pernah menunggu drawable. Ia hanya menunggu kalau frame sebelumnya belum diambil thread present, karena tiap frame makan dua refresh dan frame buatan yang tidak sempat tampil cuma membuang waktu GPU. Hasilnya: game ≤ setengah refresh rate (30 + 30 di layar 60 Hz), dengan VSync nyala maupun mati. Dengan VSync nyala, thread ini hanya berjalan selama interpolasi aktif.
+- **Riwayat perbaikan (setelah uji manual):** versi pertama mempresentasikan kedua gambar dari thread render dan mengatur jeda dengan `present(afterMinimumDuration:)`. Ada dua masalah. (1) Jeda itu dihitung dari interval frame, padahal interval ikut membesar karena present tertahan. Akibatnya satu frame yang tersendat (>250 ms, sering saat chunk dimuat) membuat setiap gambar ditahan ~6 refresh lama sekali, dan game jatuh ke 6–12 FPS. Jeda itu sudah dihapus. (2) Mengambil dua drawable per frame dari thread render membuat CPU, GPU, dan layar bekerja berurutan (~36 ms per frame tertahan di present). Itu sebabnya present dipindah ke thread present.
 
 Hasil gametest (Apple M3, macOS 27, window 854×480): kamera berputar dari yaw 0° ke 4° di antara dua frame, lalu frame buatan dibaca balik dan dibandingkan dengan frame asli di yaw 2° (PSNR, makin tinggi makin mirip):
 
@@ -140,6 +139,26 @@ Hasil gametest (Apple M3, macOS 27, window 854×480): kamera berputar dari yaw 0
 - Lolos tanpa error di bawah validation, Metal 4 dan Metal 3. Upscaling temporal tidak berubah setelah pass motion dipakai bersama (30,6 / 29,0 dB).
 - Di window gametest yang terlihat, FPS render turun ke 29–30 (layar 60 Hz), sesuai rancangan. Pacing di layar sungguhan belum diukur: di gametest macOS melaporkan semua `presentedTime` sebagai 0, bahkan tanpa interpolasi.
 - Sama seperti temporal, motion vector hanya tahu gerak kamera, jadi mob, partikel, dan air yang bergerak bisa sedikit goyah di frame buatan.
+
+**Biaya (Apple M3, MacBook Air):** interpolator MetalFX sendiri mahal di GPU ini, dan biayanya naik sebanding jumlah piksel. Diukur dengan command buffer tersendiri untuk interpolator. Angkanya sangat bervariasi antar run (panas, clock GPU), jadi yang dicantumkan rentangnya:
+
+| Output | Input depth/motion | Waktu GPU interpolator |
+|---|---|---|
+| 1920×1080 | 1920×1080 | ~10–40 ms |
+| 1920×1080 | 1440×810 (spatial 75%) | ~8–33 ms |
+| 1920×1080 | 960×540 (temporal 50%) | ~6–19 ms |
+| 2560×1600 | 2560×1600 / 1920×1200 | ~47–54 ms |
+
+Gametest di darat, jalan menghadap hutan, render distance 16, 1920×1080 (FPS render; jendela tersembunyi, jadi tidak dibatasi refresh):
+
+| Mode | Present dari thread render (versi pertama) | Thread present |
+|---|---|---|
+| Interpolasi | 16 | 23 |
+| + Spatial 75% | 24–26 | 33 |
+| + Temporal 50% | 40 | 50 |
+| Mati | 479–1220 | |
+
+Interpolasi hanya menguntungkan kalau GPU punya ruang sisa (game dibatasi CPU) dan resolusinya tidak besar. Di layar Retina penuh pada M3 Air, biaya interpolator sendiri sudah melebihi anggaran 33 ms untuk 30 FPS asli. Paling masuk akal dipakai bersama upscaling temporal (input lebih kecil) atau di Mac dengan GPU lebih besar. Tooltip opsinya menyebutkan ini.
 
 ## M14 HDR/EDR (2026-10-28)
 

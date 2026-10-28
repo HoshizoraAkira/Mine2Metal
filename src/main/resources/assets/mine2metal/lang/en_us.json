@@ -15,7 +15,7 @@
 	"mine2metal.options.render_scale.value": "%s%%",
 	"mine2metal.options.group.frame_generation": "MetalFX Frame Generation",
 	"mine2metal.options.frame_interpolation": "Frame Interpolation",
-	"mine2metal.options.frame_interpolation.tooltip": "Shows a frame MetalFX generates between each pair the game renders, for smoother motion: up to twice the frame rate on screen, capped at the display's refresh rate, so the game itself renders at most half of it. Input lags by about one rendered frame, and frames are paced to the display even with VSync off. Best when the game runs below the refresh rate.",
+	"mine2metal.options.frame_interpolation.tooltip": "Shows a frame MetalFX generates between each pair the game renders, for smoother motion: up to twice the frame rate on screen, capped at the display's refresh rate, so the game itself renders at most half of it. Input lags by about one rendered frame. The generator is heavy on the GPU and its cost grows with the window size: on smaller GPUs at Retina resolution it can cost more than it gains. Pair it with Temporal upscaling, and use it when the game runs below the refresh rate but the GPU has room to spare.",
 	"mine2metal.options.frame_interpolation.unsupported": "MetalFX frame interpolation needs macOS 26 or newer.",
 	"mine2metal.options.group.hdr": "HDR (EDR)",
 	"mine2metal.options.hdr": "HDR",

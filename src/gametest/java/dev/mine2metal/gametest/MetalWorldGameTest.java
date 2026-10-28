@@ -124,6 +124,10 @@ public class MetalWorldGameTest implements FabricClientGameTest {
 				checkFrameInterpolation(context, singleplayer, above);
 				return;
 			}
+			if (Boolean.getBoolean("mine2metal.test.interpolationPerf")) {
+				measureInterpolationCost(context, singleplayer);
+				return;
+			}
 			if (Boolean.getBoolean("mine2metal.test.hdrOnly")) {
 				checkHdr(context, singleplayer, above);
 				return;
@@ -507,6 +511,50 @@ public class MetalWorldGameTest implements FabricClientGameTest {
 			MetalRenderer.setHdr(false, settings.hdrBrightness);
 		});
 		context.waitTicks(10);
+	}
+
+	/**
+	 * Frame rate in a heavy scene with frame interpolation, spatial upscaling and HDR in turn: 1920x1080, render distance
+	 * 16, on the ground walking towards the trees, so chunks keep loading and frames hitch now and then. With
+	 * {@code -Dmine2metal.stats=true} the log has GPU and present time per frame for each.
+	 */
+	private static void measureInterpolationCost(ClientGameTestContext context, TestSingleplayerContext singleplayer) {
+		MetalSettings settings = MetalSettings.get();
+		String[] size = System.getProperty("mine2metal.test.perfSize", "1920x1080").split("x");
+		context.getInput().resizeWindow(Integer.parseInt(size[0]), Integer.parseInt(size[1]));
+		context.runOnClient(client -> client.options.renderDistance().set(16));
+		// Down from the view above: the teleport ends flight, so the player falls back to the ground.
+		singleplayer.getServer().runCommand("tp @a ~ ~-38 ~");
+		context.waitTicks(60);
+		Vec3 ground = context.computeOnClient(client -> client.player.position());
+		String start = String.format(Locale.ROOT, "tp @a %.3f %.3f %.3f 0 5", ground.x, ground.y, ground.z);
+		singleplayer.getServer().runCommand(start);
+		context.waitTicks(45 * 20);
+		String[] cases = System.getProperty("mine2metal.test.perfCases", "off,interpolation,interpolation+spatial75,interpolation+spatial75+hdr,hdr,off")
+				.split(",");
+		for (String name : cases) {
+			context.runOnClient(client -> {
+				settings.frameInterpolation = name.contains("interpolation");
+				settings.upscaling = name.contains("spatial") ? MetalSettings.Upscaling.SPATIAL
+						: name.contains("temporal") ? MetalSettings.Upscaling.TEMPORAL : MetalSettings.Upscaling.OFF;
+				settings.renderScale = name.contains("50") ? 50 : 75;
+				settings.hdr = name.contains("hdr");
+				MetalRenderer.setHdr(settings.hdr, settings.hdrBrightness);
+			});
+			singleplayer.getServer().runCommand(start);
+			context.waitTicks(20);
+			LOGGER.info("Measuring {}", name);
+			context.runOnClient(client -> client.options.keyUp.setDown(true));
+			int fps = averageFps(context);
+			context.runOnClient(client -> client.options.keyUp.setDown(false));
+			LOGGER.info("Average FPS, render distance 16, walking towards the trees, {}: {}", name, fps);
+		}
+		context.runOnClient(client -> {
+			settings.frameInterpolation = false;
+			settings.upscaling = MetalSettings.Upscaling.OFF;
+			settings.hdr = false;
+			MetalRenderer.setHdr(false, settings.hdrBrightness);
+		});
 	}
 
 	/** The largest channel value in a block of an RGBA float image. */

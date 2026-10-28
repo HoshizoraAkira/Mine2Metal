@@ -13,6 +13,9 @@
 
 typedef void (^M2MCompletion)(CFTimeInterval gpuStart, CFTimeInterval gpuEnd, NSError *error);
 
+// Slots the present thread shows frames from (present.m); frame interpolation keeps a generated frame per slot.
+static const NSUInteger M2M_PRESENT_SLOTS = 3;
+
 // Copy commands with the same selectors on a Metal 3 blit encoder and a Metal 4 compute encoder.
 @protocol M2MCopier <NSObject>
 - (void)copyFromBuffer:(id<MTLBuffer>)sourceBuffer
@@ -128,10 +131,18 @@ typedef void (^M2MCompletion)(CFTimeInterval gpuStart, CFTimeInterval gpuEnd, NS
 @property(nonatomic, strong) id<MTLEvent> presentDone;
 @property(nonatomic, strong) NSMutableArray *presentStaging;
 @property(nonatomic) int64_t presentCount;
-// With vsync off, a present thread shows the newest finished frame from these slots once per refresh. All of
-// the following are guarded by latestLock.
+// With vsync off, or with frame interpolation, a present thread shows the newest finished frame from these slots
+// once per refresh (a generated frame and then the real one with interpolation). All of the following are guarded
+// by latestLock.
 @property(nonatomic, strong) NSCondition *latestLock;
 @property(nonatomic, strong) NSMutableArray *latestSlots;
+@property(nonatomic, strong) NSMutableArray *latestGenerated;
+// Bit i is set while slot i has a generated frame to show before its real one.
+@property(nonatomic) uint32_t generatedSlots;
+// The newest frame the present thread has taken; with interpolation the render thread waits for it to catch up.
+@property(nonatomic) uint64_t takenFrame;
+// Started for frame interpolation while vsync is on; stopped again once interpolation is.
+@property(nonatomic) BOOL presentThreadForInterpolation;
 @property(nonatomic) int32_t latestSlot;
 // Bit i is set while a present command buffer still reads slot i.
 @property(nonatomic) uint32_t presentingSlots;
@@ -165,8 +176,6 @@ typedef void (^M2MCompletion)(CFTimeInterval gpuStart, CFTimeInterval gpuEnd, NS
 @property(nonatomic, strong) id<MTLRenderPipelineState> hdrExpandPipeline;
 // MetalFX frame interpolation state (interpolation.m).
 @property(nonatomic, strong) id frameInterpolator;
-// Display refresh interval in seconds, for pacing generated frames.
-@property(nonatomic) double refreshInterval;
 // MetalFX spatial scaler state (metalfx.m), kept untyped here so other files need not import MetalFX.
 @property(nonatomic, strong) id spatialUpscaler;
 
@@ -248,13 +257,12 @@ void m2m_commit_present4(M2MContext *ctx, id<MTL4CommandBuffer> commandBuffer, M
 BOOL m2m_encode_motion(M2MContext *ctx, id<MTLTexture> sourceDepth, id<MTLTexture> motion, id<MTLTexture> depth,
                        const float *matrices);
 // Frame interpolation (interpolation.m), called by m2m_present. pending: this frame's world was captured, so the
-// frame goes through the synced path. encode: the generated frame shown before this one (nil if there is none),
-// encoded once ui (the finished frame) has been copied into a texture with ui_usage. pacing: the minimum time each
-// of the two images stays on screen (0 for no minimum). presented ends the frame either way.
+// frame goes to the present thread. encode: the generated frame shown before this one (nil if there is none) for
+// present slot, encoded once ui (the finished frame) has been staged in a texture with ui_usage. presented ends the
+// frame either way.
 BOOL m2m_frame_interpolation_pending(M2MContext *ctx);
 MTLTextureUsage m2m_frame_interpolation_ui_usage(M2MContext *ctx);
 id<MTLTexture> m2m_frame_interpolation_encode(M2MContext *ctx, id<MTLTexture> ui, NSUInteger slot);
-double m2m_frame_interpolation_pacing(M2MContext *ctx);
 void m2m_frame_interpolation_presented(M2MContext *ctx, id<MTLTexture> generated);
 // EDR output (hdr.m). compose: the finished frame source into target (RGBA16Float, extended linear), with this
 // frame's world highlights expanded where nothing was drawn over them. expand: a world texture alone, for frame

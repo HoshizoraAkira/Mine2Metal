@@ -1,4 +1,3 @@
-#import <AppKit/AppKit.h>
 #import <MetalFX/MetalFX.h>
 
 #include "m2m_context.h"
@@ -13,11 +12,9 @@
 // (world, hand and GUI) goes in as the composited UI texture: MetalFX separates what was drawn over the world and lays
 // it over the generated frame unmoved, so the hotbar and the hand do not warp with the world.
 
-// The world of this frame and of the previous one alternate; generated frames alternate with the present staging
-// textures they are shown before.
+// The world of this frame and of the previous one alternate. Generated frames go one per present slot, next to the
+// real frame they are shown before.
 static const NSUInteger M2M_INTERPOLATION_SLOTS = 2;
-// A real frame interval longer than this is a hitch, not a frame rate to pace generated frames for.
-static const double M2M_PACING_RESET_SECONDS = 0.25;
 
 typedef struct {
 	float near_plane;
@@ -47,9 +44,6 @@ typedef struct {
 @property(nonatomic) BOOL previousValid;
 @property(nonatomic) BOOL lastPresentCaptured;
 @property(nonatomic) M2MInterpolationCamera camera;
-// Pacing: when the last frame with a generated one was presented, and the smoothed interval between those.
-@property(nonatomic) CFTimeInterval lastPresent;
-@property(nonatomic) double frameInterval;
 // The generated frame of the most recent present, for the game test's readback; nil if it had none.
 @property(nonatomic, weak) id<MTLTexture> lastOutput;
 @end
@@ -129,6 +123,8 @@ static M2MFrameInterpolator *m2m_frame_interpolator(M2MContext *ctx, id<MTLTextu
 		// Written by a copy, or rendered by the EDR expansion.
 		[created.worlds addObject:m2m_new_private_texture(ctx, format, color.width, color.height,
 		                                                  interpolator.colorTextureUsage | MTLTextureUsageRenderTarget)];
+	}
+	for (NSUInteger i = 0; i < M2M_PRESENT_SLOTS; i++) {
 		// Read by the present pass that draws it onto a drawable.
 		[created.outputs addObject:m2m_new_private_texture(ctx, format, color.width, color.height,
 		                                                   interpolator.outputTextureUsage | MTLTextureUsageShaderRead)];
@@ -189,7 +185,7 @@ id<MTLTexture> m2m_frame_interpolation_encode(M2MContext *ctx, id<MTLTexture> ui
 		return nil;
 	}
 	M2MInterpolationCamera camera = interpolator.camera;
-	id<MTLTexture> output = interpolator.outputs[slot % M2M_INTERPOLATION_SLOTS];
+	id<MTLTexture> output = interpolator.outputs[slot % M2M_PRESENT_SLOTS];
 	id<MTLFXFrameInterpolatorBase> effect = interpolator.interpolator;
 	effect.colorTexture = interpolator.worlds[interpolator.latest];
 	effect.prevColorTexture = interpolator.worlds[(interpolator.latest + M2M_INTERPOLATION_SLOTS - 1) % M2M_INTERPOLATION_SLOTS];
@@ -216,24 +212,6 @@ id<MTLTexture> m2m_frame_interpolation_encode(M2MContext *ctx, id<MTLTexture> ui
 		[(id<MTLFXFrameInterpolator>)effect encodeToCommandBuffer:m2m_command_buffer(ctx)];
 	}
 	return output;
-}
-
-double m2m_frame_interpolation_pacing(M2MContext *ctx) {
-	M2MFrameInterpolator *interpolator = ctx.frameInterpolator;
-	CFTimeInterval now = CACurrentMediaTime();
-	double interval = now - interpolator.lastPresent;
-	interpolator.lastPresent = now;
-	if (interval > M2M_PACING_RESET_SECONDS || interpolator.frameInterval <= 0.0) {
-		interpolator.frameInterval = MIN(interval, M2M_PACING_RESET_SECONDS);
-	} else {
-		interpolator.frameInterval = interpolator.frameInterval * 0.8 + interval * 0.2;
-	}
-	// Each of the two images is held for whole refreshes, as many as fit in half a real frame, rounded down: holding
-	// them longer than the game takes for a frame would slow the game down to match, and the interval with it.
-	double refresh = ctx.refreshInterval > 0.0 ? ctx.refreshInterval : 1.0 / 60.0;
-	double refreshes = floor(interpolator.frameInterval * 0.95 / (2.0 * refresh));
-	// Half a refresh short of the target, so timing noise does not push an image to the refresh after.
-	return refreshes >= 2.0 ? (refreshes - 0.5) * refresh : 0.0;
 }
 
 void m2m_frame_interpolation_presented(M2MContext *ctx, id<MTLTexture> generated) {
