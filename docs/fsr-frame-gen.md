@@ -1,6 +1,6 @@
 # Rancangan: FSR 3 frame generation di atas Metal
 
-Status: rancangan, belum ada kode (2026-10-28).
+Status: F0 (spike) selesai, 2026-10-28. Hasilnya di bagian "Hasil F0" di bawah.
 
 ## Kenapa
 
@@ -51,10 +51,10 @@ Di menu Metal, "Interpolasi Frame" menjadi pilihan **Mati / MetalFX / FSR 3**.
 
    Hasilnya sekitar 18 pass × beberapa permutasi.
 2. `spirv-cross` (perlu `brew install spirv-cross`) menerjemahkan SPIR-V ke MSL 3.1 dan mengeluarkan refleksi JSON (nama dan slot binding setiap resource).
-3. `xcrun metal` / `metallib` membuat satu `.metallib`, disematkan di dylib seperti sekarang.
+3. MSL-nya dikompilasi **saat runtime** lewat `newLibraryWithSource`, seperti shader backend lainnya. Ini tidak butuh Metal Toolchain (di Xcode 26+ toolchain itu unduhan terpisah). Kompilasi ke-18 pass memakan ~2,7 detik sekali, lalu masuk cache Metal (~20 ms setelahnya).
 4. Generator kecil mengubah refleksi menjadi tabel C dengan bentuk yang sama seperti blob shader AMD. Kode host AMD mencocokkan resource **berdasarkan nama** (`r_…`, `rw_…`, `cb…`), jadi namanya harus persis sama.
 
-Semua ini menjadi task Gradle (`buildFsrShaders`) sebelum `buildNative`. Artefak antara tidak masuk repo.
+Semua ini menjadi task Gradle (`buildFsrShaders`) sebelum `buildNative`. Artefak antara tidak masuk repo. Untuk F0, skripnya `scripts/build-fsr-shaders.sh`.
 
 Fitur GPU yang dipakai shader-nya sudah dicek di sumbernya:
 - **Atomic:** hanya `imageAtomicMax/Min/Add` 32-bit pada tekstur `r32ui`. Di Metal ini menjadi texture atomics (Metal 3.1, macOS 14; tekstur perlu `MTLTextureUsageShaderAtomic`).
@@ -100,3 +100,31 @@ Kalibrasinya memakai metode PSNR yang sudah ada di gametest: kamera berputar 0°
 | F1 Backend | `ffx_metal` lengkap + kode host AMD, dispatch penuh (prepare, optical flow, interpolasi), validation Metal 3 dan 4 bersih | Frame buatan ≥ 31 dB di uji yaw (setara MetalFX) |
 | F2 Integrasi | Pilihan Mati/MetalFX/FSR 3, slot thread present, kombinasi dengan upscaling dan HDR, atribusi lisensi | Gametest penuh lolos; FPS di uji jalan-ke-hutan lebih baik dari MetalFX |
 | F3 Penyetelan | Permutasi FP16, queue terpisah supaya interpolasi berjalan paralel dengan frame berikutnya, debug view | — |
+
+## Hasil F0 (2026-10-28)
+
+Yang dibuat:
+- `scripts/vendor-fidelityfx.sh`: menyalin 75 file v1.1.4 (MIT) ke `third_party/fidelityfx-1.1.4/`. Satu-satunya ubahan: ukuran konteks default digandakan, karena `wchar_t` di macOS 4 byte, sedangkan AMD menghitungnya 2 byte.
+- `scripts/build-fsr-shaders.sh`: 18 pass GLSL → SPIR-V → MSL, semua berhasil tanpa tambalan manual. Atomic tekstur menjadi `atomic_fetch_max` native, dan subgroup menjadi `simd_*`.
+- `src/main/native/fsr/ffx_metal.{h,mm}`: backend `FfxInterface` untuk Metal 3, ~600 baris.
+  - **Binding:** dibaca dari refleksi pipeline Metal, berdasarkan awalan nama AMD (`r_`/`rw_`/`cb`). Akses tidak bisa dipakai, karena pass yang hanya membaca resource `rw_` menghasilkan MSL read-only.
+  - **Debug:** `FFX_METAL_TRACE` dan `FFX_METAL_PROFILE` (waktu GPU per pass).
+  - **Kompatibilitas Windows:** `ffx_macos_compat.h` dan pengganti `_countof`/`wcscpy_s`/`swprintf_s`. Kode host AMD tidak diubah.
+- `tools/fsrbench`: menjalankan prepare → optical flow → interpolasi dengan kode host AMD asli, di atas dua frame gametest (yaw 0° dan 4°).
+
+Hasil di Apple M3 (MacBook Air), tanpa validation. Di bawah validation tidak ada error.
+
+| Output | Render penuh | Render 50% (seperti upscaling temporal) | MetalFX, render penuh (M12) |
+|---|---|---|---|
+| 1920×1080 | 11,6–12,8 ms | 8,7 ms | ~10–40 ms |
+| 2560×1600 | 23 ms | 17,2 ms | ~47–54 ms |
+| 3840×2486 (Retina penuh) | 54 ms | 40 ms | — |
+
+Rincian 1080p, render 50%: pass interpolasi utama 2,1 ms, optical flow ~2,4 ms (7 level), reconstruct previous depth 0,7, game motion vector field 0,6, disocclusion 0,55, piramida inpainting 0,7, sisanya <0,4 per pass. Di render penuh, disocclusion melonjak ke 4,4 ms.
+
+Kualitas: frame buatan sudah berada di antara kedua frame asli (25,6 dB terhadap frame asli di yaw 2°, sedangkan frame asli di kedua ujung 21,8 dB). Ini baru dari optical flow saja, karena benchmark memberi depth datar dan motion vector nol. Motion vector dan depth asli dari game baru masuk di F1. MetalFX dengan input lengkap: 31,3 dB.
+
+**Gerbang F0 tidak tercapai secara angka** (target ≤6 ms di 1080p dan ≤12 ms di 2560×1600; hasilnya 8,7–12 dan 17–23 ms). Tapi:
+- FSR 3 **2–3× lebih murah** daripada MetalFX di ukuran yang sama, dan waktunya stabil. MetalFX berubah-ubah antara 10 dan 40 ms di 1080p.
+- Di output sekelas 1080p dengan render 50%, 8,7 ms masih muat di anggaran 33 ms per frame asli untuk 30 + 30 FPS. Di Retina penuh (40–54 ms), tidak ada generator frame yang bisa mencapai 30 + 30 di GPU M3 Air.
+- Ruang optimasi yang terlihat: pass interpolasi utama dan optical flow (ukuran threadgroup, FP16 manual karena jalur GLSL AMD tidak memakainya), serta disocclusion di render penuh.
