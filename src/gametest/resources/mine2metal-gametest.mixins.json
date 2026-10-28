@@ -1,0 +1,11 @@
+{
+	"required": true,
+	"package": "dev.mine2metal.gametest.mixin",
+	"compatibilityLevel": "JAVA_25",
+	"client": [
+		"DebugScreenOverlayMixin"
+	],
+	"injectors": {
+		"defaultRequire": 1
+	}
+}

@@ -115,6 +115,22 @@ Hasil gametest di jendela yang terlihat (MacBook Air M3, 60 Hz):
 
 Kualitas frame buatan tidak berubah (FSR 31,21 dB, MetalFX 31,20 dB), dan gametest penuh lolos di bawah validation. Belum diukur: game di bawah 30 FPS dengan frame gen (penahanan > 1 refresh) dan layar ProMotion.
 
+### R3: lonjakan frame saat chunk dimuat (2026-10-28)
+
+Alat ukur baru yang berlaku untuk semua backend: mixin di mod gametest mencatat setiap `DebugScreenOverlay.logFrameDuration`. Mode `-Dmine2metal.test.chunkSpikes=true`: 1920×1080, render distance 16, VSync mati, berdiri 20 detik lalu berjalan 40 detik ke arah hutan (chunk baru terus dimuat). Untuk OpenGL/Vulkan dijalankan dengan `-Dmine2metal.enabled=false` dan `preferredGraphicsBackend` di `options.txt`.
+
+| Backend (berjalan, chunk dimuat) | FPS | p50 / p99 | Maks | Frame > 50 ms |
+|---|---|---|---|---|
+| Metal 4 (3 run) | 2075–2324 | 0,38–0,41 / 1,47–2,12 ms | 24–48 ms | 0 |
+| Metal 3 (2 run) | 1560–2023 | 0,43–0,56 / 2,05–2,30 ms | 29–88 ms | 0 dan 2 (run kedua, Mac sudah panas) |
+| OpenGL | 294 | 2,67 / 7,10 ms | 11 ms | 0 |
+| Vulkan | tidak tersedia di Mac ini; Minecraft kembali ke OpenGL | | | |
+
+- **Pemuatan chunk tidak menimbulkan lonjakan dari backend kita.** Lonjakan 200–600 ms yang terlihat di pengukuran sebelumnya muncul saat pengaturan diganti di tengah tes (pembuatan scaler/interpolator MetalFX atau konteks FSR, yang mengompilasi shader).
+- **Sisa frame lambat** muncul jarang (0–4 per menit, 50–380 ms, kebanyakan saat berdiri), di Metal 3 maupun Metal 4. Penyebabnya bukan pembuatan pipeline state: sekarang dicatat ke log kalau ≥ 20 ms, dan tidak ada yang muncul. Satu kasus dicocokkan dengan log GC dan tidak bertepatan dengan jeda GC. Jeda GC sendiri 15–60 ms tiap ~3 detik di 2000+ FPS.
+- **Alokasi memori (Java Flight Recorder, 60 detik):** sekitar 5,4 GB sampah per menit, 82% di thread render, tapi backend kita sendiri hanya 3,7%. Sisanya Minecraft (matriks, `BlockPos`, `PoseStack`, generator dunia server internal), renderpearl, dan Sodium. Di game dengan batas FPS biasa (60–120), sampahnya puluhan kali lebih sedikit.
+- Yang tersisa untuk nanti: pembuatan objek MetalFX dan konteks FSR saat pengaturan diganti masih di thread render (sekali per ganti; FSR pertama kali ~3 detik). Bisa dipindah ke thread latar.
+
 ## M13 Metal 4 (2026-10-28)
 
 Satu kode native dengan dua model perintah. Default **Otomatis**: Metal 4 kalau `MTLGPUFamilyMetal4` didukung dan macOS ≥ 26, selain itu Metal 3. Bisa dipaksa di menu Metal → API Grafis → Versi Metal (berlaku setelah restart), di `metalVersion=` pada `config/mine2metal.properties`, atau `-Dmine2metal.metal=auto|metal4|metal3`. Kalau Metal 4 gagal dibuat, otomatis kembali ke Metal 3. Vulkan/OpenGL tetap lewat Graphics API vanilla.
@@ -214,7 +230,7 @@ Urutan di bawah adalah prioritas. Instalasi (M9) tetap terakhir, sesuai kesepaka
 |---|---|---|---|
 | R1 ✅ | **FSR 3.1 frame gen di game** (F1 + F2; hasil di [fsr-frame-gen.md](fsr-frame-gen.md#hasil-r1-fsr-31-frame-generation-di-game-2026-10-28)) | Backend FFX masuk dylib (kode AMD C++ + `ffx_metal.mm`, MSL di jar, dikompilasi di thread latar + cache). Jalur Metal 4: encoder compute MTL4, argument table, barrier antar pass, residency. Input: W tanpa HUD, F, depth, motion vector (skala dan tanda dikalibrasi dengan uji PSNR yaw), kamera; HDR lewat transfer scRGB. Output ke slot thread present. Menu: Frame gen Mati / MetalFX / FSR 3.1 (satu saja) | ≥ 31 dB di uji yaw; lebih cepat dari MetalFX di uji jalan-ke-hutan; validation bersih di Metal 3 dan 4 |
 | R2 ✅ | **Pacing dengan `CAMetalDisplayLink`** (hasil di bagian "R2" di bawah) | Thread present memakai display link (macOS 14+). Frame buatan diletakkan di tengah dua frame asli menurut `targetPresentationTimestamp`, dan latensi diatur lewat `preferredFrameLatency`. Sekalian ukur VSync nyala di layar sungguhan | Jarak antar frame tampil rata (p95 ≈ 1 refresh) dengan frame gen nyala |
-| R3 | **Lonjakan CPU saat chunk dimuat** | Tes jalan-ke-hutan yang sama di backend OpenGL/Vulkan bawaan sebagai pembanding (sekarang frame bisa tertahan 200–600 ms). Kalau dari backend kita, telusuri (upload buffer, kompilasi pipeline, sinkronisasi) | Penyebab diketahui; kalau dari kita, lonjakan ≤ backend bawaan |
+| R3 ✅ | **Lonjakan CPU saat chunk dimuat** (hasil di bagian "R3" di bawah: bukan dari backend kita) | Tes jalan-ke-hutan yang sama di backend OpenGL/Vulkan bawaan sebagai pembanding (sekarang frame bisa tertahan 200–600 ms). Kalau dari backend kita, telusuri (upload buffer, kompilasi pipeline, sinkronisasi) | Penyebab diketahui; kalau dari kita, lonjakan ≤ backend bawaan |
 | R4 | **Waktu GPU per tahap + pengaman frame gen** | Timestamp di batas encoder (counter sample buffer) untuk dunia, upscaling, frame gen, HDR, present. Dari situ frame gen mati sendiri (dengan pesan) kalau biayanya melebihi anggaran | Statistik per tahap di `-Dmine2metal.stats`; frame gen tidak pernah menurunkan FPS di bawah separuh tanpa memberi tahu |
 | R5 | **Reactive mask untuk upscaling temporal** | `reactiveMaskTexture` MetalFX (macOS 14.4+): tandai piksel mob, partikel, dan air yang bergerak sendiri, supaya tidak meninggalkan jejak | Jejak samar di uji mob bergerak berkurang (diukur dengan screenshot) |
 | R6 | **Optimasi shader FSR** (F3) | FP16 manual untuk pass interpolasi utama dan optical flow, disocclusion di render penuh, dispatch concurrent untuk pass kecil | ≤ 6 ms di 1080p dengan render 50% (sekarang 8,7 ms) |

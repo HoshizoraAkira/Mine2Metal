@@ -23,6 +23,7 @@ import java.util.List;
  * attachment format on first use, because renderpearl only learns those formats when a pass begins.
  */
 final class MetalRenderPipeline implements BackendRenderPipeline {
+	private static final long SLOW_STATE_MILLIS = 20;
 	/** Uniform slots are 0..25; the push constant block and vertex buffers sit above them. */
 	static final int PUSH_CONSTANTS_SLOT = 26;
 	static final int VERTEX_BUFFER_BASE_SLOT = 27;
@@ -179,11 +180,17 @@ final class MetalRenderPipeline implements BackendRenderPipeline {
 		}
 
 		long state = 0L;
+		long start = System.nanoTime();
 		try {
 			state = MetalNative.pipelineCreate(this.ctx, this.vertexLibrary, this.vertexEntry, this.fragmentLibrary, this.fragmentEntry, this.layout,
 					depthFormat, stencilFormat, this.name);
 		} catch (RuntimeException e) {
 			Mine2Metal.LOGGER.error("Metal rejected pipeline {}; its draws will be skipped", this.name, e);
+		}
+		long millis = (System.nanoTime() - start) / 1_000_000L;
+		// Made on first use, on the render thread: a slow one is a hitch.
+		if (millis >= SLOW_STATE_MILLIS) {
+			Mine2Metal.LOGGER.info("Creating the pipeline state for {} took {} ms", this.name, millis);
 		}
 		this.states.put(key, state);
 		return state;

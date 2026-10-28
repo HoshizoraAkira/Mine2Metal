@@ -124,6 +124,10 @@ public class MetalWorldGameTest implements FabricClientGameTest {
 				checkFrameInterpolation(context, singleplayer, above);
 				return;
 			}
+			if (Boolean.getBoolean("mine2metal.test.chunkSpikes")) {
+				measureChunkSpikes(context, singleplayer, backend);
+				return;
+			}
 			if (Boolean.getBoolean("mine2metal.test.interpolationPerf")) {
 				measureInterpolationCost(context, singleplayer);
 				return;
@@ -582,6 +586,36 @@ public class MetalWorldGameTest implements FabricClientGameTest {
 			settings.hdr = false;
 			MetalRenderer.setHdr(false, settings.hdrBrightness);
 		});
+	}
+
+	/**
+	 * Frame times while chunks load, comparable across graphics backends (Metal, or OpenGL / Vulkan with
+	 * -Dmine2metal.enabled=false and preferredGraphicsBackend in options.txt): 1920x1080, render distance 16, vsync off,
+	 * first standing on the ground for 20 seconds, then walking towards the trees for 40, which keeps new chunks
+	 * coming in.
+	 */
+	private static void measureChunkSpikes(ClientGameTestContext context, TestSingleplayerContext singleplayer, String backend) {
+		context.getInput().resizeWindow(1920, 1080);
+		context.runOnClient(client -> {
+			client.options.renderDistance().set(16);
+			client.options.enableVsync().set(false);
+			client.options.framerateLimit().set(Options.UNLIMITED_FRAMERATE_CUTOFF);
+			client.options.inactivityFpsLimit().set(InactivityFpsLimit.MINIMIZED);
+		});
+		singleplayer.getServer().runCommand("tp @a ~ ~-38 ~");
+		context.waitTicks(60);
+		Vec3 ground = context.computeOnClient(client -> client.player.position());
+		singleplayer.getServer().runCommand(String.format(Locale.ROOT, "tp @a %.3f %.3f %.3f 0 5", ground.x, ground.y, ground.z));
+		context.waitTicks(45 * 20);
+
+		FrameTimes.start();
+		context.waitTicks(20 * 20);
+		LOGGER.info("Frame times on {}, standing: {}", backend, FrameTimes.stop());
+		FrameTimes.start();
+		context.runOnClient(client -> client.options.keyUp.setDown(true));
+		context.waitTicks(40 * 20);
+		context.runOnClient(client -> client.options.keyUp.setDown(false));
+		LOGGER.info("Frame times on {}, walking towards the trees: {}", backend, FrameTimes.stop());
 	}
 
 	/** The largest channel value in a block of an RGBA float image. */
