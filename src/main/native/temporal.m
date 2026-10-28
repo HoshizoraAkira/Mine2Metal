@@ -153,6 +153,31 @@ static id<MTLRenderPipelineState> m2m_motion_pipeline(M2MContext *ctx) {
 	return ctx.motionPipeline;
 }
 
+BOOL m2m_encode_motion(M2MContext *ctx, id<MTLTexture> sourceDepth, id<MTLTexture> motion, id<MTLTexture> depth,
+                       const float *matrices) {
+	id<MTLRenderPipelineState> motionPipeline = m2m_motion_pipeline(ctx);
+	if (!motionPipeline) {
+		return NO;
+	}
+	MTLRenderPassDescriptor *pass = [MTLRenderPassDescriptor renderPassDescriptor];
+	pass.colorAttachments[0].texture = motion;
+	pass.colorAttachments[0].loadAction = MTLLoadActionDontCare;
+	pass.colorAttachments[0].storeAction = MTLStoreActionStore;
+	pass.depthAttachment.texture = depth;
+	pass.depthAttachment.loadAction = MTLLoadActionDontCare;
+	pass.depthAttachment.storeAction = MTLStoreActionStore;
+	id<M2MRenderCommands> encoder = m2m_open_render_encoder(ctx, pass, @"mine2metal motion vectors");
+	[encoder setRenderPipelineState:motionPipeline];
+	[encoder setDepthStencilState:ctx.motionDepthState];
+	m2m_bind_texture(ctx, 0, sourceDepth, NO, YES);
+	M2MMotionParams params;
+	memcpy(&params, matrices, sizeof(params));
+	m2m_bind_bytes(ctx, 0, &params, sizeof(params), NO, YES);
+	[encoder drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
+	m2m_end_encoding(ctx);
+	return YES;
+}
+
 int32_t m2m_metalfx_temporal_upscale(int64_t handle, int64_t color_handle, int64_t depth_handle, int64_t output_handle,
                                      const float *matrices, float jitter_x, float jitter_y, int32_t reset) {
 	@autoreleasepool {
@@ -162,29 +187,11 @@ int32_t m2m_metalfx_temporal_upscale(int64_t handle, int64_t color_handle, int64
 		id<MTLTexture> output = m2m_borrow(output_handle);
 		BOOL rebuilt = ctx.temporalUpscaler == nil;
 		M2MTemporalUpscaler *upscaler = m2m_temporal_upscaler(ctx, color, output);
-		id<MTLRenderPipelineState> motionPipeline = m2m_motion_pipeline(ctx);
-		if (!upscaler || !motionPipeline) {
+		if (!upscaler || !m2m_encode_motion(ctx, sourceDepth, upscaler.motion, upscaler.depth, matrices)) {
 			return 0;
 		}
 		rebuilt = rebuilt || upscaler != ctx.lastTemporalUpscaler;
 		ctx.lastTemporalUpscaler = upscaler;
-
-		MTLRenderPassDescriptor *pass = [MTLRenderPassDescriptor renderPassDescriptor];
-		pass.colorAttachments[0].texture = upscaler.motion;
-		pass.colorAttachments[0].loadAction = MTLLoadActionDontCare;
-		pass.colorAttachments[0].storeAction = MTLStoreActionStore;
-		pass.depthAttachment.texture = upscaler.depth;
-		pass.depthAttachment.loadAction = MTLLoadActionDontCare;
-		pass.depthAttachment.storeAction = MTLStoreActionStore;
-		id<M2MRenderCommands> encoder = m2m_open_render_encoder(ctx, pass, @"mine2metal motion vectors");
-		[encoder setRenderPipelineState:motionPipeline];
-		[encoder setDepthStencilState:ctx.motionDepthState];
-		m2m_bind_texture(ctx, 0, sourceDepth, NO, YES);
-		M2MMotionParams params;
-		memcpy(&params, matrices, sizeof(params));
-		m2m_bind_bytes(ctx, 0, &params, sizeof(params), NO, YES);
-		[encoder drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
-		m2m_end_encoding(ctx);
 
 		id<MTLFXTemporalScalerBase> scaler = upscaler.scaler;
 		scaler.colorTexture = color;

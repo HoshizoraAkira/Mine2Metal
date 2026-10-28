@@ -15,10 +15,12 @@ import dev.mine2metal.Mine2Metal;
 import com.mojang.renderpearl.api.textures.GpuTextureView;
 import org.joml.Vector4f;
 import org.joml.Vector4fc;
+import org.lwjgl.stb.STBImageWrite;
 import org.lwjgl.system.MemoryUtil;
 import org.jspecify.annotations.Nullable;
 
 import java.nio.ByteBuffer;
+import java.nio.file.Path;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.IdentityHashMap;
@@ -26,6 +28,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalDouble;
+import java.util.function.Consumer;
 
 /**
  * Records into one native command buffer per submit. Work that must wait for the GPU (releasing objects, readback
@@ -40,6 +43,7 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
 	/** Index the commands being recorded will get when committed. */
 	private long recordingIndex = 1L;
 	private final @Nullable FrameStats stats;
+	private @Nullable InterpolationDump interpolationDump;
 	/** Names render encoders after their renderpearl pass, for Xcode captures and Instruments traces. */
 	private final boolean labels;
 	private long gpuErrorsSeen;
@@ -407,6 +411,20 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
 		return MetalNative.metalFxTemporalUpscale(this.ctx, color.handle, depth.handle, output.handle, matrices, jitterX, jitterY, reset);
 	}
 
+	/** Captures the world for frame interpolation, in command order; false if MetalFX rejected the sizes or formats. */
+	boolean captureForInterpolation(MetalTexture color, MetalTexture depth, float[] matrices, float[] camera, boolean reset) {
+		this.flushPendingClears();
+		return MetalNative.frameInterpolationCapture(this.ctx, color.handle, depth.handle, matrices, camera, reset);
+	}
+
+	void releaseFrameInterpolation() {
+		MetalNative.frameInterpolationRelease(this.ctx);
+	}
+
+	void dumpNextInterpolatedFrame(Path file, int width, int height, Consumer<Boolean> done) {
+		this.interpolationDump = new InterpolationDump(file, width, height, done);
+	}
+
 	/** MetalFX spatial upscale of input into output, in command order; false if MetalFX rejected the sizes or formats. */
 	boolean upscaleSpatial(MetalTexture input, MetalTexture output) {
 		this.flushPendingClears();
@@ -418,11 +436,38 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
 		this.flushPendingClears();
 		if (this.stats == null) {
 			MetalNative.present(this.ctx, layer, view.handle);
+		} else {
+			long start = System.nanoTime();
+			MetalNative.present(this.ctx, layer, view.handle);
+			this.stats.addPresent(System.nanoTime() - start);
+		}
+		if (this.interpolationDump != null) {
+			this.writeInterpolationDump(this.interpolationDump);
+			this.interpolationDump = null;
+		}
+	}
+
+	/** Reads back the generated frame the present just showed; its slot is not reused until two presents later. */
+	private void writeInterpolationDump(InterpolationDump dump) {
+		long generated = MetalNative.frameInterpolationLastOutput(this.ctx);
+		if (generated == 0L) {
+			dump.done().accept(false);
 			return;
 		}
-		long start = System.nanoTime();
-		MetalNative.present(this.ctx, layer, view.handle);
-		this.stats.addPresent(System.nanoTime() - start);
+		long size = (long) dump.width() * dump.height() * 4;
+		MetalBuffer buffer = new MetalBuffer(this, MetalNative.bufferCreate(this.ctx, size), 0, size);
+		MetalNative.blitTextureToBuffer(this.ctx, generated, 0, 0, 0, dump.width(), dump.height(), buffer.useForWrite(), 0L, dump.width() * 4L);
+		this.afterGpu(() -> {
+			// Render targets are stored bottom-up, as in GL.
+			STBImageWrite.stbi_flip_vertically_on_write(true);
+			boolean written = STBImageWrite.stbi_write_png(dump.file().toString(), dump.width(), dump.height(), 4,
+					MemoryUtil.memByteBuffer(buffer.address, (int) size), dump.width() * 4);
+			buffer.close();
+			dump.done().accept(written);
+		});
+	}
+
+	private record InterpolationDump(Path file, int width, int height, Consumer<Boolean> done) {
 	}
 
 	private record Deferred(long index, Runnable action) {

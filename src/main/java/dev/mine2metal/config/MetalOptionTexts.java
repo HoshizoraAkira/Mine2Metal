@@ -53,6 +53,16 @@ final class MetalOptionTexts {
 		return modes;
 	}
 
+	static Component frameInterpolationTooltip() {
+		if (!MetalRenderer.isActive()) {
+			return Component.translatable("mine2metal.options.metal_inactive");
+		}
+		if (!MetalRenderer.supportsFrameInterpolation()) {
+			return Component.translatable("mine2metal.options.frame_interpolation.unsupported");
+		}
+		return Component.translatable("mine2metal.options.frame_interpolation.tooltip");
+	}
+
 	static Component performanceHudTooltip() {
 		if (!MetalRenderer.isActive()) {
 			return Component.translatable("mine2metal.options.metal_inactive");

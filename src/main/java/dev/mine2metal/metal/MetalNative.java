@@ -520,6 +520,41 @@ final class MetalNative {
 		}
 	}
 
+	static boolean frameInterpolationSupported(long ctx) {
+		try {
+			return (int) Functions.FRAME_INTERPOLATION_SUPPORTED.invokeExact(ctx) != 0;
+		} catch (Throwable t) {
+			throw rethrow(t);
+		}
+	}
+
+	static boolean frameInterpolationCapture(long ctx, long color, long depth, float[] matrices, float[] camera, boolean reset) {
+		try (Arena arena = Arena.ofConfined()) {
+			MemorySegment params = arena.allocateFrom(JAVA_FLOAT, matrices);
+			MemorySegment values = arena.allocateFrom(JAVA_FLOAT, camera);
+			return (int) Functions.FRAME_INTERPOLATION_CAPTURE.invokeExact(ctx, color, depth, params, values, reset ? 1 : 0) != 0;
+		} catch (Throwable t) {
+			throw rethrow(t);
+		}
+	}
+
+	/** The generated frame of the latest present (borrowed), or 0. */
+	static long frameInterpolationLastOutput(long ctx) {
+		try {
+			return (long) Functions.FRAME_INTERPOLATION_LAST_OUTPUT.invokeExact(ctx);
+		} catch (Throwable t) {
+			throw rethrow(t);
+		}
+	}
+
+	static void frameInterpolationRelease(long ctx) {
+		try {
+			Functions.FRAME_INTERPOLATION_RELEASE.invokeExact(ctx);
+		} catch (Throwable t) {
+			throw rethrow(t);
+		}
+	}
+
 	static boolean metalFxSpatialUpscale(long ctx, long input, long output) {
 		try {
 			return (int) Functions.METALFX_SPATIAL_UPSCALE.invokeExact(ctx, input, output) != 0;
@@ -750,6 +785,11 @@ final class MetalNative {
 		static final MethodHandle METALFX_TEMPORAL_SCALE_RANGE = function("m2m_metalfx_temporal_scale_range", null, JAVA_LONG, ADDRESS, ADDRESS);
 		static final MethodHandle METALFX_TEMPORAL_UPSCALE = function("m2m_metalfx_temporal_upscale", JAVA_INT, JAVA_LONG, JAVA_LONG, JAVA_LONG, JAVA_LONG,
 				ADDRESS, JAVA_FLOAT, JAVA_FLOAT, JAVA_INT);
+		static final MethodHandle FRAME_INTERPOLATION_SUPPORTED = function("m2m_frame_interpolation_supported", JAVA_INT, JAVA_LONG);
+		static final MethodHandle FRAME_INTERPOLATION_CAPTURE = function("m2m_frame_interpolation_capture", JAVA_INT, JAVA_LONG, JAVA_LONG, JAVA_LONG,
+				ADDRESS, ADDRESS, JAVA_INT);
+		static final MethodHandle FRAME_INTERPOLATION_LAST_OUTPUT = function("m2m_frame_interpolation_last_output", JAVA_LONG, JAVA_LONG);
+		static final MethodHandle FRAME_INTERPOLATION_RELEASE = function("m2m_frame_interpolation_release", null, JAVA_LONG);
 		static final MethodHandle METALFX_SPATIAL_UPSCALE = function("m2m_metalfx_spatial_upscale", JAVA_INT, JAVA_LONG, JAVA_LONG, JAVA_LONG);
 
 		static final MethodHandle TAKE_PRESENTED_TIMES = function("m2m_take_presented_times", JAVA_LONG, JAVA_LONG, ADDRESS, JAVA_LONG);

@@ -3,17 +3,18 @@ package dev.mine2metal.upscale;
 import com.mojang.blaze3d.pipeline.RenderTarget;
 import com.mojang.blaze3d.pipeline.TextureTarget;
 import com.mojang.blaze3d.systems.RenderSystem;
+import com.mojang.renderpearl.api.textures.GpuTexture;
 import dev.mine2metal.Mine2Metal;
 import dev.mine2metal.config.MetalSettings;
 import dev.mine2metal.metal.MetalRenderer;
 import dev.mine2metal.mixin.RenderTargetAccessor;
 import net.minecraft.client.renderer.state.level.CameraRenderState;
-import net.minecraft.world.phys.Vec3;
 import org.joml.Matrix4f;
 import org.joml.Vector4f;
 import org.jspecify.annotations.Nullable;
 
 import java.util.Locale;
+import java.util.Objects;
 
 /**
  * Renders the world at a lower resolution and upscales it with MetalFX onto the window-sized main target before the
@@ -31,8 +32,6 @@ import java.util.Locale;
  */
 public final class WorldUpscaler {
 	private static final Vector4f CLEAR_COLOR = new Vector4f(0.0F, 0.0F, 0.0F, 0.0F);
-	/** A camera that moves further than this between frames has teleported; its history is useless. */
-	private static final double TELEPORT_DISTANCE = 16.0;
 	/**
 	 * Sign applied to the jitter MetalFX is told about, relative to how far the projection moved the image. A system
 	 * property so the game test can compare the alternatives; read again whenever it changes.
@@ -47,6 +46,8 @@ public final class WorldUpscaler {
 	private static @Nullable TextureTarget scaled;
 	/** The main target while it is rendering with the small textures. */
 	private static @Nullable RenderTarget lentTo;
+	/** Whether this frame's world was drawn into the small textures. */
+	private static boolean scaledFrame;
 	private static boolean warnedFailure;
 
 	/** The camera whose projection is jittered for this frame; null when the frame is not temporal. */
@@ -56,15 +57,12 @@ public final class WorldUpscaler {
 	private static float jitterX;
 	private static float jitterY;
 	private static int jitterIndex;
-	/** The world's final projection (bobbing and nausea included) with the jitter taken out again. */
+	private static boolean jitteredFrame;
+	/** The world's final projection (bobbing and nausea included) with any jitter taken out again. */
 	private static final Matrix4f projection = new Matrix4f();
 	private static boolean projectionCaptured;
 
-	private static boolean hasHistory;
-	private static final Matrix4f previousViewProjection = new Matrix4f();
-	private static @Nullable Vec3 previousCameraPos;
-	private static int previousWidth;
-	private static int previousHeight;
+	private static final CameraMotion motion = new CameraMotion();
 
 	private WorldUpscaler() {
 	}
@@ -87,10 +85,13 @@ public final class WorldUpscaler {
 		if (lentTo != null) {
 			throw new IllegalStateException("The previous world pass did not return the main render target's textures");
 		}
+		projectionCaptured = false;
+		scaledFrame = false;
+		jitteredFrame = false;
 		MetalSettings.Upscaling mode = activeMode();
 		if (mode == MetalSettings.Upscaling.OFF) {
 			release();
-			hasHistory = false;
+			motion.reset();
 			return;
 		}
 
@@ -109,11 +110,12 @@ public final class WorldUpscaler {
 		RenderSystem.getDevice().createCommandEncoder().clearColorAndDepthTextures(target.getColorTexture(), CLEAR_COLOR, target.getDepthTexture(), 1.0);
 		swapTextures(main, target);
 		lentTo = main;
+		scaledFrame = true;
 
 		if (mode == MetalSettings.Upscaling.TEMPORAL) {
 			jitter(camera, width, height, main.width / (float) width);
 		} else {
-			hasHistory = false;
+			motion.reset();
 		}
 	}
 
@@ -130,17 +132,38 @@ public final class WorldUpscaler {
 		// In clip space, so it moves the image by the same number of pixels whatever the depth.
 		camera.projectionMatrix.translateLocal(2.0F * jitterX / width, 2.0F * jitterY / height, 0.0F);
 		jitteredCamera = camera;
-		projectionCaptured = false;
+		jitteredFrame = true;
 	}
 
 	/** The projection renderLevel uploads for the world; recorded unjittered for the motion vectors. */
 	public static void captureProjection(Matrix4f uploaded) {
+		projection.set(uploaded);
 		TextureTarget target = scaled;
-		if (jitteredCamera == null || lentTo == null || target == null) {
-			return;
+		if (jitteredCamera != null && lentTo != null && target != null) {
+			projection.translateLocal(-2.0F * jitterX / target.width, -2.0F * jitterY / target.height, 0.0F);
 		}
-		projection.set(uploaded).translateLocal(-2.0F * jitterX / target.width, -2.0F * jitterY / target.height, 0.0F);
 		projectionCaptured = true;
+	}
+
+	/** This frame's unjittered world projection, or null if renderLevel did not upload one. */
+	public static @Nullable Matrix4f worldProjection() {
+		return projectionCaptured ? projection : null;
+	}
+
+	/** The depth this frame's world was drawn with: the small target's while upscaling, otherwise main's. */
+	public static GpuTexture worldDepth(RenderTarget main) {
+		TextureTarget target = scaled;
+		GpuTexture depth = scaledFrame && lentTo == null && target != null ? target.getDepthTexture() : main.getDepthTexture();
+		return Objects.requireNonNull(depth, "depth texture");
+	}
+
+	/** How far this frame's world was shifted, in pixels of {@link #worldDepth}, as told to MetalFX; 0 unless temporal. */
+	public static float worldJitterX() {
+		return jitteredFrame ? jitterSign[0] * jitterX : 0.0F;
+	}
+
+	public static float worldJitterY() {
+		return jitteredFrame ? jitterSign[1] * jitterY : 0.0F;
 	}
 
 	/** Before the hand is drawn: takes the textures back and upscales the world onto main. */
@@ -158,7 +181,7 @@ public final class WorldUpscaler {
 		if (camera != null && projectionCaptured && upscaleTemporal(camera, target, main)) {
 			return;
 		}
-		hasHistory = false;
+		motion.reset();
 		if (camera == null && MetalRenderer.upscaleSpatial(target.getColorTexture(), main.getColorTexture())) {
 			return;
 		}
@@ -172,18 +195,7 @@ public final class WorldUpscaler {
 
 	private static boolean upscaleTemporal(CameraRenderState camera, TextureTarget target, RenderTarget main) {
 		Matrix4f viewProjection = new Matrix4f(projection).mul(camera.viewRotationMatrix);
-		Vec3 cameraPos = camera.pos;
-		boolean reset = !hasHistory || previousCameraPos == null || target.width != previousWidth || target.height != previousHeight
-				|| cameraPos.distanceToSqr(previousCameraPos) > TELEPORT_DISTANCE * TELEPORT_DISTANCE;
-		Matrix4f previous = reset ? viewProjection : previousViewProjection;
-		Vec3 delta = reset ? Vec3.ZERO : cameraPos.subtract(previousCameraPos);
-
-		float[] matrices = new float[36];
-		new Matrix4f(viewProjection).invert().get(matrices, 0);
-		previous.get(matrices, 16);
-		matrices[32] = (float) delta.x;
-		matrices[33] = (float) delta.y;
-		matrices[34] = (float) delta.z;
+		boolean reset = motion.begin(viewProjection, camera.pos, target.width, target.height);
 
 		String signText = System.getProperty(JITTER_SIGN_PROPERTY, DEFAULT_JITTER_SIGN);
 		if (!signText.equals(jitterSignText)) {
@@ -191,13 +203,9 @@ public final class WorldUpscaler {
 			jitterSign = parseJitterSign(signText);
 			reset = true;
 		}
-		boolean upscaled = MetalRenderer.upscaleTemporal(target.getColorTexture(), target.getDepthTexture(), main.getColorTexture(), matrices,
+		boolean upscaled = MetalRenderer.upscaleTemporal(target.getColorTexture(), target.getDepthTexture(), main.getColorTexture(), motion.matrices,
 				jitterSign[0] * jitterX, jitterSign[1] * jitterY, reset);
-		previousViewProjection.set(viewProjection);
-		previousCameraPos = cameraPos;
-		previousWidth = target.width;
-		previousHeight = target.height;
-		hasHistory = upscaled;
+		motion.finish(upscaled);
 		return upscaled;
 	}
 
@@ -207,7 +215,8 @@ public final class WorldUpscaler {
 		TextureTarget target = scaled;
 		if (main != null && target != null) {
 			swapTextures(main, target);
-			hasHistory = false;
+			scaledFrame = false;
+			motion.reset();
 		}
 		lentTo = null;
 		restoreProjection();

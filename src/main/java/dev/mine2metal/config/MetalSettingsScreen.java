@@ -37,10 +37,12 @@ public final class MetalSettingsScreen extends OptionsSubScreen {
 		upscaling.active = upscalingAvailable;
 
 		CycleButton<Boolean> interpolation = CycleButton.onOffBuilder(settings.frameInterpolation)
-				.withTooltip(value -> Tooltip.create(Component.translatable("mine2metal.options.frame_interpolation.tooltip")))
+				.withTooltip(value -> Tooltip.create(MetalOptionTexts.frameInterpolationTooltip()))
 				.create(Component.translatable("mine2metal.options.frame_interpolation"), (button, value) -> {
+					settings.frameInterpolation = value;
+					settings.save();
 				});
-		interpolation.active = false;
+		interpolation.active = MetalRenderer.supportsFrameInterpolation();
 
 		CycleButton<Boolean> performanceHud = CycleButton.onOffBuilder(settings.performanceHud)
 				.withTooltip(value -> Tooltip.create(MetalOptionTexts.performanceHudTooltip()))

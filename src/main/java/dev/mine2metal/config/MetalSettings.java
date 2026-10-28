@@ -38,7 +38,7 @@ public final class MetalSettings {
 	public Upscaling upscaling = Upscaling.OFF;
 	/** Percent of the window's width and height the world is rendered at while upscaling. */
 	public int renderScale = 75;
-	/** Not implemented yet; always treated as off. */
+	/** MetalFX frame interpolation: a generated frame between each pair the game renders (macOS 26 or newer). */
 	public boolean frameInterpolation;
 	/** Apple's Metal Performance HUD over the game window. */
 	public boolean performanceHud;
@@ -106,7 +106,9 @@ public final class MetalSettings {
 				upscaling=%s
 				renderScale=%d
 				#
-				# Not available yet.
+				# MetalFX frame interpolation (macOS 26 or newer): shows a generated frame between each pair the game
+				# renders, for up to twice the frame rate on screen, capped at the display's refresh rate. Frames are
+				# paced to the display even with vsync off, and input lags by about one rendered frame.
 				frameInterpolation=%s
 				#
 				# Apple's Metal Performance HUD (frame rate, frame times, GPU time, memory) over the game window.

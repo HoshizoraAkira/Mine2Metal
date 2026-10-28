@@ -5,6 +5,7 @@ import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
 import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
 import com.mojang.blaze3d.pipeline.RenderTarget;
 import com.mojang.renderpearl.api.buffers.GpuBufferSlice;
+import dev.mine2metal.upscale.FrameInterpolation;
 import dev.mine2metal.upscale.WorldUpscaler;
 import net.minecraft.client.renderer.GameRenderer;
 import net.minecraft.client.renderer.ProjectionMatrixBuffer;
@@ -34,10 +35,12 @@ abstract class GameRendererMixin {
 
 	@WrapMethod(method = "renderLevel")
 	private void mine2metal$renderWorldScaled(Operation<Void> original) {
+		FrameInterpolation.beginFrame();
 		WorldUpscaler.begin(this.mainRenderTarget, this.gameRenderState.levelRenderState.cameraRenderState);
 		try {
 			original.call();
 			WorldUpscaler.end();
+			FrameInterpolation.capture(this.mainRenderTarget, this.gameRenderState.levelRenderState.cameraRenderState);
 		} finally {
 			WorldUpscaler.abandonFrame();
 		}
@@ -51,9 +54,13 @@ abstract class GameRendererMixin {
 		return original.call(buffer, projection);
 	}
 
-	/** The world is done; upscale it before the hand and screen effects draw at full resolution. */
+	/**
+	 * The world is done; upscale it before the hand and screen effects draw at full resolution, and capture it for
+	 * frame interpolation without them.
+	 */
 	@Inject(method = "render3dHud", at = @At("HEAD"))
 	private void mine2metal$upscaleBeforeHand(CallbackInfo ci) {
 		WorldUpscaler.end();
+		FrameInterpolation.capture(this.mainRenderTarget, this.gameRenderState.levelRenderState.cameraRenderState);
 	}
 }

@@ -58,7 +58,7 @@ Catatan pengukuran: FPS menghitung frame yang dirender. Saat vsync mati, backend
 | **M9 Instalasi** | Siap untuk Modrinth/CurseForge (metadata, ikon, deskripsi, dependensi: Fabric Loader wajib, Sodium disarankan, Fabric API tidak perlu), modpack `.mrpack` sekali klik untuk Modrinth App dan Prism Launcher, pesan jelas di game kalau Metal tidak bisa dipakai (Mac Intel, macOS lama) dan otomatis kembali ke OpenGL |
 | **M10 Layar pengaturan** ✅ | Halaman "mine2metal → Metal" di Video Settings Sodium lewat `ConfigEntryPoint` (`sodium:config_api_user`), dan tombol "Metal Settings..." + layar sendiri di Video Settings vanilla kalau Sodium tidak terpasang. Opsi: Upscaling (Off / Spatial / Temporal, hanya mode yang didukung Mac ini), Render scale 50–100% (langkah 5), Frame interpolation (tampil tapi nonaktif, "menyusul"). Bahasa Inggris dan Indonesia. Disimpan di `config/mine2metal.properties` dan langsung berlaku tanpa restart |
 | **M11 Upscaling** ✅ | Dunia dirender ke target lebih kecil (tekstur `GameRenderer.mainRenderTarget` dipinjamkan selama `renderLevel`), lalu diperbesar dengan MetalFX di awal `render3dHud`, sehingga tangan, efek layar, post effect, dan GUI digambar di resolusi penuh. **Spatial**: `MTLFXSpatialScaler` (mode perceptual). **Temporal**: `MTLFXTemporalScaler`; proyeksi dunia digeser subpiksel tiap frame (Halton 2,3; jumlah fase 8 × rasio², minimal 8) lewat `CameraRenderState.projectionMatrix`, jadi Sodium ikut tergeser; proyeksi akhir (dengan bobbing dan nausea) ditangkap di `ProjectionMatrixBuffer.getBuffer` lalu jitter-nya dibuang lagi. Motion vector dihitung pass sendiri dari depth: tiap piksel di-unproject dengan matriks frame ini dan di-project dengan matriks frame sebelumnya, ditambah perpindahan kamera (posisi relatif kamera, presisi double di CPU). Pass yang sama menyalin depth ke Depth32Float, karena depth game punya stencil. History di-reset saat pertama, ukuran berubah, atau kamera berpindah > 16 blok. Temporal 100% = anti-aliasing saja |
-| **M12 Frame interpolation** | `MTLFXFrameInterpolator` (macOS 26+). Encode ke `MTLCommandBuffer` biasa, jadi **tidak** perlu Metal 4. Butuh warna frame sekarang dan sebelumnya, depth, motion, tekstur UI terpisah, matriks kamera, dan present dua frame per frame yang dirender. Menambah latensi input, jadi opsional |
+| **M12 Frame interpolation** ✅ | `MTLFXFrameInterpolator` (macOS 26+). Encode ke `MTLCommandBuffer` biasa, jadi **tidak** perlu Metal 4. Butuh warna frame sekarang dan sebelumnya, depth, motion, tekstur UI terpisah, matriks kamera, dan present dua frame per frame yang dirender. Menambah latensi input, jadi opsional |
 
 ### Perbaikan selama M10–M11: antrean present terpisah
 
@@ -114,6 +114,33 @@ Hasil (gametest, Apple M3, macOS 27):
 - MacBook Air tanpa kipas: run kedua selalu lebih lambat karena panas (urutan dibalik, hasil temporal ikut terbalik: 1038 vs 521 FPS). Perbandingan harus bergantian urutan; angka FPS tunggal di sini belum bisa dipakai sebagai klaim.
 - Belum dioptimalkan: barrier penuh di tiap encoder bisa dipersempit (misalnya render→render hanya fragment→fragment).
 
+## M12 Frame interpolation MetalFX (2026-10-28)
+
+Opsi **Interpolasi Frame** di menu Metal (macOS 26+, berlaku langsung). Untuk setiap frame yang dirender, MetalFX membuat satu frame di tengah antara frame itu dan frame sebelumnya, lalu keduanya ditampilkan: frame buatan dulu, baru frame asli.
+
+Alurnya:
+- **Tangkap dunia** di awal `render3dHud`, setelah upscaling dan sebelum tangan, efek layar, dan GUI. Warna dunia disalin ke salah satu dari dua tekstur bergantian (frame ini dan frame sebelumnya). Motion vector dan depth Depth32Float dibuat oleh pass yang sama dengan upscaling temporal (`m2m_encode_motion`), dari depth yang dipakai dunia. Saat upscaling, depth itu berukuran kecil, dan MetalFX menerimanya sebagai input yang lebih kecil dari output.
+- **Data kamera:** near/far dibaca dari matriks proyeksi (device melaporkan depth zero-to-one, jadi `m22 = f/(n−f)` dan `m32 = nf/(n−f)`), FOV vertikal dari `m11`, aspek dari `m11/m00`, jitter temporal, dan selisih waktu antar tangkapan.
+- **Lapisan UI:** frame jadi (dunia + tangan + GUI) dipakai sebagai tekstur UI *composited*. MetalFX memisahkan apa yang digambar di atas dunia lalu menempelkannya tanpa digeser, jadi hotbar, crosshair, teks, dan tangan tidak ikut melengkung.
+- **Present:** interpolasi di-encode di command buffer frame itu sendiri, setelah salinan staging. Antrean present menggambar frame buatan ke drawable pertama, lalu frame asli ke drawable kedua. Dua slot output bergantian dijaga oleh event `presentDone`, seperti tekstur staging.
+- **Pacing:** dengan `present(afterMinimumDuration:)`, setiap gambar ditahan sebanyak refresh utuh yang muat di setengah interval frame asli, dibulatkan ke bawah. Kalau game ≥ setengah refresh rate, keduanya cukup tampil di refresh berturut-turut, dan nextDrawable yang memblokir membatasi game ke setengah refresh rate (30 + 30 di layar 60 Hz). Membulatkan ke atas akan menahan game lebih lama dari waktu render-nya, interval jadi naik, dan game makin lambat.
+- **VSync mati:** frame yang ditangkap tetap dipresentasikan dari thread render dengan pacing di atas. Thread present menunggu karena tidak ada frame baru yang diterbitkan.
+
+Hasil gametest (Apple M3, macOS 27, window 854×480): kamera berputar dari yaw 0° ke 4° di antara dua frame, lalu frame buatan dibaca balik dan dibandingkan dengan frame asli di yaw 2° (PSNR, makin tinggi makin mirip):
+
+| Gambar vs frame asli di yaw 2° | PSNR |
+|---|---|
+| Frame asli yaw 0° / 4° (pembanding) | 21,8 / 21,6 dB |
+| Interpolasi, tanpa upscaling (Metal 4 / Metal 3) | **31,3 / 31,4 dB** |
+| Interpolasi, motion vector dibalik (−1) | 24,7 dB |
+| Interpolasi + temporal 50% (skala motion 1 / 2) | **29,8** / 28,1 dB |
+
+- Skala motion vector 1 (dalam piksel depth) yang benar, juga saat depth lebih kecil dari output: MetalFX menskalakan sendiri. Bisa diubah untuk eksperimen dengan `-Dmine2metal.interpolation.motionScale=x,y`.
+- Hotbar, crosshair, dan lengan utuh di frame buatan (dicek visual).
+- Lolos tanpa error di bawah validation, Metal 4 dan Metal 3. Upscaling temporal tidak berubah setelah pass motion dipakai bersama (30,6 / 29,0 dB).
+- Di window gametest yang terlihat, FPS render turun ke 29–30 (layar 60 Hz), sesuai rancangan. Pacing di layar sungguhan belum diukur: di gametest macOS melaporkan semua `presentedTime` sebagai 0, bahkan tanpa interpolasi.
+- Sama seperti temporal, motion vector hanya tahu gerak kamera, jadi mob, partikel, dan air yang bergerak bisa sedikit goyah di frame buatan.
+
 ## Fitur khas Metal (setelah M5)
 
 | Fitur | API Apple | macOS | Input yang dibutuhkan | Kesulitan |
@@ -123,7 +150,7 @@ Hasil (gametest, Apple M3, macOS 27):
 | **Upscaling spasial** | `MTLFXSpatialScaler` | 13 | Warna dunia saja (GUI dirender terpisah di resolusi native) | Sedang |
 | **Upscaling temporal** ✅ | `MTLFXTemporalScaler` | 13 | Warna + depth + **motion vector** + jitter kamera | Tinggi |
 | Upscaling temporal + denoise | `MTLFXTemporalDenoisedScaler` | 26 | Seperti temporal, plus buffer untuk ray tracing | Di luar lingkup |
-| **Frame interpolation** | `MTLFXFrameInterpolator` | 26 | Warna, depth, motion, **tekstur UI terpisah**, frame sebelumnya | Sangat tinggi |
+| **Frame interpolation** ✅ | `MTLFXFrameInterpolator` | 26 | Warna, depth, motion, **tekstur UI terpisah**, frame sebelumnya | Sangat tinggi |
 | HDR/EDR | `CAMetalLayer.wantsExtendedDynamicRangeContent` | 10.11 | Shader yang menghasilkan nilai > 1.0 | Tinggi (butuh shader sendiri) |
 
 Catatan:

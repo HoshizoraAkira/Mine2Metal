@@ -54,7 +54,7 @@ Tambahkan `-PnoSodium` untuk menguji renderer chunk vanilla. Untuk pembanding Op
 - Dengan Sodium: Options → Video Settings → di sidebar kiri "mine2metal" → "Metal".
 - Tanpa Sodium: Options → Video Settings → tombol "Metal Settings..." di bagian bawah.
 
-Isinya: **Versi Metal** (Otomatis / Metal 4 / Metal 3, berlaku setelah restart), **Upscaling** (Off / Spatial / Temporal), **Render Scale** 50–100%, dan **Frame Interpolation** (menyusul, butuh macOS 26+). Perubahan langsung berlaku dan disimpan di `config/mine2metal.properties`.
+Isinya: **Versi Metal** (Otomatis / Metal 4 / Metal 3, berlaku setelah restart), **Upscaling** (Off / Spatial / Temporal), **Render Scale** 50–100%, dan **Interpolasi Frame** (MetalFX, macOS 26+: satu frame buatan di antara setiap pasang frame, hingga dua kali FPS di layar sampai batas refresh rate). Perubahan langsung berlaku dan disimpan di `config/mine2metal.properties`.
 
 ### Mematikan Metal
 

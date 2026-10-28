@@ -40,6 +40,7 @@ final class MetalDevice implements GpuDeviceBackend {
 	/** The output/input size ratios the temporal scaler accepts. */
 	final float temporalMinScale;
 	final float temporalMaxScale;
+	final boolean frameInterpolationSupported;
 	/** The window's surface, once created; the settings screens reach it through {@link MetalRenderer}. */
 	@Nullable MetalSurface surface;
 
@@ -57,6 +58,7 @@ final class MetalDevice implements GpuDeviceBackend {
 		float[] temporalRange = this.temporalUpscalingSupported ? MetalNative.metalFxTemporalScaleRange(ctx) : new float[] {1.0F, 1.0F};
 		this.temporalMinScale = temporalRange[0];
 		this.temporalMaxScale = temporalRange[1];
+		this.frameInterpolationSupported = MetalNative.frameInterpolationSupported(ctx);
 		this.info = new DeviceInfo(
 				name,
 				"Apple",

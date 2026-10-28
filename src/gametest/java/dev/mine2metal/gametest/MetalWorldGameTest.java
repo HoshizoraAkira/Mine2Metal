@@ -119,9 +119,14 @@ public class MetalWorldGameTest implements FabricClientGameTest {
 				checkTemporalUpscaling(context, singleplayer, above);
 				return;
 			}
+			if (Boolean.getBoolean("mine2metal.test.interpolationOnly")) {
+				checkFrameInterpolation(context, singleplayer, above);
+				return;
+			}
 			if (backend.equals("Metal")) {
 				checkSpatialUpscaling(context, singleplayer, returnAbove);
 				checkTemporalUpscaling(context, singleplayer, above);
+				checkFrameInterpolation(context, singleplayer, above);
 			}
 
 			singleplayer.getServer().runCommand("time set midnight");
@@ -364,6 +369,66 @@ public class MetalWorldGameTest implements FabricClientGameTest {
 			LOGGER.info("Average FPS from above with MetalFX temporal at {}%: {}", scale, averageFps(context));
 		}
 		context.runOnClient(client -> settings.upscaling = MetalSettings.Upscaling.OFF);
+		context.waitTicks(10);
+	}
+
+	/**
+	 * Frame interpolation against native frames: the camera turns from yaw 0 to 4 between two frames, and the frame
+	 * generated between them is read back and later compared with a native frame at yaw 2 (and, as baselines, the two
+	 * real frames). Without upscaling and with temporal upscaling at 50%, for each motion vector scale tried.
+	 */
+	private static void checkFrameInterpolation(ClientGameTestContext context, TestSingleplayerContext singleplayer, Vec3 above) {
+		MetalSettings settings = MetalSettings.get();
+		if (!context.computeOnClient(client -> MetalRenderer.supportsFrameInterpolation())) {
+			LOGGER.info("Frame interpolation is not supported here; skipped");
+			return;
+		}
+		Path screenshots = FabricLoader.getInstance().getGameDir().resolve("screenshots");
+		context.runOnClient(client -> {
+			settings.upscaling = MetalSettings.Upscaling.OFF;
+			settings.frameInterpolation = false;
+		});
+		for (int yaw : new int[] {0, 2, 4}) {
+			hover(context, singleplayer, String.format(Locale.ROOT, "tp @a %.3f %.3f %.3f %d 50", above.x, above.y, above.z, yaw));
+			context.takeScreenshot("mine2metal-interpolation-native-yaw" + yaw);
+		}
+
+		String[][] cases = Boolean.getBoolean("mine2metal.test.motionScales")
+				? new String[][] {{"off", "1,1"}, {"off", "-1,-1"}, {"temporal", "1,1"}, {"temporal", "2,2"}}
+				: new String[][] {{"off", "1,1"}, {"temporal", "1,1"}};
+		for (String[] testCase : cases) {
+			MetalSettings.Upscaling upscaling = testCase[0].equals("off") ? MetalSettings.Upscaling.OFF : MetalSettings.Upscaling.TEMPORAL;
+			String name = testCase[0] + "-" + testCase[1].replace(",", "_").replace("-", "m");
+			System.setProperty("mine2metal.interpolation.motionScale", testCase[1]);
+			context.runOnClient(client -> {
+				settings.upscaling = upscaling;
+				settings.renderScale = 50;
+				settings.frameInterpolation = true;
+			});
+			hover(context, singleplayer, String.format(Locale.ROOT, "tp @a %.3f %.3f %.3f 0 50", above.x, above.y, above.z));
+			LOGGER.info("Average FPS from above with frame interpolation ({}): {}", name, averageFps(context));
+
+			AtomicBoolean finished = new AtomicBoolean();
+			AtomicBoolean written = new AtomicBoolean();
+			Path file = screenshots.resolve("mine2metal-interpolation-" + name + ".png");
+			context.runOnClient(client -> {
+				// Both the rotation and the one interpolated from, so the next frame is the first at yaw 4.
+				client.player.setYRot(4.0F);
+				client.player.yRotO = 4.0F;
+				MetalRenderer.dumpNextInterpolatedFrame(file, client.gameRenderer.mainRenderTarget().width, client.gameRenderer.mainRenderTarget().height, ok -> {
+					written.set(ok);
+					finished.set(true);
+				});
+			});
+			context.waitFor(client -> finished.get());
+			check(written.get(), "No generated frame to read back for " + name);
+			LOGGER.info("Wrote the generated frame for {} to {}", name, file);
+		}
+		System.clearProperty("mine2metal.interpolation.motionScale");
+		context.runOnClient(client -> {
+			settings.upscaling = MetalSettings.Upscaling.OFF;
+			settings.frameInterpolation = false;
+		});
 		context.waitTicks(10);
 	}
 

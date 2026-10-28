@@ -150,6 +150,10 @@ typedef void (^M2MCompletion)(CFTimeInterval gpuStart, CFTimeInterval gpuEnd, NS
 @property(nonatomic, weak) id lastTemporalUpscaler;
 @property(nonatomic, strong) id<MTLRenderPipelineState> motionPipeline;
 @property(nonatomic, strong) id<MTLDepthStencilState> motionDepthState;
+// MetalFX frame interpolation state (interpolation.m).
+@property(nonatomic, strong) id frameInterpolator;
+// Display refresh interval in seconds, for pacing generated frames.
+@property(nonatomic) double refreshInterval;
 // MetalFX spatial scaler state (metalfx.m), kept untyped here so other files need not import MetalFX.
 @property(nonatomic, strong) id spatialUpscaler;
 
@@ -226,6 +230,19 @@ id<MTLTexture> m2m_new_private_texture(M2MContext *ctx, MTLPixelFormat format, N
 // Present-queue command buffers for Metal 4 (present.m), from their own allocator pool.
 id<MTL4CommandBuffer> m2m_present_command_buffer4(M2MContext *ctx);
 void m2m_commit_present4(M2MContext *ctx, id<MTL4CommandBuffer> commandBuffer, M2MCompletion completion);
+// Motion vectors (RG16Float, in pixels towards where each pixel was in the previous frame) and a Depth32Float copy
+// of sourceDepth, from the matrices described at m2m_metalfx_temporal_upscale (temporal.m). NO if the shader failed.
+BOOL m2m_encode_motion(M2MContext *ctx, id<MTLTexture> sourceDepth, id<MTLTexture> motion, id<MTLTexture> depth,
+                       const float *matrices);
+// Frame interpolation (interpolation.m), called by m2m_present. pending: this frame's world was captured, so the
+// frame goes through the synced path. encode: the generated frame shown before this one (nil if there is none),
+// encoded once ui (the finished frame) has been copied into a texture with ui_usage. pacing: the minimum time each
+// of the two images stays on screen (0 for no minimum). presented ends the frame either way.
+BOOL m2m_frame_interpolation_pending(M2MContext *ctx);
+MTLTextureUsage m2m_frame_interpolation_ui_usage(M2MContext *ctx);
+id<MTLTexture> m2m_frame_interpolation_encode(M2MContext *ctx, id<MTLTexture> ui, NSUInteger slot);
+double m2m_frame_interpolation_pacing(M2MContext *ctx);
+void m2m_frame_interpolation_presented(M2MContext *ctx, id<MTLTexture> generated);
 // Copies message into a caller-provided buffer as NUL-terminated UTF-8, truncating to capacity.
 void m2m_copy_string(char *out, int64_t capacity, NSString *message);
 
