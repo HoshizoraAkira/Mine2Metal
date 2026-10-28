@@ -247,6 +247,9 @@ M2M_EXPORT int64_t m2m_host_time_nanos(void);
 // Copies up to capacity on-screen times (seconds) of presented frames since the last call, 0 for frames the
 // compositor dropped; returns how many.
 M2M_EXPORT int64_t m2m_take_presented_times(int64_t ctx, double *out, int64_t capacity);
+// How many frames the present thread has shown so far, generated ones included (not counting those the compositor
+// dropped): frames on screen per second, for the debug screen.
+M2M_EXPORT int64_t m2m_shown_frame_count(int64_t ctx);
 
 // Configures the layer and (re)starts the present thread that shows the newest finished frame once per refresh. With
 // vsync off the game renders uncapped; with vsync on it waits for each frame to be taken, which caps it at the

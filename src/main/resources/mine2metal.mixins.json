@@ -3,6 +3,7 @@
 	"package": "dev.mine2metal.mixin",
 	"compatibilityLevel": "JAVA_25",
 	"client": [
+		"DebugEntryFpsMixin",
 		"GameRendererMixin",
 		"PreferredGraphicsApiMixin",
 		"RenderTargetAccessor",

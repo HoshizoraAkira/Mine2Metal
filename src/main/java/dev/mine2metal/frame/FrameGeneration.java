@@ -9,6 +9,7 @@ import net.minecraft.client.gui.components.toasts.SystemToast;
 import net.minecraft.client.renderer.state.level.CameraRenderState;
 import net.minecraft.network.chat.Component;
 import org.joml.Matrix4f;
+import org.jspecify.annotations.Nullable;
 
 import java.util.Locale;
 import java.util.Objects;
@@ -57,6 +58,11 @@ final class FrameGeneration {
 	private long pausedUntil;
 	private boolean pausedBefore;
 	private MetalSettings.FrameGeneration guardedEngine = MetalSettings.FrameGeneration.OFF;
+
+	/** Frames on screen per second for the debug screen, counted like Minecraft's own fps: over about a second. */
+	private long shownCount = -1L;
+	private long shownSince;
+	private int shownPerSecond;
 
 	/** The engine that will generate frames next, after checking what this Mac supports. */
 	static MetalSettings.FrameGeneration activeEngine() {
@@ -130,6 +136,32 @@ final class FrameGeneration {
 		}
 		active |= done;
 		motion.finish(done);
+	}
+
+	/**
+	 * For the debug screen, next to Minecraft's fps, which counts only the frames the game renders: how many frames
+	 * reach the screen per second, generated ones included, while frame generation is chosen; null otherwise.
+	 */
+	@Nullable String debugLine() {
+		MetalSettings.FrameGeneration engine = activeEngine();
+		long count = MetalRenderer.shownFrameCount();
+		if (engine == MetalSettings.FrameGeneration.OFF || count < 0L) {
+			shownCount = -1L;
+			return null;
+		}
+		long now = System.nanoTime();
+		if (shownCount < 0L || count < shownCount) {
+			shownCount = count;
+			shownSince = now;
+		} else if (now - shownSince >= 1_000_000_000L) {
+			shownPerSecond = (int) Math.round((count - shownCount) * 1.0e9 / (now - shownSince));
+			shownCount = count;
+			shownSince = now;
+		}
+		String name = engine == MetalSettings.FrameGeneration.METALFX ? "MetalFX" : "FSR 3";
+		boolean paused = pausedUntil != 0L && now < pausedUntil;
+		return String.format(Locale.ROOT, "%d fps on screen, %s frame generation%s", shownPerSecond, name,
+				paused ? " paused: costs more than it gains" : "");
 	}
 
 	private void guard(MetalSettings.FrameGeneration engine, float deltaTime, long now) {

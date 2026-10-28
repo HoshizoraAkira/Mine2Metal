@@ -28,6 +28,9 @@ static void m2m_record_presented(M2MContext *ctx, id<CAMetalDrawable> drawable) 
 		// presentedTime is 0 for a drawable the compositor never showed; recorded too, as dropped frames.
 		CFTimeInterval presented = shown.presentedTime;
 		@synchronized(strongCtx.presentedTimes) {
+			if (presented > 0) {
+				strongCtx.shownFrames++;
+			}
 			if (strongCtx.presentedTimes.count < 4096) {
 				[strongCtx.presentedTimes addObject:@(presented)];
 			}
@@ -398,6 +401,13 @@ int64_t m2m_take_presented_times(int64_t handle, double *out, int64_t capacity) 
 		[ctx.presentedTimes removeAllObjects];
 	}
 	return count;
+}
+
+int64_t m2m_shown_frame_count(int64_t handle) {
+	M2MContext *ctx = m2m_ctx(handle);
+	@synchronized(ctx.presentedTimes) {
+		return (int64_t)ctx.shownFrames;
+	}
 }
 
 // Copies the frame into a free slot, with its generated frame, and publishes it once the GPU has finished it.

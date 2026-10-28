@@ -452,6 +452,10 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
 		return MetalNative.frameGenerationGpuMillis(this.ctx);
 	}
 
+	long shownFrameCount() {
+		return MetalNative.shownFrameCount(this.ctx);
+	}
+
 	void releaseFrameInterpolation() {
 		MetalNative.frameInterpolationRelease(this.ctx);
 	}

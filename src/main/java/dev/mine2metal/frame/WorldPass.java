@@ -60,6 +60,11 @@ public final class WorldPass {
 		hdrOutput.capture(current);
 	}
 
+	/** For the debug screen: frames on screen per second while frame generation is chosen; null otherwise. */
+	public static @Nullable String frameGenerationDebugLine() {
+		return frameGeneration.debugLine();
+	}
+
 	/** Makes sure main has its own textures and the camera its own projection back, whether or not the world pass finished. */
 	public static void end() {
 		WorldFrame current = frame;

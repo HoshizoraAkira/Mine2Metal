@@ -23,10 +23,13 @@ import net.minecraft.client.Options;
 import net.minecraft.client.PreferredGraphicsApi;
 import dev.mine2metal.config.MetalSettingsScreen;
 import net.minecraft.client.gui.components.AbstractWidget;
+import net.minecraft.client.gui.components.debug.DebugEntryFps;
+import net.minecraft.client.gui.components.debug.DebugScreenDisplayer;
 import net.minecraft.client.gui.components.events.ContainerEventHandler;
 import net.minecraft.client.gui.components.events.GuiEventListener;
 import net.minecraft.client.gui.screens.TitleScreen;
 import net.minecraft.network.chat.Component;
+import net.minecraft.resources.Identifier;
 import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
 import net.minecraft.world.phys.Vec3;
@@ -528,6 +531,7 @@ public class MetalWorldGameTest implements FabricClientGameTest {
 			});
 			hover(context, singleplayer, String.format(Locale.ROOT, "tp @a %.3f %.3f %.3f 0 50", above.x, above.y, above.z));
 			LOGGER.info("Average FPS from above with frame generation ({}): {}", name, averageFps(context));
+			checkFramesOnScreenLine(context, name);
 
 			AtomicBoolean finished = new AtomicBoolean();
 			AtomicBoolean written = new AtomicBoolean();
@@ -554,6 +558,44 @@ public class MetalWorldGameTest implements FabricClientGameTest {
 		context.waitTicks(10);
 	}
 
+	/**
+	 * The debug screen's fps entry gains a line with the frames shown per second, which frame generation doubles. A
+	 * covered test window may show none, so only the line itself is checked.
+	 */
+	private static void checkFramesOnScreenLine(ClientGameTestContext context, String name) {
+		java.util.List<String> lines = new java.util.ArrayList<>();
+		DebugScreenDisplayer displayer = new DebugScreenDisplayer() {
+			@Override
+			public void addPriorityLine(String line) {
+				lines.add(line);
+			}
+
+			@Override
+			public void addLine(String line) {
+				lines.add(line);
+			}
+
+			@Override
+			public void addToGroup(Identifier group, java.util.Collection<String> groupLines) {
+				lines.addAll(groupLines);
+			}
+
+			@Override
+			public void addToGroup(Identifier group, String line) {
+				lines.add(line);
+			}
+		};
+		// The rate is counted over a second, from the first time the line is asked for.
+		context.runOnClient(client -> new DebugEntryFps().display(displayer, client.level, null, null));
+		context.waitTicks(30);
+		context.runOnClient(client -> {
+			lines.clear();
+			new DebugEntryFps().display(displayer, client.level, null, null);
+		});
+		String shown = lines.stream().filter(line -> line.contains("fps on screen")).findFirst().orElse(null);
+		check(shown != null, "No frames-on-screen line on the debug screen with frame generation (" + name + "): " + lines);
+		LOGGER.info("Debug screen with frame generation ({}): {}", name, shown);
+	}
 
 	/**
 	 * EDR output: reads back the composed frame and checks that the world's highlights go above SDR white while the

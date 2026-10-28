@@ -82,6 +82,12 @@ public final class MetalRenderer {
 		return current != null ? current.encoder().frameGenerationGpuMillis() : 0.0;
 	}
 
+	/** How many frames have reached the screen so far, generated ones included; -1 when Metal is not active. */
+	public static long shownFrameCount() {
+		MetalDevice current = device;
+		return current != null ? current.encoder().shownFrameCount() : -1L;
+	}
+
 	/** AMD FSR 3.1 frame generation through the Metal backend (Apple GPUs from the M1 on). */
 	public static boolean supportsFsrFrameGeneration() {
 		MetalDevice current = device;

@@ -614,6 +614,15 @@ final class MetalNative {
 		}
 	}
 
+	/** How many frames the present thread has shown so far, generated ones included. */
+	static long shownFrameCount(long ctx) {
+		try {
+			return (long) Functions.SHOWN_FRAME_COUNT.invokeExact(ctx);
+		} catch (Throwable t) {
+			throw rethrow(t);
+		}
+	}
+
 	static void layerConfigure(long ctx, long layer, int width, int height, boolean vsync) {
 		try {
 			Functions.LAYER_CONFIGURE.invokeExact(ctx, layer, width, height, vsync ? 1 : 0);
@@ -886,6 +895,7 @@ final class MetalNative {
 		static final MethodHandle FSR1_UPSCALE = function("m2m_fsr1_upscale", JAVA_INT, JAVA_LONG, JAVA_LONG, JAVA_LONG, JAVA_FLOAT);
 
 		static final MethodHandle TAKE_PRESENTED_TIMES = function("m2m_take_presented_times", JAVA_LONG, JAVA_LONG, ADDRESS, JAVA_LONG);
+		static final MethodHandle SHOWN_FRAME_COUNT = function("m2m_shown_frame_count", JAVA_LONG, JAVA_LONG);
 		static final MethodHandle LAYER_CONFIGURE = function("m2m_layer_configure", null, JAVA_LONG, JAVA_LONG, JAVA_INT, JAVA_INT, JAVA_INT);
 		static final MethodHandle CLEAR_REGION = function("m2m_clear_region", JAVA_INT, JAVA_LONG, JAVA_LONG, JAVA_FLOAT, JAVA_FLOAT, JAVA_FLOAT, JAVA_FLOAT,
 				JAVA_LONG, JAVA_INT, JAVA_DOUBLE, JAVA_INT, JAVA_INT, JAVA_INT, JAVA_INT, JAVA_INT);

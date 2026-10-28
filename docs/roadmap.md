@@ -115,6 +115,12 @@ Hasil gametest di jendela yang terlihat (MacBook Air M3, 60 Hz):
 
 Kualitas frame buatan tidak berubah (FSR 31,21 dB, MetalFX 31,20 dB), dan gametest penuh lolos di bawah validation. Belum diukur: game di bawah 30 FPS dengan frame gen (penahanan > 1 refresh) dan layar ProMotion.
 
+### FPS tampil di F3 (2026-10-28)
+
+Uji pertama di install sungguhan (MacBook Air M3, fullscreen Retina, Temporal 75% + FSR 3 frame gen) dilaporkan sebagai "20 FPS". Angka itu FPS render dari F3. Dengan frame gen, game dibatasi ke separuh refresh, jadi di layar tampil sekitar 40.
+- Thread present menghitung drawable yang benar-benar sampai ke layar (`presentedTime` > 0), termasuk frame buatan (`m2m_shown_frame_count`).
+- Selama frame gen dipilih, baris FPS di F3 (`DebugEntryFps`) diikuti `N fps on screen, <engine> frame generation`, dihitung per detik seperti FPS Minecraft. Kalau pengaman sedang menjeda frame gen, barisnya menyebut itu.
+
 ### R9: instalasi (2026-10-28)
 
 - **Lisensi MIT** (`LICENSE`). Lisensinya ikut di jar (`META-INF/licenses`) bersama lisensi AMD.

@@ -155,6 +155,8 @@ static const NSUInteger M2M_PRESENT_SLOTS = 3;
 @property(nonatomic, strong) dispatch_semaphore_t presentThreadStopped;
 // When presented drawables actually reached the screen (CACurrentMediaTime seconds, 0 if dropped), for the stats.
 @property(nonatomic, strong) NSMutableArray<NSNumber *> *presentedTimes;
+// How many presented drawables reached the screen, generated frames included; guarded like presentedTimes.
+@property(nonatomic) uint64_t shownFrames;
 // Partial clears (clear.m): pipelines by attachment formats, compiled on first use.
 @property(nonatomic, strong) id<MTLLibrary> clearLibrary;
 @property(nonatomic, strong) NSMutableDictionary<NSNumber *, id<MTLRenderPipelineState>> *clearPipelines;
