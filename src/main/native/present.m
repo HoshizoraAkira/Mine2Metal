@@ -24,15 +24,26 @@ static void m2m_record_presented(M2MContext *ctx, id<CAMetalDrawable> drawable) 
 	}];
 }
 
+// A texture the size of source to stage the frame in: a copy of it, or with EDR its extended linear composition.
 static id<MTLTexture> m2m_matching_texture(M2MContext *ctx, id slot, id<MTLTexture> source, MTLTextureUsage usage) {
 	id<MTLTexture> current = slot == [NSNull null] ? nil : slot;
-	usage |= MTLTextureUsageShaderRead;
-	if (current && current.width == source.width && current.height == source.height &&
-	    current.pixelFormat == source.pixelFormat && (current.usage & usage) == usage) {
+	MTLPixelFormat format = ctx.hdr ? MTLPixelFormatRGBA16Float : source.pixelFormat;
+	usage |= MTLTextureUsageShaderRead | (ctx.hdr ? MTLTextureUsageRenderTarget : 0);
+	if (current && current.width == source.width && current.height == source.height && current.pixelFormat == format &&
+	    (current.usage & usage) == usage) {
 		return current;
 	}
 	m2m_retire(ctx, current);
-	return m2m_new_private_texture(ctx, source.pixelFormat, source.width, source.height, usage);
+	return m2m_new_private_texture(ctx, format, source.width, source.height, usage);
+}
+
+static void m2m_stage_frame(M2MContext *ctx, id<MTLTexture> source, id<MTLTexture> target) {
+	if (target.pixelFormat == MTLPixelFormatRGBA16Float && source.pixelFormat != MTLPixelFormatRGBA16Float) {
+		m2m_hdr_compose(ctx, source, target);
+		return;
+	}
+	[m2m_copier(ctx) copyFromTexture:source toTexture:target];
+	m2m_end_encoding(ctx);
 }
 
 // Draws source onto drawable and presents it, on the present queue, no sooner than minimumDuration after the previous
@@ -46,6 +57,8 @@ static void m2m_present_on_queue(M2MContext *ctx, id<MTLTexture> source, id<CAMe
 	pass.colorAttachments[0].loadAction = MTLLoadActionDontCare;
 	pass.colorAttachments[0].storeAction = MTLStoreActionStore;
 	m2m_record_presented(ctx, drawable);
+	id<MTLRenderPipelineState> pipeline =
+	    drawable.texture.pixelFormat == MTLPixelFormatRGBA16Float ? ctx.presentPipelineEDR : ctx.presentPipeline;
 
 	if (ctx.metal4) {
 		id<MTL4CommandBuffer> commandBuffer = m2m_present_command_buffer4(ctx);
@@ -54,7 +67,7 @@ static void m2m_present_on_queue(M2MContext *ctx, id<MTLTexture> source, id<CAMe
 		id<MTL4RenderCommandEncoder> encoder = [commandBuffer renderCommandEncoderWithDescriptor:pass4];
 		encoder.label = @"mine2metal present";
 		[encoder barrierAfterQueueStages:MTLStageAll beforeStages:MTLStageFragment visibilityOptions:MTL4VisibilityOptionDevice];
-		[encoder setRenderPipelineState:ctx.presentPipeline];
+		[encoder setRenderPipelineState:pipeline];
 		[ctx.presentArgumentTable setTexture:source.gpuResourceID atIndex:0];
 		[ctx.presentArgumentTable setSamplerState:ctx.presentSampler.gpuResourceID atIndex:0];
 		[encoder setArgumentTable:ctx.presentArgumentTable atStages:MTLRenderStageFragment];
@@ -86,7 +99,7 @@ static void m2m_present_on_queue(M2MContext *ctx, id<MTLTexture> source, id<CAMe
 	}
 	id<MTLRenderCommandEncoder> encoder = [commandBuffer renderCommandEncoderWithDescriptor:pass];
 	encoder.label = @"mine2metal present";
-	[encoder setRenderPipelineState:ctx.presentPipeline];
+	[encoder setRenderPipelineState:pipeline];
 	[encoder setFragmentTexture:source atIndex:0];
 	[encoder setFragmentSamplerState:ctx.presentSampler atIndex:0];
 	[encoder drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
@@ -156,6 +169,21 @@ static void m2m_present_loop(M2MContext *ctx, CAMetalLayer *layer, dispatch_sema
 	dispatch_semaphore_signal(stopped);
 }
 
+// With EDR the drawables are extended linear sRGB half floats, 1.0 being SDR white; without, plain 8-bit sRGB.
+static void m2m_layer_apply_hdr(M2MContext *ctx, CAMetalLayer *layer) {
+	if (ctx.hdr) {
+		CGColorSpaceRef space = CGColorSpaceCreateWithName(kCGColorSpaceExtendedLinearSRGB);
+		layer.pixelFormat = MTLPixelFormatRGBA16Float;
+		layer.colorspace = space;
+		CGColorSpaceRelease(space);
+		layer.wantsExtendedDynamicRangeContent = YES;
+	} else {
+		layer.wantsExtendedDynamicRangeContent = NO;
+		layer.pixelFormat = MTLPixelFormatBGRA8Unorm;
+		layer.colorspace = NULL;
+	}
+}
+
 static void m2m_stop_present_thread(M2MContext *ctx) {
 	[ctx.latestLock lock];
 	BOOL wasRunning = ctx.presentThreadRunning;
@@ -187,7 +215,7 @@ void m2m_layer_configure(int64_t ctx, int64_t layer_handle, int32_t width, int32
 		m2m_stop_present_thread(context);
 
 		layer.device = context.device;
-		layer.pixelFormat = MTLPixelFormatBGRA8Unorm;
+		m2m_layer_apply_hdr(context, layer);
 		layer.framebufferOnly = YES;
 		layer.opaque = YES;
 		layer.maximumDrawableCount = 3;
@@ -204,6 +232,23 @@ void m2m_layer_configure(int64_t ctx, int64_t layer_handle, int32_t width, int32
 			context.residentLayer = layer;
 		}
 
+		if (!context.layerVsync) {
+			m2m_start_present_thread(context, layer);
+		}
+	}
+}
+
+void m2m_layer_set_hdr(int64_t ctx, int64_t layer_handle, int32_t enabled) {
+	@autoreleasepool {
+		M2MContext *context = m2m_ctx(ctx);
+		CAMetalLayer *layer = m2m_borrow(layer_handle);
+		if (context.hdr == (enabled != 0) && layer.wantsExtendedDynamicRangeContent == (enabled != 0)) {
+			return;
+		}
+		// The present thread may be drawing with the old format.
+		m2m_stop_present_thread(context);
+		context.hdr = enabled != 0;
+		m2m_layer_apply_hdr(context, layer);
 		if (!context.layerVsync) {
 			m2m_start_present_thread(context, layer);
 		}
@@ -258,8 +303,7 @@ static int32_t m2m_publish_latest(M2MContext *ctx, id<MTLTexture> source) {
 	uint64_t frame = ++ctx.frameCounter;
 	[ctx.latestLock unlock];
 
-	[m2m_copier(ctx) copyFromTexture:source toTexture:target];
-	m2m_end_encoding(ctx);
+	m2m_stage_frame(ctx, source, target);
 	__weak M2MContext *weakCtx = ctx;
 	m2m_on_completed(ctx, ^(CFTimeInterval gpuStart, CFTimeInterval gpuEnd, NSError *failure) {
 		(void)gpuStart;
@@ -303,8 +347,7 @@ static int32_t m2m_present_synced(M2MContext *ctx, CAMetalLayer *layer, id<MTLTe
 		// This slot (and the generated frame's) was last read by present - 2.
 		m2m_wait_for_event(ctx, ctx.presentDone, (uint64_t)(present - 2));
 	}
-	[m2m_copier(ctx) copyFromTexture:source toTexture:staging];
-	m2m_end_encoding(ctx);
+	m2m_stage_frame(ctx, source, staging);
 	id<MTLTexture> generated = generatedDrawable ? m2m_frame_interpolation_encode(ctx, staging, slot) : nil;
 	m2m_signal_event(ctx, ctx.frameReady, (uint64_t)present);
 

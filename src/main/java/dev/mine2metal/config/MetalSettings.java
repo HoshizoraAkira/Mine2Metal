@@ -40,6 +40,14 @@ public final class MetalSettings {
 	public int renderScale = 75;
 	/** MetalFX frame interpolation: a generated frame between each pair the game renders (macOS 26 or newer). */
 	public boolean frameInterpolation;
+	public static final int MIN_HDR_BRIGHTNESS = 125;
+	public static final int MAX_HDR_BRIGHTNESS = 400;
+	public static final int HDR_BRIGHTNESS_STEP = 25;
+
+	/** EDR output: the world's highlights brighter than SDR white, on displays that can show it. */
+	public boolean hdr;
+	/** Percent of SDR white the brightest highlights reach with {@link #hdr}, capped by what the display can show. */
+	public int hdrBrightness = 200;
 	/** Apple's Metal Performance HUD over the game window. */
 	public boolean performanceHud;
 
@@ -82,6 +90,8 @@ public final class MetalSettings {
 		settings.upscaling = parseUpscaling(values.getProperty("upscaling", "off"));
 		settings.renderScale = clampScale(parseInt(values.getProperty("renderScale"), settings.renderScale));
 		settings.frameInterpolation = Boolean.parseBoolean(values.getProperty("frameInterpolation", "false"));
+		settings.hdr = Boolean.parseBoolean(values.getProperty("hdr", "false"));
+		settings.hdrBrightness = clampHdrBrightness(parseInt(values.getProperty("hdrBrightness"), settings.hdrBrightness));
 		settings.performanceHud = Boolean.parseBoolean(values.getProperty("performanceHud", "false"));
 		return settings;
 	}
@@ -111,10 +121,16 @@ public final class MetalSettings {
 				# paced to the display even with vsync off, and input lags by about one rendered frame.
 				frameInterpolation=%s
 				#
+				# HDR (EDR) output on displays that can show brighter than SDR white: the world's brightest parts (sky,
+				# sun, lava, light sources) reach hdrBrightness percent of SDR white (125-400), as far as the display's
+				# current brightness setting leaves room. The hand and the GUI stay at SDR brightness.
+				hdr=%s
+				hdrBrightness=%d
+				#
 				# Apple's Metal Performance HUD (frame rate, frame times, GPU time, memory) over the game window.
 				performanceHud=%s
 				""".formatted(this.enabled, metalVersionName(this.metalVersion), this.upscaling.name().toLowerCase(Locale.ROOT), this.renderScale, this.frameInterpolation,
-						this.performanceHud);
+						this.hdr, this.hdrBrightness, this.performanceHud);
 		Path file = file();
 		try {
 			Files.createDirectories(file.getParent());
@@ -127,6 +143,11 @@ public final class MetalSettings {
 	public static int clampScale(int percent) {
 		int stepped = Math.round(percent / (float) RENDER_SCALE_STEP) * RENDER_SCALE_STEP;
 		return Math.clamp(stepped, MIN_RENDER_SCALE, MAX_RENDER_SCALE);
+	}
+
+	public static int clampHdrBrightness(int percent) {
+		int stepped = Math.round(percent / (float) HDR_BRIGHTNESS_STEP) * HDR_BRIGHTNESS_STEP;
+		return Math.clamp(stepped, MIN_HDR_BRIGHTNESS, MAX_HDR_BRIGHTNESS);
 	}
 
 	public static MetalVersion parseMetalVersion(String value) {

@@ -18,6 +18,8 @@ public final class SodiumOptionsPage implements ConfigEntryPoint {
 	private static final Identifier UPSCALING = Identifier.fromNamespaceAndPath("mine2metal", "upscaling");
 	private static final Identifier RENDER_SCALE = Identifier.fromNamespaceAndPath("mine2metal", "render_scale");
 	private static final Identifier FRAME_INTERPOLATION = Identifier.fromNamespaceAndPath("mine2metal", "frame_interpolation");
+	private static final Identifier HDR = Identifier.fromNamespaceAndPath("mine2metal", "hdr");
+	private static final Identifier HDR_BRIGHTNESS = Identifier.fromNamespaceAndPath("mine2metal", "hdr_brightness");
 	private static final Identifier PERFORMANCE_HUD = Identifier.fromNamespaceAndPath("mine2metal", "performance_hud");
 
 	@Override
@@ -72,6 +74,32 @@ public final class SodiumOptionsPage implements ConfigEntryPoint {
 										.setStorageHandler(settings::save)
 										.setDefaultValue(false)
 										.setBinding(value -> settings.frameInterpolation = value, () -> settings.frameInterpolation)))
+						.addOptionGroup(builder.createOptionGroup()
+								.setName(Component.translatable("mine2metal.options.group.hdr"))
+								.addOption(builder.createBooleanOption(HDR)
+										.setName(Component.translatable("mine2metal.options.hdr"))
+										.setTooltip(value -> MetalOptionTexts.hdrTooltip())
+										.setImpact(OptionImpact.LOW)
+										.setEnabled(MetalRenderer.supportsHdr())
+										.setStorageHandler(settings::save)
+										.setDefaultValue(false)
+										.setBinding(value -> {
+											settings.hdr = value;
+											MetalRenderer.setHdr(value, settings.hdrBrightness);
+										}, () -> settings.hdr))
+								.addOption(builder.createIntegerOption(HDR_BRIGHTNESS)
+										.setName(Component.translatable("mine2metal.options.hdr_brightness"))
+										.setTooltip(Component.translatable("mine2metal.options.hdr_brightness.tooltip"))
+										.setRange(MetalSettings.MIN_HDR_BRIGHTNESS, MetalSettings.MAX_HDR_BRIGHTNESS, MetalSettings.HDR_BRIGHTNESS_STEP)
+										.setValueFormatter(MetalOptionTexts::percent)
+										.setImpact(OptionImpact.LOW)
+										.setEnabledProvider(state -> MetalRenderer.supportsHdr() && state.readBooleanOption(HDR), HDR)
+										.setStorageHandler(settings::save)
+										.setDefaultValue(200)
+										.setBinding(value -> {
+											settings.hdrBrightness = MetalSettings.clampHdrBrightness(value);
+											MetalRenderer.setHdr(settings.hdr, settings.hdrBrightness);
+										}, () -> settings.hdrBrightness)))
 						.addOptionGroup(builder.createOptionGroup()
 								.setName(Component.translatable("mine2metal.options.group.diagnostics"))
 								.addOption(builder.createBooleanOption(PERFORMANCE_HUD)

@@ -6,6 +6,7 @@ import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
 import com.mojang.blaze3d.pipeline.RenderTarget;
 import com.mojang.renderpearl.api.buffers.GpuBufferSlice;
 import dev.mine2metal.upscale.FrameInterpolation;
+import dev.mine2metal.upscale.HdrOutput;
 import dev.mine2metal.upscale.WorldUpscaler;
 import net.minecraft.client.renderer.GameRenderer;
 import net.minecraft.client.renderer.ProjectionMatrixBuffer;
@@ -14,6 +15,7 @@ import org.joml.Matrix4f;
 import org.spongepowered.asm.mixin.Final;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
+import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
@@ -36,11 +38,12 @@ abstract class GameRendererMixin {
 	@WrapMethod(method = "renderLevel")
 	private void mine2metal$renderWorldScaled(Operation<Void> original) {
 		FrameInterpolation.beginFrame();
+		HdrOutput.beginFrame();
 		WorldUpscaler.begin(this.mainRenderTarget, this.gameRenderState.levelRenderState.cameraRenderState);
 		try {
 			original.call();
 			WorldUpscaler.end();
-			FrameInterpolation.capture(this.mainRenderTarget, this.gameRenderState.levelRenderState.cameraRenderState);
+			this.mine2metal$captureWorld();
 		} finally {
 			WorldUpscaler.abandonFrame();
 		}
@@ -56,11 +59,17 @@ abstract class GameRendererMixin {
 
 	/**
 	 * The world is done; upscale it before the hand and screen effects draw at full resolution, and capture it for
-	 * frame interpolation without them.
+	 * frame interpolation and EDR output without them.
 	 */
 	@Inject(method = "render3dHud", at = @At("HEAD"))
 	private void mine2metal$upscaleBeforeHand(CallbackInfo ci) {
 		WorldUpscaler.end();
+		this.mine2metal$captureWorld();
+	}
+
+	@Unique
+	private void mine2metal$captureWorld() {
 		FrameInterpolation.capture(this.mainRenderTarget, this.gameRenderState.levelRenderState.cameraRenderState);
+		HdrOutput.capture(this.mainRenderTarget);
 	}
 }

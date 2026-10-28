@@ -44,6 +44,7 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
 	private long recordingIndex = 1L;
 	private final @Nullable FrameStats stats;
 	private @Nullable InterpolationDump interpolationDump;
+	private @Nullable HdrRead hdrRead;
 	/** Names render encoders after their renderpearl pass, for Xcode captures and Instruments traces. */
 	private final boolean labels;
 	private long gpuErrorsSeen;
@@ -417,6 +418,15 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
 		return MetalNative.frameInterpolationCapture(this.ctx, color.handle, depth.handle, matrices, camera, reset);
 	}
 
+	void captureWorldForHdr(MetalTexture color) {
+		this.flushPendingClears();
+		MetalNative.hdrCapture(this.ctx, color.handle);
+	}
+
+	void readNextHdrFrame(int width, int height, Consumer<float @Nullable []> done) {
+		this.hdrRead = new HdrRead(width, height, done);
+	}
+
 	void releaseFrameInterpolation() {
 		MetalNative.frameInterpolationRelease(this.ctx);
 	}
@@ -445,6 +455,35 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
 			this.writeInterpolationDump(this.interpolationDump);
 			this.interpolationDump = null;
 		}
+		if (this.hdrRead != null) {
+			this.readHdrFrame(this.hdrRead);
+			this.hdrRead = null;
+		}
+	}
+
+	/** Reads back the frame the present just composed for EDR; like the generated frame, kept for two presents. */
+	private void readHdrFrame(HdrRead read) {
+		long frame = MetalNative.hdrLastFrame(this.ctx);
+		if (frame == 0L) {
+			read.done().accept(null);
+			return;
+		}
+		int pixels = read.width() * read.height();
+		long size = pixels * 8L;
+		MetalBuffer buffer = new MetalBuffer(this, MetalNative.bufferCreate(this.ctx, size), 0, size);
+		MetalNative.blitTextureToBuffer(this.ctx, frame, 0, 0, 0, read.width(), read.height(), buffer.useForWrite(), 0L, read.width() * 8L);
+		this.afterGpu(() -> {
+			ByteBuffer halves = MemoryUtil.memByteBuffer(buffer.address, (int) size);
+			float[] values = new float[pixels * 4];
+			for (int i = 0; i < values.length; i++) {
+				values[i] = Float.float16ToFloat(halves.getShort(i * 2));
+			}
+			buffer.close();
+			read.done().accept(values);
+		});
+	}
+
+	private record HdrRead(int width, int height, Consumer<float @Nullable []> done) {
 	}
 
 	/** Reads back the generated frame the present just showed; its slot is not reused until two presents later. */

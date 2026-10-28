@@ -44,6 +44,18 @@ public final class MetalSettingsScreen extends OptionsSubScreen {
 				});
 		interpolation.active = MetalRenderer.supportsFrameInterpolation();
 
+		HdrBrightnessSlider hdrBrightness = new HdrBrightnessSlider(settings);
+		hdrBrightness.active = MetalRenderer.supportsHdr() && settings.hdr;
+		CycleButton<Boolean> hdr = CycleButton.onOffBuilder(settings.hdr)
+				.withTooltip(value -> Tooltip.create(MetalOptionTexts.hdrTooltip()))
+				.create(Component.translatable("mine2metal.options.hdr"), (button, value) -> {
+					settings.hdr = value;
+					settings.save();
+					MetalRenderer.setHdr(value, settings.hdrBrightness);
+					hdrBrightness.active = value;
+				});
+		hdr.active = MetalRenderer.supportsHdr();
+
 		CycleButton<Boolean> performanceHud = CycleButton.onOffBuilder(settings.performanceHud)
 				.withTooltip(value -> Tooltip.create(MetalOptionTexts.performanceHudTooltip()))
 				.create(Component.translatable("mine2metal.options.performance_hud"), (button, value) -> {
@@ -67,8 +79,43 @@ public final class MetalSettingsScreen extends OptionsSubScreen {
 		this.list.addSmall(upscaling, scale);
 		this.list.addHeader(Component.translatable("mine2metal.options.group.frame_generation"));
 		this.list.addSmall(interpolation, null);
+		this.list.addHeader(Component.translatable("mine2metal.options.group.hdr"));
+		this.list.addSmall(hdr, hdrBrightness);
 		this.list.addHeader(Component.translatable("mine2metal.options.group.diagnostics"));
 		this.list.addSmall(performanceHud, null);
+	}
+
+	private static final class HdrBrightnessSlider extends AbstractSliderButton {
+		private final MetalSettings settings;
+
+		HdrBrightnessSlider(MetalSettings settings) {
+			super(0, 0, WIDGET_WIDTH, WIDGET_HEIGHT, Component.empty(), toSlider(settings.hdrBrightness));
+			this.settings = settings;
+			this.setTooltip(Tooltip.create(Component.translatable("mine2metal.options.hdr_brightness.tooltip")));
+			this.updateMessage();
+		}
+
+		private static double toSlider(int percent) {
+			return (percent - MetalSettings.MIN_HDR_BRIGHTNESS) / (double) (MetalSettings.MAX_HDR_BRIGHTNESS - MetalSettings.MIN_HDR_BRIGHTNESS);
+		}
+
+		private int percent() {
+			return MetalSettings.clampHdrBrightness((int) Math.round(
+					MetalSettings.MIN_HDR_BRIGHTNESS + this.value * (MetalSettings.MAX_HDR_BRIGHTNESS - MetalSettings.MIN_HDR_BRIGHTNESS)));
+		}
+
+		@Override
+		protected void updateMessage() {
+			this.setMessage(Component.translatable("options.generic_value", Component.translatable("mine2metal.options.hdr_brightness"),
+					MetalOptionTexts.percent(this.percent())));
+		}
+
+		@Override
+		protected void applyValue() {
+			this.settings.hdrBrightness = this.percent();
+			this.settings.save();
+			MetalRenderer.setHdr(this.settings.hdr, this.settings.hdrBrightness);
+		}
 	}
 
 	private static final class RenderScaleSlider extends AbstractSliderButton {

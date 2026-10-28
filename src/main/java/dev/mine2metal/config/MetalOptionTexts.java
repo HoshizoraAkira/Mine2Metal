@@ -63,6 +63,19 @@ final class MetalOptionTexts {
 		return Component.translatable("mine2metal.options.frame_interpolation.tooltip");
 	}
 
+	/** Explains EDR and says how much brighter than SDR white the display can go at its current brightness. */
+	static Component hdrTooltip() {
+		if (!MetalRenderer.isActive()) {
+			return Component.translatable("mine2metal.options.metal_inactive");
+		}
+		if (!MetalRenderer.supportsHdr()) {
+			return Component.translatable("mine2metal.options.hdr.unsupported");
+		}
+		String headroom = String.format(Locale.ROOT, "%.1f", MetalRenderer.hdrHeadroom());
+		return Component.translatable("mine2metal.options.hdr.tooltip").append("\n\n")
+				.append(Component.translatable("mine2metal.options.hdr.headroom", headroom));
+	}
+
 	static Component performanceHudTooltip() {
 		if (!MetalRenderer.isActive()) {
 			return Component.translatable("mine2metal.options.metal_inactive");

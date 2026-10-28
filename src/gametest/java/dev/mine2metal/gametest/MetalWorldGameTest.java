@@ -33,6 +33,7 @@ import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.io.UncheckedIOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -123,10 +124,15 @@ public class MetalWorldGameTest implements FabricClientGameTest {
 				checkFrameInterpolation(context, singleplayer, above);
 				return;
 			}
+			if (Boolean.getBoolean("mine2metal.test.hdrOnly")) {
+				checkHdr(context, singleplayer, above);
+				return;
+			}
 			if (backend.equals("Metal")) {
 				checkSpatialUpscaling(context, singleplayer, returnAbove);
 				checkTemporalUpscaling(context, singleplayer, above);
 				checkFrameInterpolation(context, singleplayer, above);
+				checkHdr(context, singleplayer, above);
 			}
 
 			singleplayer.getServer().runCommand("time set midnight");
@@ -430,6 +436,89 @@ public class MetalWorldGameTest implements FabricClientGameTest {
 			settings.frameInterpolation = false;
 		});
 		context.waitTicks(10);
+	}
+
+	/**
+	 * EDR output: reads back the composed frame and checks that the world's highlights go above SDR white while the
+	 * hotbar stays at it, alone and together with temporal upscaling and frame interpolation. The display's headroom is
+	 * ignored so the result does not depend on its brightness setting.
+	 */
+	private static void checkHdr(ClientGameTestContext context, TestSingleplayerContext singleplayer, Vec3 above) {
+		MetalSettings settings = MetalSettings.get();
+		if (!context.computeOnClient(client -> MetalRenderer.supportsHdr())) {
+			LOGGER.info("This display has no EDR; HDR checks skipped");
+			return;
+		}
+		System.setProperty("mine2metal.hdr.ignoreDisplayHeadroom", "true");
+		String still = String.format(Locale.ROOT, "tp @a %.3f %.3f %.3f 0 50", above.x, above.y, above.z);
+		boolean interpolation = context.computeOnClient(client -> MetalRenderer.supportsFrameInterpolation());
+		String[] cases = interpolation ? new String[] {"plain", "temporal+interpolation"} : new String[] {"plain"};
+		for (String name : cases) {
+			boolean combined = !name.equals("plain");
+			context.runOnClient(client -> {
+				settings.upscaling = combined ? MetalSettings.Upscaling.TEMPORAL : MetalSettings.Upscaling.OFF;
+				settings.renderScale = 50;
+				settings.frameInterpolation = combined;
+				settings.hdr = true;
+				settings.hdrBrightness = 300;
+				MetalRenderer.setHdr(true, 300);
+			});
+			hover(context, singleplayer, still);
+			LOGGER.info("Average FPS from above with HDR ({}): {}", name, averageFps(context));
+
+			AtomicBoolean finished = new AtomicBoolean();
+			float[][] frame = new float[1][];
+			int[] size = new int[3];
+			context.runOnClient(client -> {
+				size[0] = client.gameRenderer.mainRenderTarget().width;
+				size[1] = client.gameRenderer.mainRenderTarget().height;
+				size[2] = client.getWindow().getGuiScale();
+				MetalRenderer.readNextHdrFrame(size[0], size[1], values -> {
+					frame[0] = values;
+					finished.set(true);
+				});
+			});
+			context.waitFor(client -> finished.get());
+			check(frame[0] != null, "No HDR frame to read back (" + name + ")");
+
+			int width = size[0];
+			int height = size[1];
+			// Raw little-endian floats, for looking at afterwards.
+			ByteBuffer raw = ByteBuffer.allocate(frame[0].length * 4).order(ByteOrder.LITTLE_ENDIAN);
+			raw.asFloatBuffer().put(frame[0]);
+			try {
+				Files.write(FabricLoader.getInstance().getGameDir().resolve("screenshots")
+						.resolve("mine2metal-hdr-" + name.replace('+', '-') + "-" + width + "x" + height + ".rgba32f"), raw.array());
+			} catch (IOException e) {
+				throw new UncheckedIOException(e);
+			}
+			// Rows are bottom-up: the hotbar (22 GUI pixels tall, 182 wide) is at the first rows.
+			float hotbar = brightest(frame[0], width, width / 2 - 91 * size[2], width / 2 + 91 * size[2], 0, 22 * size[2]);
+			float world = brightest(frame[0], width, 0, width, height / 2, height);
+			LOGGER.info("HDR frame ({}): brightest world {} and hotbar {} times SDR white", name, world, hotbar);
+			check(world > 1.5F, "The world's highlights should go above SDR white (" + name + ")");
+			check(hotbar <= 1.01F, "The hotbar should stay at SDR brightness (" + name + ")");
+		}
+		System.clearProperty("mine2metal.hdr.ignoreDisplayHeadroom");
+		context.runOnClient(client -> {
+			settings.upscaling = MetalSettings.Upscaling.OFF;
+			settings.frameInterpolation = false;
+			settings.hdr = false;
+			MetalRenderer.setHdr(false, settings.hdrBrightness);
+		});
+		context.waitTicks(10);
+	}
+
+	/** The largest channel value in a block of an RGBA float image. */
+	private static float brightest(float[] rgba, int width, int left, int right, int bottom, int top) {
+		float result = 0.0F;
+		for (int y = bottom; y < top; y++) {
+			for (int x = Math.max(0, left); x < Math.min(width, right); x++) {
+				int i = (y * width + x) * 4;
+				result = Math.max(result, Math.max(rgba[i], Math.max(rgba[i + 1], rgba[i + 2])));
+			}
+		}
+		return result;
 	}
 
 	/**

@@ -35,6 +35,13 @@ final class MetalSurface implements GpuSurfaceBackend {
 		Mine2Metal.LOGGER.debug("Configuring Metal surface {}x{} {}", configuration.width(), configuration.height(), configuration.presentMode());
 		MetalNative.layerConfigure(this.ctx, this.layer, configuration.width(), configuration.height(), vsync);
 		this.setPerformanceHud(MetalSettings.get().performanceHud);
+		this.setHdr(MetalSettings.get().hdr, MetalSettings.get().hdrBrightness);
+	}
+
+	/** EDR output on or off, with highlights up to brightnessPercent of SDR white (capped by the display). */
+	void setHdr(boolean enabled, int brightnessPercent) {
+		MetalNative.hdrSetPeak(this.ctx, brightnessPercent / 100.0F, Boolean.getBoolean("mine2metal.hdr.ignoreDisplayHeadroom"));
+		MetalNative.layerSetHdr(this.ctx, this.layer, enabled && MetalNative.hdrSupported());
 	}
 
 	void setPerformanceHud(boolean enabled) {

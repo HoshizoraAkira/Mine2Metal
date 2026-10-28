@@ -179,6 +179,21 @@ M2M_EXPORT void m2m_metalfx_temporal_scale_range(int64_t ctx, float *min_scale, 
 M2M_EXPORT int32_t m2m_metalfx_temporal_upscale(int64_t ctx, int64_t color, int64_t depth, int64_t output,
                                                 const float *matrices, float jitter_x, float jitter_y, int32_t reset);
 
+// EDR output
+
+// Whether the main display can show brighter than SDR white at all (it may not have headroom right now).
+M2M_EXPORT int32_t m2m_hdr_supported(void);
+// How many times SDR white the main display can show right now; changes with its brightness setting.
+M2M_EXPORT float m2m_hdr_headroom(void);
+// The brightest the world's highlights go, in multiples of SDR white; capped by the display's headroom unless
+// ignore_display is set.
+M2M_EXPORT void m2m_hdr_set_peak(int64_t ctx, float peak, int32_t ignore_display);
+// With EDR on: this frame's world before the hand and the GUI (the main color target), so the present can tell what
+// was drawn over it.
+M2M_EXPORT void m2m_hdr_capture(int64_t ctx, int64_t color);
+// The RGBA16Float frame the most recent present composed (borrowed), or 0.
+M2M_EXPORT int64_t m2m_hdr_last_frame(int64_t ctx);
+
 // Frame interpolation
 
 M2M_EXPORT int32_t m2m_frame_interpolation_supported(int64_t ctx);
@@ -215,6 +230,8 @@ M2M_EXPORT int64_t m2m_take_presented_times(int64_t ctx, double *out, int64_t ca
 // With vsync off this starts a present thread that shows the newest finished frame once per refresh; with vsync
 // on frames are presented from the render thread and nextDrawable caps the frame rate.
 M2M_EXPORT void m2m_layer_configure(int64_t ctx, int64_t layer, int32_t width, int32_t height, int32_t vsync);
+// Switches the layer between SDR and EDR output (see hdr.m).
+M2M_EXPORT void m2m_layer_set_hdr(int64_t ctx, int64_t layer, int32_t enabled);
 // Shows or hides the Metal Performance HUD on the layer.
 M2M_EXPORT void m2m_layer_set_hud(int64_t layer, int32_t enabled);
 // Stops the present thread before the layer goes away.

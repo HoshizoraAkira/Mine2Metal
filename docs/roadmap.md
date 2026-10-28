@@ -141,6 +141,24 @@ Hasil gametest (Apple M3, macOS 27, window 854×480): kamera berputar dari yaw 0
 - Di window gametest yang terlihat, FPS render turun ke 29–30 (layar 60 Hz), sesuai rancangan. Pacing di layar sungguhan belum diukur: di gametest macOS melaporkan semua `presentedTime` sebagai 0, bahkan tanpa interpolasi.
 - Sama seperti temporal, motion vector hanya tahu gerak kamera, jadi mob, partikel, dan air yang bergerak bisa sedikit goyah di frame buatan.
 
+## M14 HDR/EDR (2026-10-28)
+
+Opsi **HDR** dan **Kecerahan HDR** (125–400% putih SDR, bawaan 200%) di menu Metal, berlaku langsung. Hanya bisa dipilih kalau layar utama punya EDR (`maximumPotentialExtendedDynamicRangeColorComponentValue > 1`). Tooltip-nya menunjukkan headroom layar saat ini.
+
+Minecraft dan Sodium hanya menggambar SDR. HDR "asli" berarti menulis ulang shader pencahayaan keduanya, jadi pendekatan yang dipakai adalah **ekspansi highlight**: bagian dunia yang paling terang dinaikkan di atas putih SDR.
+- **Layer:** saat HDR nyala, layer memakai `RGBA16Float`, `kCGColorSpaceExtendedLinearSRGB`, dan `wantsExtendedDynamicRangeContent`. Nilai 1,0 = putih SDR. Dipasang ulang (thread present dihentikan dulu) setiap kali opsinya berubah.
+- **Kurva:** dihitung dari channel terkuat warna terenkode. Di bawah *knee* 0,75 warnanya tetap. Di atasnya, warna linear dikali `1 + (puncak − 1)·t²`, jadi naik halus dari ×1 di knee sampai ×puncak di putih penuh. Puncaknya adalah pilihan pemain, dibatasi headroom layar saat itu (`maximumExtendedDynamicRangeColorComponentValue`, dibaca ulang tiap 30 present, berubah mengikuti slider kecerahan).
+- **GUI dan tangan tetap SDR:** dunia ditangkap di titik yang sama dengan interpolasi (awal `render3dHud`). Saat present, frame jadi dibandingkan per piksel dengan dunia itu, dan ekspansi hanya dipakai di piksel yang masih sama (transisi lembut 1,5–6/255). Hotbar putih, teks chat, dan crosshair tidak ikut menyilaukan. Overlay yang menggelapkan seluruh layar (menu pause, vignette di tepi) juga membuat bagian yang ditutupinya tetap SDR.
+- **Present:** salinan staging diganti pass "compose" yang menulis frame extended linear ke tekstur `RGBA16Float`. Drawable float memakai pipeline present kedua. Berlaku di jalur VSync nyala dan thread present VSync mati.
+- **Dengan interpolasi frame:** history dunia disimpan dalam float yang sudah diekspansi, dan frame compose menjadi tekstur UI-nya. Semua input dan output MetalFX pun ada di ruang extended linear yang sama, dan di bagian tanpa GUI frame compose sama persis dengan dunia yang diekspansi.
+- **Screenshot (F2)** tetap SDR karena dibaca dari render target game, bukan dari drawable.
+
+Hasil gametest (Apple M3, macOS 27, puncak 300%, headroom layar diabaikan lewat `-Dmine2metal.hdr.ignoreDisplayHeadroom=true` supaya hasilnya tidak bergantung pada kecerahan):
+- Frame compose dibaca balik. Dunia paling terang 1,72× putih SDR (kabut terang di cakrawala, ~5,5% piksel di atas 1,0), **hotbar tetap 1,0**. Hasilnya sama dengan temporal 50% + interpolasi.
+- Lolos tanpa error di bawah validation, Metal 4 dan Metal 3. Interpolasi dan temporal tidak berubah (31,4 / 30,6 dB).
+- Belum dilihat di layar sungguhan. MacBook Air hanya punya headroom kalau slider kecerahan di bawah maksimum.
+- Keterbatasan: yang dinaikkan semua yang sangat terang, termasuk salju dan awan di siang hari, bukan hanya sumber cahaya. Minecraft tidak memberi informasi blok mana yang memancarkan cahaya.
+
 ## Fitur khas Metal (setelah M5)
 
 | Fitur | API Apple | macOS | Input yang dibutuhkan | Kesulitan |
@@ -151,7 +169,7 @@ Hasil gametest (Apple M3, macOS 27, window 854×480): kamera berputar dari yaw 0
 | **Upscaling temporal** ✅ | `MTLFXTemporalScaler` | 13 | Warna + depth + **motion vector** + jitter kamera | Tinggi |
 | Upscaling temporal + denoise | `MTLFXTemporalDenoisedScaler` | 26 | Seperti temporal, plus buffer untuk ray tracing | Di luar lingkup |
 | **Frame interpolation** ✅ | `MTLFXFrameInterpolator` | 26 | Warna, depth, motion, **tekstur UI terpisah**, frame sebelumnya | Sangat tinggi |
-| HDR/EDR | `CAMetalLayer.wantsExtendedDynamicRangeContent` | 10.11 | Shader yang menghasilkan nilai > 1.0 | Tinggi (butuh shader sendiri) |
+| HDR/EDR ✅ (ekspansi highlight) | `CAMetalLayer.wantsExtendedDynamicRangeContent` | 10.11 | Shader yang menghasilkan nilai > 1.0 | Tinggi (butuh shader sendiri) |
 
 Catatan:
 - Minecraft tidak menghasilkan motion vector. Untuk geometri statis, motion vector bisa dihitung dari depth + matriks kamera frame sebelumnya. Entitas, partikel, dan tekstur animasi butuh penanganan khusus, atau akan ghosting.

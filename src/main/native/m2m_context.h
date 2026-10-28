@@ -72,6 +72,7 @@ typedef void (^M2MCompletion)(CFTimeInterval gpuStart, CFTimeInterval gpuEnd, NS
 @property(nonatomic, strong) id<MTLDevice> device;
 @property(nonatomic, strong) id<MTLCommandQueue> queue;
 @property(nonatomic, strong) id<MTLRenderPipelineState> presentPipeline;
+@property(nonatomic, strong) id<MTLRenderPipelineState> presentPipelineEDR;
 @property(nonatomic, strong) id<MTLSamplerState> presentSampler;
 
 // Metal 4 (gpu.m). Command buffers come from allocators that return to a pool when the GPU is done with them;
@@ -150,6 +151,18 @@ typedef void (^M2MCompletion)(CFTimeInterval gpuStart, CFTimeInterval gpuEnd, NS
 @property(nonatomic, weak) id lastTemporalUpscaler;
 @property(nonatomic, strong) id<MTLRenderPipelineState> motionPipeline;
 @property(nonatomic, strong) id<MTLDepthStencilState> motionDepthState;
+// EDR output (hdr.m): the layer takes extended linear RGBA16Float, and the world's highlights go above SDR white.
+// hdrWorld is this frame's world before the hand and the GUI, compared with the finished frame to tell them apart.
+@property(nonatomic) BOOL hdr;
+@property(nonatomic) float hdrPeak;
+@property(nonatomic) BOOL hdrIgnoreDisplay;
+@property(nonatomic) float hdrHeadroom;
+@property(nonatomic) int64_t hdrHeadroomAge;
+@property(nonatomic, strong) id<MTLTexture> hdrWorld;
+@property(nonatomic) BOOL hdrWorldCaptured;
+@property(nonatomic, weak) id<MTLTexture> hdrLastFrame;
+@property(nonatomic, strong) id<MTLRenderPipelineState> hdrComposePipeline;
+@property(nonatomic, strong) id<MTLRenderPipelineState> hdrExpandPipeline;
 // MetalFX frame interpolation state (interpolation.m).
 @property(nonatomic, strong) id frameInterpolator;
 // Display refresh interval in seconds, for pacing generated frames.
@@ -243,6 +256,11 @@ MTLTextureUsage m2m_frame_interpolation_ui_usage(M2MContext *ctx);
 id<MTLTexture> m2m_frame_interpolation_encode(M2MContext *ctx, id<MTLTexture> ui, NSUInteger slot);
 double m2m_frame_interpolation_pacing(M2MContext *ctx);
 void m2m_frame_interpolation_presented(M2MContext *ctx, id<MTLTexture> generated);
+// EDR output (hdr.m). compose: the finished frame source into target (RGBA16Float, extended linear), with this
+// frame's world highlights expanded where nothing was drawn over them. expand: a world texture alone, for frame
+// interpolation's history. Both NO if the shaders failed.
+BOOL m2m_hdr_compose(M2MContext *ctx, id<MTLTexture> source, id<MTLTexture> target);
+BOOL m2m_hdr_expand(M2MContext *ctx, id<MTLTexture> world, id<MTLTexture> target);
 // Copies message into a caller-provided buffer as NUL-terminated UTF-8, truncating to capacity.
 void m2m_copy_string(char *out, int64_t capacity, NSString *message);
 

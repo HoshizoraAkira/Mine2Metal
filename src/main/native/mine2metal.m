@@ -129,7 +129,11 @@ int64_t m2m_context_create(int64_t device_handle, int32_t debug, int32_t metal4,
 		pipeline.fragmentFunction = [library newFunctionWithName:@"m2m_present_fragment"];
 		pipeline.colorAttachments[0].pixelFormat = MTLPixelFormatBGRA8Unorm;
 		ctx.presentPipeline = [ctx.device newRenderPipelineStateWithDescriptor:pipeline error:&compileError];
-		if (!ctx.presentPipeline) {
+		// For EDR drawables; the frame is already in extended linear values then (hdr.m).
+		pipeline.label = @"mine2metal present EDR";
+		pipeline.colorAttachments[0].pixelFormat = MTLPixelFormatRGBA16Float;
+		ctx.presentPipelineEDR = [ctx.device newRenderPipelineStateWithDescriptor:pipeline error:&compileError];
+		if (!ctx.presentPipeline || !ctx.presentPipelineEDR) {
 			m2m_copy_string(error, error_capacity, compileError.localizedDescription);
 			return 0;
 		}

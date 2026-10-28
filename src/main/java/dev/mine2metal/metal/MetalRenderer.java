@@ -97,6 +97,46 @@ public final class MetalRenderer {
 		current.encoder().dumpNextInterpolatedFrame(file, width, height, done);
 	}
 
+	/** Whether the main display can show brighter than SDR white (it may lack the headroom at its current brightness). */
+	public static boolean supportsHdr() {
+		return device != null && MetalNative.hdrSupported();
+	}
+
+	/** How many times SDR white the main display can show right now; 1 when it has no headroom left. */
+	public static float hdrHeadroom() {
+		return device != null ? MetalNative.hdrHeadroom() : 1.0F;
+	}
+
+	/** Switches EDR output; does nothing when Metal is not active. */
+	public static void setHdr(boolean enabled, int brightnessPercent) {
+		MetalDevice current = device;
+		MetalSurface surface = current != null ? current.surface : null;
+		if (surface != null) {
+			surface.setHdr(enabled, brightnessPercent);
+		}
+	}
+
+	/** With EDR on: this frame's world before the hand and the GUI, so they can be kept at SDR brightness. */
+	public static void captureWorldForHdr(GpuTexture color) {
+		MetalDevice current = device;
+		if (current != null) {
+			current.encoder().captureWorldForHdr((MetalTexture) color);
+		}
+	}
+
+	/**
+	 * For the game test: the RGBA16Float frame the next present composes (width by height, the main target's size), as
+	 * RGBA floats in bottom-up rows, or null if it composed none.
+	 */
+	public static void readNextHdrFrame(int width, int height, Consumer<float @Nullable []> done) {
+		MetalDevice current = device;
+		if (current == null) {
+			done.accept(null);
+			return;
+		}
+		current.encoder().readNextHdrFrame(width, height, done);
+	}
+
 	/** Shows or hides the Metal Performance HUD over the game window; does nothing when Metal is not active. */
 	public static void setPerformanceHud(boolean enabled) {
 		MetalDevice current = device;

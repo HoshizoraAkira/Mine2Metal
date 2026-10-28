@@ -634,6 +634,55 @@ final class MetalNative {
 		}
 	}
 
+	static void layerSetHdr(long ctx, long layer, boolean enabled) {
+		try {
+			Functions.LAYER_SET_HDR.invokeExact(ctx, layer, enabled ? 1 : 0);
+		} catch (Throwable t) {
+			throw rethrow(t);
+		}
+	}
+
+	static boolean hdrSupported() {
+		try {
+			return (int) Functions.HDR_SUPPORTED.invokeExact() != 0;
+		} catch (Throwable t) {
+			throw rethrow(t);
+		}
+	}
+
+	static float hdrHeadroom() {
+		try {
+			return (float) Functions.HDR_HEADROOM.invokeExact();
+		} catch (Throwable t) {
+			throw rethrow(t);
+		}
+	}
+
+	static void hdrSetPeak(long ctx, float peak, boolean ignoreDisplay) {
+		try {
+			Functions.HDR_SET_PEAK.invokeExact(ctx, peak, ignoreDisplay ? 1 : 0);
+		} catch (Throwable t) {
+			throw rethrow(t);
+		}
+	}
+
+	static void hdrCapture(long ctx, long color) {
+		try {
+			Functions.HDR_CAPTURE.invokeExact(ctx, color);
+		} catch (Throwable t) {
+			throw rethrow(t);
+		}
+	}
+
+	/** The RGBA16Float frame of the latest present (borrowed), or 0. */
+	static long hdrLastFrame(long ctx) {
+		try {
+			return (long) Functions.HDR_LAST_FRAME.invokeExact(ctx);
+		} catch (Throwable t) {
+			throw rethrow(t);
+		}
+	}
+
 	static void layerDetach(long ctx) {
 		try {
 			Functions.LAYER_DETACH.invokeExact(ctx);
@@ -801,6 +850,12 @@ final class MetalNative {
 		static final MethodHandle TIMESTAMP_WRITE = function("m2m_timestamp_write", null, JAVA_LONG, JAVA_LONG, JAVA_LONG);
 		static final MethodHandle HOST_TIME_NANOS = function("m2m_host_time_nanos", JAVA_LONG);
 		static final MethodHandle LAYER_SET_HUD = function("m2m_layer_set_hud", null, JAVA_LONG, JAVA_INT);
+		static final MethodHandle LAYER_SET_HDR = function("m2m_layer_set_hdr", null, JAVA_LONG, JAVA_LONG, JAVA_INT);
+		static final MethodHandle HDR_SUPPORTED = function("m2m_hdr_supported", JAVA_INT);
+		static final MethodHandle HDR_HEADROOM = function("m2m_hdr_headroom", JAVA_FLOAT);
+		static final MethodHandle HDR_SET_PEAK = function("m2m_hdr_set_peak", null, JAVA_LONG, JAVA_FLOAT, JAVA_INT);
+		static final MethodHandle HDR_CAPTURE = function("m2m_hdr_capture", null, JAVA_LONG, JAVA_LONG);
+		static final MethodHandle HDR_LAST_FRAME = function("m2m_hdr_last_frame", JAVA_LONG, JAVA_LONG);
 		static final MethodHandle LAYER_DETACH = function("m2m_layer_detach", null, JAVA_LONG);
 		static final MethodHandle PRESENT = function("m2m_present", JAVA_INT, JAVA_LONG, JAVA_LONG, JAVA_LONG);
 

@@ -83,17 +83,20 @@ static void m2m_frame_interpolator_retire(M2MContext *ctx, M2MFrameInterpolator 
 	m2m_retire(ctx, old.interpolator);
 }
 
-static M2MFrameInterpolator *m2m_frame_interpolator(M2MContext *ctx, id<MTLTexture> color, id<MTLTexture> sourceDepth) {
+// format is the color's, or RGBA16Float with EDR: then every color input and the output are extended linear, the
+// worlds expanded like the composed frame (hdr.m).
+static M2MFrameInterpolator *m2m_frame_interpolator(M2MContext *ctx, id<MTLTexture> color, id<MTLTexture> sourceDepth,
+                                                    MTLPixelFormat format) {
 	M2MFrameInterpolator *current = ctx.frameInterpolator;
 	if (current && current.inputWidth == sourceDepth.width && current.inputHeight == sourceDepth.height &&
-	    current.outputWidth == color.width && current.outputHeight == color.height && current.colorFormat == color.pixelFormat) {
+	    current.outputWidth == color.width && current.outputHeight == color.height && current.colorFormat == format) {
 		return current;
 	}
 
 	MTLFXFrameInterpolatorDescriptor *descriptor = [MTLFXFrameInterpolatorDescriptor new];
-	descriptor.colorTextureFormat = color.pixelFormat;
-	descriptor.outputTextureFormat = color.pixelFormat;
-	descriptor.uiTextureFormat = color.pixelFormat;
+	descriptor.colorTextureFormat = format;
+	descriptor.outputTextureFormat = format;
+	descriptor.uiTextureFormat = format;
 	descriptor.depthTextureFormat = MTLPixelFormatDepth32Float;
 	descriptor.motionTextureFormat = MTLPixelFormatRG16Float;
 	descriptor.inputWidth = sourceDepth.width;
@@ -114,7 +117,7 @@ static M2MFrameInterpolator *m2m_frame_interpolator(M2MContext *ctx, id<MTLTextu
 	created.inputHeight = sourceDepth.height;
 	created.outputWidth = color.width;
 	created.outputHeight = color.height;
-	created.colorFormat = color.pixelFormat;
+	created.colorFormat = format;
 	id<MTLFXFrameInterpolatorBase> interpolator = created.interpolator;
 	created.motion = m2m_new_private_texture(ctx, MTLPixelFormatRG16Float, sourceDepth.width, sourceDepth.height,
 	                                         MTLTextureUsageRenderTarget | interpolator.motionTextureUsage);
@@ -123,10 +126,11 @@ static M2MFrameInterpolator *m2m_frame_interpolator(M2MContext *ctx, id<MTLTextu
 	created.worlds = [NSMutableArray array];
 	created.outputs = [NSMutableArray array];
 	for (NSUInteger i = 0; i < M2M_INTERPOLATION_SLOTS; i++) {
-		[created.worlds addObject:m2m_new_private_texture(ctx, color.pixelFormat, color.width, color.height,
-		                                                  interpolator.colorTextureUsage)];
+		// Written by a copy, or rendered by the EDR expansion.
+		[created.worlds addObject:m2m_new_private_texture(ctx, format, color.width, color.height,
+		                                                  interpolator.colorTextureUsage | MTLTextureUsageRenderTarget)];
 		// Read by the present pass that draws it onto a drawable.
-		[created.outputs addObject:m2m_new_private_texture(ctx, color.pixelFormat, color.width, color.height,
+		[created.outputs addObject:m2m_new_private_texture(ctx, format, color.width, color.height,
 		                                                   interpolator.outputTextureUsage | MTLTextureUsageShaderRead)];
 	}
 	m2m_frame_interpolator_retire(ctx, current);
@@ -141,7 +145,8 @@ int32_t m2m_frame_interpolation_capture(int64_t handle, int64_t color_handle, in
 		id<MTLTexture> color = m2m_borrow(color_handle);
 		id<MTLTexture> sourceDepth = m2m_borrow(depth_handle);
 		M2MFrameInterpolator *previous = ctx.frameInterpolator;
-		M2MFrameInterpolator *interpolator = m2m_frame_interpolator(ctx, color, sourceDepth);
+		MTLPixelFormat format = ctx.hdr ? MTLPixelFormatRGBA16Float : color.pixelFormat;
+		M2MFrameInterpolator *interpolator = m2m_frame_interpolator(ctx, color, sourceDepth, format);
 		if (!interpolator) {
 			return 0;
 		}
@@ -149,8 +154,12 @@ int32_t m2m_frame_interpolation_capture(int64_t handle, int64_t color_handle, in
 		if (!m2m_encode_motion(ctx, sourceDepth, interpolator.motion, interpolator.depth, matrices)) {
 			return 0;
 		}
-		[m2m_copier(ctx) copyFromTexture:color toTexture:interpolator.worlds[slot]];
-		m2m_end_encoding(ctx);
+		if (format == color.pixelFormat) {
+			[m2m_copier(ctx) copyFromTexture:color toTexture:interpolator.worlds[slot]];
+			m2m_end_encoding(ctx);
+		} else if (!m2m_hdr_expand(ctx, color, interpolator.worlds[slot])) {
+			return 0;
+		}
 
 		M2MInterpolationCamera values;
 		memcpy(&values, camera, sizeof(values));
