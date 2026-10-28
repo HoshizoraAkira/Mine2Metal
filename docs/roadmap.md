@@ -115,6 +115,23 @@ Hasil gametest di jendela yang terlihat (MacBook Air M3, 60 Hz):
 
 Kualitas frame buatan tidak berubah (FSR 31,21 dB, MetalFX 31,20 dB), dan gametest penuh lolos di bawah validation. Belum diukur: game di bawah 30 FPS dengan frame gen (penahanan > 1 refresh) dan layar ProMotion.
 
+### R9: instalasi (2026-10-28)
+
+- **Lisensi MIT** (`LICENSE`). Lisensinya ikut di jar (`META-INF/licenses`) bersama lisensi AMD.
+- **`fabric.mod.json`:** penulis, lisensi, ikon, dan deskripsi baru. Bergantung pada Fabric Loader, Minecraft 26.3, dan Java 25; Sodium disarankan; Fabric API tidak diperlukan.
+- **Ikon:** 256×256, blok logam isometrik.
+- **`./gradlew mrpack`** membuat modpack untuk Modrinth App dan Prism Launcher.
+  - Isinya Minecraft 26.3, Fabric Loader 0.20.1, Sodium dari CDN Modrinth, dan mod ini di `overrides/mods`.
+  - Hash dan ukuran Sodium dihitung dari artefak yang dipakai build; nilainya cocok dengan data API Modrinth.
+- **Mac yang tidak didukung:** Intel, Java x86 di bawah Rosetta, macOS < 14, perangkat tanpa Metal 3, atau library yang gagal dimuat.
+  - Minecraft sudah otomatis mencoba backend berikutnya (OpenGL), tapi tidak memberi tahu siapa pun. Sekarang alasannya dicatat di log dan ditampilkan sekali sebagai toast di layar judul.
+  - Tooltip di menu Metal juga menyebutkan alasannya.
+  - Pemain yang sengaja memilih OpenGL/Vulkan atau mematikan Metal tidak mendapat pesan.
+- **Uji:**
+  - `JAVA_TOOL_OPTIONS="-Dos.version=13.6 -Dmine2metal.test.fallbackOnly=true" ./gradlew runClientGameTest`: game memakai OpenGL dan toast "Not rendering with Metal" muncul dengan alasannya.
+  - `./gradlew runProductionClient` menjalankan jar rilis dan Sodium di klien produksi Loom, tanpa classpath dev.
+- **Belum dilakukan:** membuat proyek dan mengunggah ke Modrinth/CurseForge (butuh akun pemilik), dan tautan repo di metadata. macOS 14–25 belum diuji di mesin sungguhan; jalur Metal 4 dan MetalFX baru dijaga `@available` dan weak linking.
+
 ### R8: arsitektur frame dunia (2026-10-28)
 
 Kelas-kelas di sekitar pass dunia pindah dari `upscale` ke paket `dev.mine2metal.frame`:
@@ -321,7 +338,7 @@ Urutan di bawah adalah prioritas. Instalasi (M9) tetap terakhir, sesuai kesepaka
 | R7 ✅ | **Upscaler FSR sebagai pilihan** (hasil di bagian "R7" di bawah) | FSR 1 dan FSR 3.1 di menu Upscaling di samping MetalFX. Sudah terbukti jalan, tapi 2–2,5× lebih berat; nilainya sebagai pilihan dan perbandingan kualitas | Kualitas dibandingkan dengan MetalFX di uji temporal; lolos validation |
 | R8 ✅ | **Rapikan arsitektur** (hasil di bagian "R8" di bawah) | Satu objek alur "frame dunia" (tangkap/proyeksi/depth/jitter) menggantikan state statis di `WorldUpscaler`, `FrameInterpolation`, `HdrOutput`; paket di luar `upscale`; barrier Metal 4 dipersempit | Gametest penuh tetap lolos; tidak ada perubahan perilaku |
 | R10 🔎 | **Upgrade ke FSR 3.1.6** (SDK v2.3.0, MIT; diriset, hasil di [fsr-frame-gen.md](fsr-frame-gen.md#riset-r10-fsr-316-dari-sdk-v230-2026-10-28): algoritmanya identik dengan v1.1.4, port ditunda) | Kode FSR 3 di SDK 2.x ternyata MIT (lihat ralat di fsr-frame-gen.md), dengan frame interpolation 3.1.6 dan upscaler 3.1.5. Shadernya hanya HLSL, jadi terjemahan beralih ke `dxc` → SPIR-V → spirv-cross; host code dan backend `ffx_metal` tetap | Kualitas uji yaw ≥ v1.1.4; validation bersih |
-| R9 | **Instalasi (M9)** | Seperti di atas: rilis Modrinth/CurseForge, `.mrpack`, pesan jelas di Mac yang tidak didukung | — |
+| R9 ✅ | **Instalasi (M9)** (hasil di bagian "R9" di bawah; langkah rilis di [rilis.md](rilis.md)) | Seperti di atas: rilis Modrinth/CurseForge, `.mrpack`, pesan jelas di Mac yang tidak didukung | — |
 
 ## Fitur khas Metal (setelah M5)
 

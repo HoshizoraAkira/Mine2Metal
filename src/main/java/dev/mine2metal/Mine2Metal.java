@@ -7,6 +7,8 @@ import org.slf4j.LoggerFactory;
 public final class Mine2Metal {
 	public static final String MOD_ID = "mine2metal";
 	public static final Logger LOGGER = LoggerFactory.getLogger(MOD_ID);
+	/** The oldest macOS the native library is built for (macos_min_version in gradle.properties). */
+	public static final int MIN_MACOS_VERSION = 14;
 
 	private Mine2Metal() {
 	}
@@ -26,7 +28,8 @@ public final class Mine2Metal {
 		return override != null ? MetalSettings.parseMetalVersion(override) : MetalSettings.get().metalVersion;
 	}
 
+	/** A Mac with Apple silicon and a new enough macOS; {@link MetalAvailability#platformProblem} says what is missing. */
 	public static boolean isSupportedPlatform() {
-		return System.getProperty("os.name").startsWith("Mac") && System.getProperty("os.arch").equals("aarch64");
+		return MetalAvailability.platformProblem() == null;
 	}
 }

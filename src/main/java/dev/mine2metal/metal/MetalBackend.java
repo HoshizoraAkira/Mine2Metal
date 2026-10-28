@@ -5,6 +5,7 @@ import com.mojang.renderpearl.api.device.GpuBackend;
 import com.mojang.renderpearl.api.device.GpuDebugOptions;
 import com.mojang.renderpearl.api.device.GpuDevice;
 import com.mojang.renderpearl.frontend.FrontendGpuDevice;
+import dev.mine2metal.MetalAvailability;
 import dev.mine2metal.Mine2Metal;
 import org.jspecify.annotations.Nullable;
 import org.lwjgl.sdl.SDLVideo;
@@ -18,7 +19,12 @@ public final class MetalBackend implements GpuBackend {
 
 	@Override
 	public void loadLibrary() throws BackendCreationException {
-		MetalNative.load();
+		try {
+			MetalNative.load();
+		} catch (BackendCreationException e) {
+			MetalAvailability.failed(e.getMessage());
+			throw e;
+		}
 	}
 
 	@Override
@@ -48,6 +54,15 @@ public final class MetalBackend implements GpuBackend {
 
 	@Override
 	public GpuDevice createDevice(GpuDebugOptions debugOptions) throws BackendCreationException {
+		try {
+			return this.createMetalDevice(debugOptions);
+		} catch (BackendCreationException e) {
+			MetalAvailability.failed(e.getMessage());
+			throw e;
+		}
+	}
+
+	private GpuDevice createMetalDevice(GpuDebugOptions debugOptions) throws BackendCreationException {
 		long device = MetalNative.deviceCreate(debugOptions.useValidationLayers());
 		if (device == 0L) {
 			throw new BackendCreationException("No Metal device available", BackendCreationException.Reason.PLATFORM_ERROR);

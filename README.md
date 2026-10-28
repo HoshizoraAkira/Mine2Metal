@@ -2,7 +2,7 @@
 
 Mod Fabric yang menambahkan backend Apple Metal untuk lapisan GPU `renderpearl` di Minecraft Java, dan dirancang agar tetap berjalan bersama Sodium.
 
-Status: **M1–M8, M10, upscaling spasial M11** (uji manual belum dilakukan, lihat [docs/uji-manual.md](docs/uji-manual.md)). Layar judul dan dunia singleplayer dirender lewat Metal, dengan maupun tanpa Sodium. Hasilnya nyaris identik piksel dengan OpenGL. Di uji otomatis pada MacBook Air M3, Metal + Sodium mencapai 2000–2700 FPS di skenario ringan dan 660–1500 FPS di 1920×1080 render distance 16 (tergantung suhu), dibanding 200–490 FPS untuk OpenGL + Sodium. Detail ada di [docs/roadmap.md](docs/roadmap.md#hasil-uji-otomatis-2026-10-27). Masih eksperimental: mod yang memanggil OpenGL langsung tidak akan menggambar, dan beberapa kasus langka (triangle fan ber-index, clear sebagian) belum didukung.
+Status: **siap dirilis sebagai 0.0.1**. Semua milestone (M1–M14) dan roadmap lanjutan R1–R9 sudah selesai: upscaling MetalFX/FSR, frame gen MetalFX/FSR 3.1, HDR, Metal 4, dan paket instalasi. Uji manual di game masih menunggu (lihat [docs/uji-manual.md](docs/uji-manual.md)). Layar judul dan dunia singleplayer dirender lewat Metal, dengan maupun tanpa Sodium. Hasilnya nyaris identik piksel dengan OpenGL. Di uji otomatis pada MacBook Air M3, Metal + Sodium mencapai 2000–2700 FPS di skenario ringan dan 660–1500 FPS di 1920×1080 render distance 16 (tergantung suhu), dibanding 200–490 FPS untuk OpenGL + Sodium. Detail ada di [docs/roadmap.md](docs/roadmap.md#hasil-uji-otomatis-2026-10-27). Masih eksperimental: mod yang memanggil OpenGL langsung tidak akan menggambar, dan beberapa kasus langka (triangle fan ber-index, clear sebagian) belum didukung.
 
 ![Dunia Minecraft 26.3 dengan Sodium, dirender dengan Metal](docs/screenshots/m6-world-sodium.png)
 
@@ -13,6 +13,24 @@ Progres per milestone ada di [docs/roadmap.md](docs/roadmap.md), latar belakang 
 - Minecraft 26.3, Fabric Loader ≥ 0.20.1, Java 25
 - macOS ≥ 14 di Apple Silicon (arm64)
 - Sodium `mc26.3-0.9.3-beta.1` (dipasang otomatis di runtime dev)
+
+## Instalasi
+
+Butuh Mac dengan Apple silicon (M1 atau lebih baru), macOS 14 atau lebih baru, dan Minecraft Java 26.3. Di Mac lain mod ini tidak melakukan apa-apa: game memakai OpenGL seperti biasa dan layar judul menampilkan alasannya.
+
+**Sekali klik (Modrinth App atau Prism Launcher):** buka file `mine2metal-<versi>.mrpack` (dari `./gradlew mrpack`, di `build/distributions/`).
+- Modrinth App: *Add instance* → *Import* → pilih file `.mrpack`.
+- Prism Launcher: *Add Instance* → *Import* → pilih file `.mrpack`.
+
+Paket ini memasang Minecraft 26.3, Fabric Loader 0.20.1, Sodium 0.9.3 (diunduh dari Modrinth), dan mine2metal.
+
+**Manual (launcher resmi atau launcher lain):**
+1. Pasang [Fabric Loader](https://fabricmc.net/use/installer/) 0.20.1 atau lebih baru untuk Minecraft 26.3.
+2. Taruh `mine2metal-<versi>.jar` di folder `mods`. Fabric API tidak diperlukan.
+3. Disarankan: taruh juga [Sodium](https://modrinth.com/mod/sodium) untuk Minecraft 26.3 di folder yang sama.
+4. Jalankan game. Di Options → Video Settings → Graphics API, biarkan **Default** supaya Metal dipakai.
+
+Lisensi: MIT ([LICENSE](LICENSE)). Jar juga membawa kode AMD FidelityFX SDK (MIT), dengan lisensinya di `META-INF/licenses`.
 
 ## Struktur
 

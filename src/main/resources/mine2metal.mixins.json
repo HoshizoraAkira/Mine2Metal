@@ -6,6 +6,7 @@
 		"GameRendererMixin",
 		"PreferredGraphicsApiMixin",
 		"RenderTargetAccessor",
+		"TitleScreenMixin",
 		"VideoSettingsScreenMixin"
 	],
 	"injectors": {

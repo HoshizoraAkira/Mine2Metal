@@ -3,6 +3,7 @@ package dev.mine2metal.mixin;
 import com.llamalad7.mixinextras.injector.ModifyReturnValue;
 import com.mojang.renderpearl.api.device.GpuBackend;
 import dev.mine2metal.Mine2Metal;
+import dev.mine2metal.MetalAvailability;
 import dev.mine2metal.metal.MetalBackend;
 import net.minecraft.client.PreferredGraphicsApi;
 import org.spongepowered.asm.mixin.Mixin;
@@ -17,7 +18,12 @@ import org.spongepowered.asm.mixin.injection.At;
 abstract class PreferredGraphicsApiMixin {
 	@ModifyReturnValue(method = "getBackendsToTry", at = @At("RETURN"))
 	private GpuBackend[] mine2metal$preferMetal(GpuBackend[] backends) {
-		if ((Object) this != PreferredGraphicsApi.DEFAULT || !Mine2Metal.isSupportedPlatform() || !Mine2Metal.isEnabled()) {
+		if ((Object) this != PreferredGraphicsApi.DEFAULT || !Mine2Metal.isEnabled()) {
+			return backends;
+		}
+		MetalAvailability.Problem problem = MetalAvailability.platformProblem();
+		if (problem != null) {
+			MetalAvailability.unavailable(problem);
 			return backends;
 		}
 

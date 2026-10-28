@@ -1,5 +1,6 @@
 package dev.mine2metal.config;
 
+import dev.mine2metal.MetalAvailability;
 import dev.mine2metal.metal.MetalRenderer;
 import net.minecraft.network.chat.Component;
 
@@ -11,13 +12,20 @@ final class MetalOptionTexts {
 	private MetalOptionTexts() {
 	}
 
-	static Component upscalingName(MetalSettings.Upscaling value) {
+	/** Why the options do nothing: Metal is not rendering, and the reason when this launch tried it and could not. */
+	static Component metalInactive() {
+		Component reason = MetalAvailability.reason();
+		Component inactive = Component.translatable("mine2metal.options.metal_inactive");
+		return reason == null ? inactive : inactive.copy().append("\n\n").append(reason);
+	}
+
+		static Component upscalingName(MetalSettings.Upscaling value) {
 		return Component.translatable("mine2metal.options.upscaling." + value.name().toLowerCase(Locale.ROOT));
 	}
 
 	static Component upscalingTooltip() {
 		if (!MetalRenderer.isActive()) {
-			return Component.translatable("mine2metal.options.metal_inactive");
+			return metalInactive();
 		}
 		if (!upscalingAvailable()) {
 			return Component.translatable("mine2metal.options.upscaling.unsupported");
@@ -32,7 +40,7 @@ final class MetalOptionTexts {
 	/** Explains the choice and names the version running now, which only changes after a restart. */
 	static Component metalVersionTooltip() {
 		int running = MetalRenderer.metalVersion();
-		Component current = running == 0 ? Component.translatable("mine2metal.options.metal_inactive")
+		Component current = running == 0 ? metalInactive()
 				: Component.translatable("mine2metal.options.metal_version.running", running);
 		return Component.translatable("mine2metal.options.metal_version.tooltip").append("\n\n").append(current);
 	}
@@ -63,7 +71,7 @@ final class MetalOptionTexts {
 
 	static Component frameGenerationTooltip() {
 		if (!MetalRenderer.isActive()) {
-			return Component.translatable("mine2metal.options.metal_inactive");
+			return metalInactive();
 		}
 		Component tooltip = Component.translatable("mine2metal.options.frame_generation.tooltip");
 		if (!MetalRenderer.supportsFrameInterpolation()) {
@@ -91,7 +99,7 @@ final class MetalOptionTexts {
 	/** Explains EDR and says how much brighter than SDR white the display can go at its current brightness. */
 	static Component hdrTooltip() {
 		if (!MetalRenderer.isActive()) {
-			return Component.translatable("mine2metal.options.metal_inactive");
+			return metalInactive();
 		}
 		if (!MetalRenderer.supportsHdr()) {
 			return Component.translatable("mine2metal.options.hdr.unsupported");
@@ -103,7 +111,7 @@ final class MetalOptionTexts {
 
 	static Component performanceHudTooltip() {
 		if (!MetalRenderer.isActive()) {
-			return Component.translatable("mine2metal.options.metal_inactive");
+			return metalInactive();
 		}
 		return Component.translatable("mine2metal.options.performance_hud.tooltip");
 	}

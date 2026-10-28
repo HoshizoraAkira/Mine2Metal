@@ -3,8 +3,12 @@
 	"id": "mine2metal",
 	"version": "${version}",
 	"name": "mine2metal",
-	"description": "Native Apple Metal backend for Minecraft's renderpearl GPU layer, built to run alongside Sodium.",
-	"authors": [],
+	"description": "Renders Minecraft with Apple Metal on Macs with Apple silicon, alongside Sodium, for higher frame rates than OpenGL. Adds MetalFX and AMD FSR upscaling, MetalFX and FSR 3.1 frame generation, and HDR (EDR) output.",
+	"authors": [
+		"Ahmad Naufal"
+	],
+	"license": "MIT",
+	"icon": "assets/mine2metal/icon.png",
 	"environment": "client",
 	"mixins": [
 		"mine2metal.mixins.json"

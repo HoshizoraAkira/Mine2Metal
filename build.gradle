@@ -98,6 +98,10 @@ processResources {
 	from(tasks.named('buildNative')) {
 		into 'natives/macos-arm64'
 	}
+	from('LICENSE') {
+		into 'META-INF/licenses'
+		rename { 'mine2metal-LICENSE.txt' }
+	}
 	// The dylib contains AMD FidelityFX SDK code, whose MIT license must ship with it.
 	from('third_party/fidelityfx-1.1.4/LICENSE.txt') {
 		into 'META-INF/licenses'
@@ -112,4 +116,65 @@ tasks.withType(JavaCompile).configureEach {
 java {
 	sourceCompatibility = JavaVersion.VERSION_25
 	targetCompatibility = JavaVersion.VERSION_25
+}
+
+// A one-click install for the Modrinth App and Prism Launcher: Minecraft, Fabric Loader and Sodium come from their
+// usual sources, and this mod rides along in overrides/mods until it is on Modrinth itself.
+def mrpackSodium = configurations.detachedConfiguration(dependencies.create("maven.modrinth:sodium:${project.sodium_version}"))
+mrpackSodium.transitive = false
+
+def writeMrpackIndex = tasks.register('writeMrpackIndex') {
+	def index = layout.buildDirectory.file('mrpack/modrinth.index.json')
+	def version = project.version
+	def minecraftVersion = project.minecraft_version
+	def loaderVersion = project.loader_version
+	def sodiumUrl = project.sodium_mrpack_url
+	inputs.files(mrpackSodium)
+	inputs.property 'version', version
+	inputs.property 'minecraftVersion', minecraftVersion
+	inputs.property 'loaderVersion', loaderVersion
+	inputs.property 'sodiumUrl', sodiumUrl
+	outputs.file(index)
+
+	doLast {
+		File sodium = mrpackSodium.singleFile
+		def digest = { String algorithm -> java.security.MessageDigest.getInstance(algorithm).digest(sodium.bytes).encodeHex().toString() }
+		String fileName = java.net.URLDecoder.decode(sodiumUrl.substring(sodiumUrl.lastIndexOf('/') + 1), 'UTF-8')
+		def json = [
+			formatVersion: 1,
+			game: 'minecraft',
+			versionId: version,
+			name: "mine2metal ${version}",
+			summary: 'Minecraft rendered with Apple Metal, with Sodium. Macs with Apple silicon, macOS 14 or later.',
+			files: [[
+				path: "mods/${fileName}",
+				hashes: [sha1: digest('SHA-1'), sha512: digest('SHA-512')],
+				env: [client: 'required', server: 'unsupported'],
+				downloads: [sodiumUrl],
+				fileSize: sodium.length(),
+			]],
+			dependencies: [minecraft: minecraftVersion, 'fabric-loader': loaderVersion],
+		]
+		index.get().asFile.text = groovy.json.JsonOutput.prettyPrint(groovy.json.JsonOutput.toJson(json)) + '\n'
+	}
+}
+
+tasks.register('mrpack', Zip) {
+	group = 'distribution'
+	description = 'Builds a Modrinth modpack (.mrpack) with this mod, Fabric Loader and Sodium.'
+	archiveExtension = 'mrpack'
+	destinationDirectory = layout.buildDirectory.dir('distributions')
+	from(writeMrpackIndex)
+	from(tasks.named('jar')) {
+		into 'overrides/mods'
+	}
+}
+
+// The release jar and the .mrpack's Sodium in a production client (no dev classpath), to check the install works.
+tasks.register('runProductionClient', net.fabricmc.loom.task.prod.ClientProductionRunTask) {
+	group = 'distribution'
+	mods.from(tasks.named('jar'))
+	mods.from(mrpackSodium)
+	runDir = layout.buildDirectory.dir('production-run')
+	jvmArgs.add('--enable-native-access=ALL-UNNAMED')
 }

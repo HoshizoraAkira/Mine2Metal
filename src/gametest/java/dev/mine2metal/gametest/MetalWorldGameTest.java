@@ -8,6 +8,7 @@ import com.mojang.renderpearl.api.commands.CommandEncoder;
 import com.mojang.renderpearl.api.commands.GpuQueryPool;
 import com.mojang.renderpearl.api.device.GpuDevice;
 import com.mojang.renderpearl.api.textures.GpuTexture;
+import dev.mine2metal.MetalAvailability;
 import dev.mine2metal.metal.MetalRenderer;
 import org.joml.Vector4f;
 import net.fabricmc.fabric.api.client.gametest.v1.FabricClientGameTest;
@@ -52,6 +53,15 @@ public class MetalWorldGameTest implements FabricClientGameTest {
 	@Override
 	public void runTest(ClientGameTestContext context) {
 		String backend = context.computeOnClient(client -> RenderSystem.getDevice().getDeviceInfo().backendName());
+		if (Boolean.getBoolean("mine2metal.test.fallbackOnly")) {
+			// Run with -Dos.version=13.6: the backend must step aside, and the title screen say why.
+			check(!backend.equals("Metal"), "Metal should not be used on macOS " + System.getProperty("os.version"));
+			check(context.computeOnClient(client -> MetalAvailability.reason() != null), "The reason Metal is not used should be recorded");
+			context.waitTicks(20);
+			context.takeScreenshot("mine2metal-fallback-title");
+			LOGGER.info("Fell back to {}: {}", backend, context.computeOnClient(client -> MetalAvailability.reason().getString()));
+			return;
+		}
 		if (!backend.equals("Metal") && Boolean.parseBoolean(System.getProperty("mine2metal.enabled", "true"))) {
 			throw new AssertionError("Expected the Metal backend, got " + backend);
 		}
