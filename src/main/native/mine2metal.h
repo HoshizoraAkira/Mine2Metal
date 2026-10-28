@@ -250,6 +250,8 @@ M2M_EXPORT int64_t m2m_take_presented_times(int64_t ctx, double *out, int64_t ca
 // How many frames the present thread has shown so far, generated ones included (not counting those the compositor
 // dropped): frames on screen per second, for the debug screen.
 M2M_EXPORT int64_t m2m_shown_frame_count(int64_t ctx);
+// The main display's refresh rate in Hz (the highest, on a variable-rate display).
+M2M_EXPORT int32_t m2m_display_refresh_rate(void);
 
 // Configures the layer and (re)starts the present thread that shows the newest finished frame once per refresh. With
 // vsync off the game renders uncapped; with vsync on it waits for each frame to be taken, which caps it at the

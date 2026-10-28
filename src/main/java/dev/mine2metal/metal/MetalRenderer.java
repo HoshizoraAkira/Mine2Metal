@@ -82,6 +82,17 @@ public final class MetalRenderer {
 		return current != null ? current.encoder().frameGenerationGpuMillis() : 0.0;
 	}
 
+	/** How long the last present held the render thread, in seconds, waiting for the display; 0 without Metal. */
+	public static double lastPresentWaitSeconds() {
+		MetalDevice current = device;
+		return current != null ? current.encoder().lastPresentNanos() / 1.0e9 : 0.0;
+	}
+
+	/** The main display's refresh rate in Hz. */
+	public static int displayRefreshRate() {
+		return Math.max(1, MetalNative.displayRefreshRate());
+	}
+
 	/** How many frames have reached the screen so far, generated ones included; -1 when Metal is not active. */
 	public static long shownFrameCount() {
 		MetalDevice current = device;

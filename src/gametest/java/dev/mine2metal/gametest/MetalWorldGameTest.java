@@ -16,6 +16,7 @@ import net.fabricmc.fabric.api.client.gametest.v1.context.ClientGameTestContext;
 import net.fabricmc.fabric.api.client.gametest.v1.context.TestSingleplayerContext;
 import com.mojang.renderpearl.api.device.GpuBackend;
 import dev.mine2metal.config.MetalSettings;
+import dev.mine2metal.frame.WorldPass;
 import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.client.InactivityFpsLimit;
 import net.minecraft.client.Minecraft;
@@ -784,6 +785,18 @@ public class MetalWorldGameTest implements FabricClientGameTest {
 		MetalSettings settings = MetalSettings.get();
 		String[] size = System.getProperty("mine2metal.test.perfSize", "1920x1080").split("x");
 		context.getInput().resizeWindow(Integer.parseInt(size[0]), Integer.parseInt(size[1]));
+		// Fullscreen as players run it: on a scaled Retina desktop that is far more pixels than any test window.
+		boolean fullscreen = Boolean.getBoolean("mine2metal.test.perfFullscreen");
+		context.waitTicks(5);
+		LOGGER.info("Window {}x{} on screen, framebuffer {}x{}, pixel density {}", context.computeOnClient(client -> client.getWindow().getScreenWidth()),
+				context.computeOnClient(client -> client.getWindow().getScreenHeight()), context.computeOnClient(client -> client.getWindow().getWidth()),
+				context.computeOnClient(client -> client.getWindow().getHeight()), context.computeOnClient(client -> client.getWindow().getPixelDensity()));
+		if (fullscreen) {
+			context.runOnClient(client -> client.options.fullscreen().set(true));
+			context.waitTicks(40);
+			LOGGER.info("Fullscreen: {}x{} pixels", context.computeOnClient(client -> client.getWindow().getWidth()),
+					context.computeOnClient(client -> client.getWindow().getHeight()));
+		}
 		context.runOnClient(client -> client.options.renderDistance().set(16));
 		// Down from the view above: the teleport ends flight, so the player falls back to the ground.
 		singleplayer.getServer().runCommand("tp @a ~ ~-38 ~");
@@ -803,20 +816,29 @@ public class MetalWorldGameTest implements FabricClientGameTest {
 				settings.renderScale = name.contains("50") ? 50 : 75;
 				settings.hdr = name.contains("hdr");
 				MetalRenderer.setHdr(settings.hdr, settings.hdrBrightness);
+				MetalRenderer.setPerformanceHud(name.contains("hud"));
 			});
 			singleplayer.getServer().runCommand(start);
 			context.waitTicks(20);
-			LOGGER.info("Measuring {}", name);
+			LOGGER.info("Measuring {} at {}x{} pixels", name, context.computeOnClient(client -> client.gameRenderer.mainRenderTarget().width),
+					context.computeOnClient(client -> client.gameRenderer.mainRenderTarget().height));
 			context.runOnClient(client -> client.options.keyUp.setDown(true));
 			int fps = averageFps(context);
 			context.runOnClient(client -> client.options.keyUp.setDown(false));
 			LOGGER.info("Average FPS, render distance 16, walking towards the trees, {}: {}", name, fps);
+			context.runOnClient(client -> WorldPass.frameGenerationDebugLine());
+			context.waitTicks(30);
+			LOGGER.info("Debug screen line for {}: {}", name, context.computeOnClient(client -> WorldPass.frameGenerationDebugLine()));
 		}
 		context.runOnClient(client -> {
 			settings.frameGeneration = MetalSettings.FrameGeneration.OFF;
 			settings.upscaling = MetalSettings.Upscaling.OFF;
 			settings.hdr = false;
 			MetalRenderer.setHdr(false, settings.hdrBrightness);
+			MetalRenderer.setPerformanceHud(false);
+			if (fullscreen) {
+				client.options.fullscreen().set(false);
+			}
 		});
 	}
 
@@ -934,7 +956,8 @@ public class MetalWorldGameTest implements FabricClientGameTest {
 	private static int averageFps(ClientGameTestContext context) {
 		context.runOnClient(client -> {
 			client.options.enableVsync().set(false);
-			client.options.framerateLimit().set(Options.UNLIMITED_FRAMERATE_CUTOFF);
+			// A cap stands in for a game too slow to reach the refresh rate by itself.
+			client.options.framerateLimit().set(Integer.getInteger("mine2metal.test.fpsCap", Options.UNLIMITED_FRAMERATE_CUTOFF));
 			// The test sends no input for minutes, which would otherwise trip the 30 fps AFK limiter.
 			client.options.inactivityFpsLimit().set(InactivityFpsLimit.MINIMIZED);
 		});

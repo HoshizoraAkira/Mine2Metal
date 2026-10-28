@@ -69,6 +69,22 @@ final class FrameGeneration {
 	private long lightSince;
 	private MetalSettings.FrameGeneration guardedEngine = MetalSettings.FrameGeneration.OFF;
 
+	/**
+	 * Standby: frame generation shows each generated frame for a refresh and holds the game to half the refresh rate,
+	 * so it only helps while the game cannot reach the refresh rate by itself. Until then it stands by and frames are
+	 * shown as rendered; it steps in once the game's own frame time stays over a refresh for a second, and steps back
+	 * now and then to see whether the game has become fast enough again. Off along with the guard.
+	 */
+	private static final long ENGAGE_NANOS = 1_000_000_000L;
+	private static final long RECHECK_NANOS = 30_000_000_000L;
+	private boolean standby = true;
+	/** Since when the game's frame time has been on the other side of the line; 0 if it is not. */
+	private long crossingSince;
+	private long engagedSince;
+	/** Smoothed seconds the game spends on a frame, not counting the wait for the display. */
+	private double workTime;
+	private long previousFrameNanos;
+
 	/** Frames on screen per second for the debug screen, counted like Minecraft's own fps: over about a second. */
 	private long shownCount = -1L;
 	private long shownSince;
@@ -94,12 +110,19 @@ final class FrameGeneration {
 			heavySince = 0L;
 			pausesInARow = 0;
 			lightSince = 0L;
+			standby = true;
+			crossingSince = 0L;
+			workTime = 0.0;
 		}
 		if (engine == MetalSettings.FrameGeneration.OFF) {
 			if (active) {
 				MetalRenderer.releaseFrameInterpolation();
 				active = false;
 			}
+			motion.reset();
+			return;
+		}
+		if (this.standsBy(System.nanoTime())) {
 			motion.reset();
 			return;
 		}
@@ -155,6 +178,47 @@ final class FrameGeneration {
 		motion.finish(done);
 	}
 
+	/** Measures the game's frame time and decides whether frame generation stands by this frame. */
+	private boolean standsBy(long now) {
+		if (!Boolean.parseBoolean(System.getProperty(GUARD_PROPERTY, "true"))) {
+			standby = false;
+			return false;
+		}
+		long previous = previousFrameNanos;
+		previousFrameNanos = now;
+		double interval = previous != 0L ? (now - previous) / 1.0e9 : 0.0;
+		if (interval <= 0.0 || interval > 0.5) {
+			return standby;
+		}
+		double work = Math.max(0.0, interval - MetalRenderer.lastPresentWaitSeconds());
+		workTime = workTime > 0.0 ? workTime * 0.9 + work * 0.1 : work;
+		double refresh = 1.0 / MetalRenderer.displayRefreshRate();
+		if (!standby) {
+			// Engaged, the game's own frame time cannot be told from frame generation's; step back to look again.
+			if (now - engagedSince >= RECHECK_NANOS) {
+				standby = true;
+				crossingSince = 0L;
+				workTime = 0.0;
+			}
+			return standby;
+		}
+		if (workTime <= refresh * 1.1) {
+			crossingSince = 0L;
+			return true;
+		}
+		if (crossingSince == 0L) {
+			crossingSince = now;
+			return true;
+		}
+		if (now - crossingSince < ENGAGE_NANOS) {
+			return true;
+		}
+		standby = false;
+		engagedSince = now;
+		crossingSince = 0L;
+		return false;
+	}
+
 	/**
 	 * For the debug screen, next to Minecraft's fps, which counts only the frames the game renders: how many frames
 	 * reach the screen per second, generated ones included, while frame generation is chosen; null otherwise.
@@ -177,6 +241,7 @@ final class FrameGeneration {
 		}
 		String name = engine == MetalSettings.FrameGeneration.METALFX ? "MetalFX" : "FSR 3";
 		String state = pausedUntil == STOPPED ? " off: too heavy here"
+				: standby ? " standing by: the game reaches the refresh rate by itself"
 				: pausedUntil != 0L && now < pausedUntil ? " paused: costs more than it gains" : "";
 		return String.format(Locale.ROOT, "%d fps on screen, %s frame generation%s", shownPerSecond, name, state);
 	}

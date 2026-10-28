@@ -433,13 +433,20 @@ void m2m_bind_sampler(M2MContext *ctx, NSUInteger index, id<MTLSamplerState> sam
 
 // Completion, events and commits
 
+// The GPU times a completion reports: a command buffer with no GPU work can report a start of 0, which would read as
+// the whole uptime of the Mac spent on it, so such a span counts as none.
+static CFTimeInterval m2m_gpu_start(CFTimeInterval start, CFTimeInterval end) {
+	return start > 0.0 && end >= start ? start : end;
+}
+
 void m2m_on_completed(M2MContext *ctx, M2MCompletion completion) {
 	if (ctx.metal4) {
 		[ctx.pendingCompletions addObject:completion];
 		return;
 	}
 	[m2m_command_buffer(ctx) addCompletedHandler:^(id<MTLCommandBuffer> finished) {
-		completion(finished.GPUStartTime, finished.GPUEndTime, finished.status == MTLCommandBufferStatusError ? finished.error : nil);
+		completion(m2m_gpu_start(finished.GPUStartTime, finished.GPUEndTime), finished.GPUEndTime,
+		           finished.status == MTLCommandBufferStatusError ? finished.error : nil);
 	}];
 }
 
@@ -486,7 +493,7 @@ static void m2m_commit4(M2MContext *ctx, id<MTL4CommandQueue> queue, id<MTL4Comm
 			NSLog(@"mine2metal trace: completed %@ (error %@)", name, feedback.error);
 		}
 		for (M2MCompletion completion in completions) {
-			completion(feedback.GPUStartTime, feedback.GPUEndTime, feedback.error);
+			completion(m2m_gpu_start(feedback.GPUStartTime, feedback.GPUEndTime), feedback.GPUEndTime, feedback.error);
 		}
 		@synchronized(pool) {
 			[pool addObject:allocator];

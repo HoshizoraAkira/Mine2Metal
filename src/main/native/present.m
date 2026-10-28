@@ -403,6 +403,13 @@ int64_t m2m_take_presented_times(int64_t handle, double *out, int64_t capacity) 
 	return count;
 }
 
+int32_t m2m_display_refresh_rate(void) {
+	@autoreleasepool {
+		NSScreen *screen = NSScreen.mainScreen;
+		return screen ? (int32_t)screen.maximumFramesPerSecond : 60;
+	}
+}
+
 int64_t m2m_shown_frame_count(int64_t handle) {
 	M2MContext *ctx = m2m_ctx(handle);
 	@synchronized(ctx.presentedTimes) {

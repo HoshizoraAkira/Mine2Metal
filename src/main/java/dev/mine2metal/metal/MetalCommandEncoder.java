@@ -42,6 +42,14 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
 	private final ArrayDeque<Deferred> deferred = new ArrayDeque<>();
 	/** Index the commands being recorded will get when committed. */
 	private long recordingIndex = 1L;
+	/**
+	 * The last submit of each frame still allowed in flight, oldest first. A frame may commit several times (frame
+	 * generation's own command buffers, the stage times), so the limit counts frames, not submits: counting submits
+	 * would make the CPU wait for the frame it just recorded, and CPU and GPU would take turns.
+	 */
+	private final ArrayDeque<Long> frameEnds = new ArrayDeque<>();
+	/** How long the last present held the render thread (waiting for the display, with vsync or frame generation). */
+	private long lastPresentNanos;
 	private final @Nullable FrameStats stats;
 	private @Nullable InterpolationDump interpolationDump;
 	private static final String FIRST_STAGE = "world";
@@ -95,7 +103,10 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
 		this.transientMemory.endSubmit();
 		this.commit();
 		this.stage = FIRST_STAGE;
-		this.waitForGpu(this.recordingIndex - MAX_FRAMES_IN_FLIGHT);
+		this.frameEnds.add(this.recordingIndex - 1L);
+		while (this.frameEnds.size() >= MAX_FRAMES_IN_FLIGHT) {
+			this.waitForGpu(this.frameEnds.poll());
+		}
 		this.runCompleted();
 		this.checkGpuErrors();
 		if (this.stats != null) {
@@ -452,6 +463,10 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
 		return MetalNative.frameGenerationGpuMillis(this.ctx);
 	}
 
+	long lastPresentNanos() {
+		return this.lastPresentNanos;
+	}
+
 	long shownFrameCount() {
 		return MetalNative.shownFrameCount(this.ctx);
 	}
@@ -479,12 +494,11 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
 	void present(long layer, MetalTextureView view) {
 		this.markStage("present");
 		this.flushPendingClears();
-		if (this.stats == null) {
-			MetalNative.present(this.ctx, layer, view.handle);
-		} else {
-			long start = System.nanoTime();
-			MetalNative.present(this.ctx, layer, view.handle);
-			this.stats.addPresent(System.nanoTime() - start);
+		long start = System.nanoTime();
+		MetalNative.present(this.ctx, layer, view.handle);
+		this.lastPresentNanos = System.nanoTime() - start;
+		if (this.stats != null) {
+			this.stats.addPresent(this.lastPresentNanos);
 		}
 		if (this.interpolationDump != null) {
 			this.writeInterpolationDump(this.interpolationDump);

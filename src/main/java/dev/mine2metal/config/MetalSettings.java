@@ -131,16 +131,19 @@ public final class MetalSettings {
 				# temporal: the same, combining several frames for more detail; at 100 it only smooths edges
 				# fsr1 / fsr3: like spatial / temporal, with AMD FidelityFX Super Resolution 1 / 3.1 (about twice the GPU
 				#   time of MetalFX on Apple GPUs)
+				# Upscaling pays off only when the GPU holds the game back (shaders, large displays): plain Minecraft costs
+				# the GPU well under a millisecond a frame, upscaling a few.
 				upscaling=%s
 				renderScale=%d
 				#
 				# Frame generation: shows a generated frame between each pair the game renders, for up to twice the
 				# frame rate on screen, capped at the display's refresh rate. Frames are paced to the display even with
-				# vsync off, and input lags by about one rendered frame.
+				# vsync off, and input lags by about one rendered frame. It stands by while the game reaches the refresh
+				# rate by itself and steps in when the game falls below it.
 				# off
 				# metalfx: MetalFX frame interpolation (macOS 26 or newer)
 				# fsr3: AMD FidelityFX Super Resolution 3.1 frame generation, about half the GPU cost of MetalFX
-				# Heavy on the GPU at large window sizes; best together with temporal upscaling.
+				# Heavy on the GPU at large window sizes.
 				frameGeneration=%s
 				#
 				# HDR (EDR) output on displays that can show brighter than SDR white: the world's brightest parts (sky,

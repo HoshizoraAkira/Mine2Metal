@@ -115,6 +115,28 @@ Hasil gametest di jendela yang terlihat (MacBook Air M3, 60 Hz):
 
 Kualitas frame buatan tidak berubah (FSR 31,21 dB, MetalFX 31,20 dB), dan gametest penuh lolos di bawah validation. Belum diukur: game di bawah 30 FPS dengan frame gen (penahanan > 1 refresh) dan layar ProMotion.
 
+### Audit performa (2026-10-29)
+
+Diukur di MacBook Air M3 dengan Sodium dan render distance 16, berjalan ke arah pepohonan di dunia gametest, jendela terlihat. Gametest mode `-Dmine2metal.test.interpolationPerf=true` sekarang punya `perfFullscreen`, kasus `hud`, `-Dmine2metal.test.fpsCap`, dan mencatat ukuran framebuffer serta baris F3 frame gen.
+
+**Ukuran yang sebenarnya.** Minecraft 26.3 di macOS merender di ukuran *point*, bukan piksel Retina: framebuffer jendela 1900×1200 adalah 1900×1200, walau pixel density layar 2,0. Fullscreen pemain di desktop "1920×1243" berarti framebuffer 1920×1243 (catatan sebelumnya yang menyebut 3840×2486 keliru).
+
+**Di mana waktunya habis** (1900×1200):
+- GPU ±0,7–0,9 ms per frame, dan sebagian besar bukan dunia: GUI 0,2, efek layar 0,2, langit 0,14, tangan 0,13, dunia (Main) 0,12 ms.
+- CPU ±0,5–1 ms per frame. Profil JFR render thread: kode mine2metal ±10% (`MetalRenderPass.prepareDraw`, `bindUniform`, `setPipeline`, `createRenderPass`, clear). Sisanya Minecraft dan Sodium sendiri, misalnya `StagedVertexBuffer.uploadDrawsToBuffers` 12% self.
+- Hasil: ±750–1.800 FPS, tergantung panas. Dalam satu run FPS turun sampai separuh seiring MacBook Air (tanpa kipas) memanas. Batasnya CPU dan pekerjaan Minecraft sendiri. 3.000 FPS tidak tercapai di ukuran ini, dan backend tidak bisa memperbaikinya lebih dari ±10%.
+- Metal Performance HUD tidak memberi selisih yang terukur (785 vs 743–817 FPS).
+
+**Upscaling tidak menguntungkan di Minecraft biasa.** MetalFX temporal memakan ±3 ms GPU pada 1080p–1200p di 100%, dan ±2,8–4 ms di 75%. Itu beberapa kali lipat seluruh frame Minecraft. FPS turun dari ±800–1.000 ke 150–200. Angkanya sama di Metal 4, tanpa reactive mask, dan di Metal 3, jadi biaya ini memang milik MetalFX, bukan jalur kita. Tooltip dan komentar config sekarang menyebutkannya. Temporal 100% tetap anti-aliasing terbaik.
+
+**Perbaikan:**
+- **Frame in flight dihitung per frame, bukan per commit.** `MAX_FRAMES_IN_FLIGHT` = 3 dulu dihitung dalam command buffer. Frame gen menambah 2 commit per frame, dan statistik per tahap menambah 4–5. Akibatnya CPU menunggu frame yang baru saja ia rekam, dan CPU dan GPU bekerja bergantian. Sekarang commit terakhir setiap frame dicatat, dan yang ditunggu adalah frame ke-3 sebelumnya. "CPU waiting on GPU" dengan statistik nyala turun dari 0,66 ke ±0,1 ms per frame.
+- **Waktu GPU dari command buffer tanpa kerja.** `GPUStartTime` bisa 0, sehingga satu sampel terbaca sebagai seluruh uptime Mac (log mencatat 2.061 ms per frame). Rentang seperti itu sekarang dihitung 0. Pengaman frame gen membaca angka yang sama.
+- **Frame gen menunggu selama game sudah mencapai refresh rate.** Frame gen menahan game di separuh refresh, jadi ia hanya berguna saat game sendiri di bawah refresh rate. Sekarang frame gen *standby* (frame ditampilkan apa adanya, tanpa batas) sampai waktu kerja per frame (jarak antar frame dikurangi waktu tunggu present) melewati 1,1× interval refresh selama 1 detik. Setelah masuk, setiap 30 detik ia mundur sebentar untuk mengukur ulang. F3 menulis `standing by: the game reaches the refresh rate by itself`. Ikut mati bersama `-Dmine2metal.frameGenerationGuard=false`.
+  - Game cepat (±1.800 FPS tanpa frame gen): dulu FSR 3 = 30 render, 60 tampil. Sekarang 1.494 render, 60 tampil, standby.
+  - Game lambat (cap 40 FPS): frame gen masuk sendiri, 30 render + 30 buatan = 59–60 tampil (naik dari 40), untuk FSR 3 maupun MetalFX.
+- Gametest penuh lolos di bawah API validation, Metal 4 dan Metal 3.
+
 ### Frame gen 2 FPS di install sungguhan (2026-10-28)
 
 Temporal + FSR 3 frame gen di fullscreen Retina sempat jatuh ke ±4 FPS. Log mencatat frame gen 156 ms GPU per frame dan jarak antar frame 250 ms. Dengan Mac dan setelan yang sama, sesi pukul 19:09 hanya 24 ms. Benchmark dengan build yang sama langsung sesudahnya (jendela 1440×900, temporal 75% + FSR) mencatat 5–7 ms. Jadi kodenya tidak melambat. Yang paling mungkin adalah kondisi Mac saat itu: panas setelah beberapa gametest berat beruntun, dan swap terpakai 3,8 GB. Hal itu tidak bisa dipastikan dari log.
