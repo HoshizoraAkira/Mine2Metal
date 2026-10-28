@@ -115,6 +115,14 @@ Hasil gametest di jendela yang terlihat (MacBook Air M3, 60 Hz):
 
 Kualitas frame buatan tidak berubah (FSR 31,21 dB, MetalFX 31,20 dB), dan gametest penuh lolos di bawah validation. Belum diukur: game di bawah 30 FPS dengan frame gen (penahanan > 1 refresh) dan layar ProMotion.
 
+### Kedip HDR di layar sungguhan (2026-10-28)
+
+Uji di install sungguhan (MacBook Air M3, auto-brightness nyala, HDR + temporal + frame gen) melaporkan bagian terang yang terang-redup bergantian dan piksel/blok yang berkedip. Perbaikan:
+- **Puncak dihitung sekali per frame dan bergerak halus.** Sebelumnya headroom layar dibaca ulang setiap 30 pemanggilan, lalu langsung dipakai. Dengan auto-brightness, headroom berubah terus, jadi highlight melompat. Selain itu, pass "expand" (history frame gen) dan "compose" dalam satu frame bisa memakai puncak yang berbeda. Akibatnya bagian tanpa GUI tidak lagi sama persis, padahal FSR memakai kesamaan itu untuk memisahkan UI. Sekarang headroom dibaca tiap 0,1 detik saat dunia ditangkap, dan puncak frame mendekatinya dengan konstanta waktu 0,5 detik. Expand, compose, dan `max_luminance` FSR memakai angka yang sama. Tangkapan EDR dilakukan sebelum tangkapan frame gen.
+- **Gain per blok 4×4, bukan per piksel.** Kurva ekspansinya curam di dekat putih. Kalau gain dihitung per piksel, getaran kecil di permukaan terang (shimmer tekstur, jitter temporal, frame buatan) menjadi ±2,7× lebih besar daripada di SDR. Sekarang pass "levels" menghitung rata-rata kecerahan per blok 4×4 dari dunia yang ditangkap. Gain diambil dari sana dengan filter bilinear, jadi satu blok diskalakan bersama dan perbandingan kecerahan antar piksel tetap sama seperti di SDR.
+- Gametest `-Dmine2metal.test.hdrFlicker=true` membaca balik 12 frame EDR berturut-turut dengan kamera diam. Di adegan tes tidak ada kedip yang khas HDR, baik sebelum maupun sesudah perbaikan, dan angka perubahan antar frame setara. Jendela tes tertutup, headroom-nya 1,0, dan bagian yang diekspansi sebagian besar langit, jadi tes ini tidak bisa menunjukkan gejala di layar sungguhan. Itu perlu dicek di layar.
+- Pemeriksaan HDR (dunia 1,72× putih SDR, hotbar 1,0, juga dengan temporal + MetalFX/FSR) tetap lolos, bersih di bawah API dan shader validation.
+
 ### FPS tampil di F3 (2026-10-28)
 
 Uji pertama di install sungguhan (MacBook Air M3, fullscreen Retina, Temporal 75% + FSR 3 frame gen) dilaporkan sebagai "20 FPS". Angka itu FPS render dari F3. Dengan frame gen, game dibatasi ke separuh refresh, jadi di layar tampil sekitar 40.

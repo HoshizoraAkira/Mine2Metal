@@ -56,8 +56,9 @@ public final class WorldPass {
 			return;
 		}
 		current.captured = true;
-		frameGeneration.capture(current);
+		// EDR first: frame generation expands its copy of the world with the levels and peak the EDR capture sets.
 		hdrOutput.capture(current);
+		frameGeneration.capture(current);
 	}
 
 	/** For the debug screen: frames on screen per second while frame generation is chosen; null otherwise. */

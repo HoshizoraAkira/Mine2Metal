@@ -290,7 +290,7 @@ id<MTLTexture> m2m_frame_interpolation_encode(M2MContext *ctx, id<MTLTexture> ui
 		frame.frame_time_ms = camera.delta_time * 1000.0f;
 		frame.motion_scale_x = camera.motion_scale_x;
 		frame.motion_scale_y = camera.motion_scale_y;
-		frame.max_luminance = ctx.hdr ? MAX(1.0f, ctx.hdrPeak) : 1.0f;
+		frame.max_luminance = ctx.hdr ? MAX(1.0f, ctx.hdrFramePeak) : 1.0f;
 		frame.reset = !interpolator.previousValid;
 		m2m_frame_generation_begin(ctx);
 		BOOL encoded = m2m_fsr_framegen_encode(ctx, interpolator.fsr, &frame);

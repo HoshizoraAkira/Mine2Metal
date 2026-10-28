@@ -168,13 +168,19 @@ static const NSUInteger M2M_PRESENT_SLOTS = 3;
 @property(nonatomic, strong) id<MTLRenderPipelineState> motionReactivePipeline;
 @property(nonatomic, strong) id<MTLDepthStencilState> motionDepthState;
 // EDR output (hdr.m): the layer takes extended linear RGBA16Float, and the world's highlights go above SDR white.
-// hdrWorld is this frame's world before the hand and the GUI, compared with the finished frame to tell them apart.
+// hdrWorld is this frame's world before the hand and the GUI, compared with the finished frame to tell them apart;
+// hdrLevels its brightness averaged over blocks of pixels, which sets how far each part is expanded.
 @property(nonatomic) BOOL hdr;
 @property(nonatomic) float hdrPeak;
 @property(nonatomic) BOOL hdrIgnoreDisplay;
 @property(nonatomic) float hdrHeadroom;
-@property(nonatomic) int64_t hdrHeadroomAge;
+@property(nonatomic) CFTimeInterval hdrHeadroomTime;
+// The peak this frame expands to, eased towards the display's headroom; the same for every pass of one frame.
+@property(nonatomic) float hdrFramePeak;
+@property(nonatomic) CFTimeInterval hdrFramePeakTime;
 @property(nonatomic, strong) id<MTLTexture> hdrWorld;
+@property(nonatomic, strong) id<MTLTexture> hdrLevels;
+@property(nonatomic, strong) id<MTLRenderPipelineState> hdrLevelsPipeline;
 @property(nonatomic) BOOL hdrWorldCaptured;
 @property(nonatomic, weak) id<MTLTexture> hdrLastFrame;
 @property(nonatomic, strong) id<MTLRenderPipelineState> hdrComposePipeline;

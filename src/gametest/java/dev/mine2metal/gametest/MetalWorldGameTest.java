@@ -149,6 +149,12 @@ public class MetalWorldGameTest implements FabricClientGameTest {
 				measureInterpolationCost(context, singleplayer);
 				return;
 			}
+			if (Boolean.getBoolean("mine2metal.test.hdrFlicker")) {
+				measureHdrFlicker(context, singleplayer, above, false, MetalSettings.Upscaling.OFF);
+				measureHdrFlicker(context, singleplayer, above, true, MetalSettings.Upscaling.OFF);
+				measureHdrFlicker(context, singleplayer, above, true, MetalSettings.Upscaling.TEMPORAL);
+				return;
+			}
 			if (Boolean.getBoolean("mine2metal.test.hdrOnly")) {
 				checkHdr(context, singleplayer, above);
 				return;
@@ -554,6 +560,97 @@ public class MetalWorldGameTest implements FabricClientGameTest {
 		context.runOnClient(client -> {
 			settings.upscaling = MetalSettings.Upscaling.OFF;
 			settings.frameGeneration = MetalSettings.FrameGeneration.OFF;
+		});
+		context.waitTicks(10);
+	}
+
+	/**
+	 * Development aid: with the camera still, reads back consecutive EDR frames and counts the pixels that change
+	 * between them, split by whether they are expanded above SDR white, plus the display headroom on each.
+	 */
+	private static void measureHdrFlicker(ClientGameTestContext context, TestSingleplayerContext singleplayer, Vec3 above, boolean ignoreHeadroom,
+			MetalSettings.Upscaling upscaling) {
+		MetalSettings settings = MetalSettings.get();
+		if (!context.computeOnClient(client -> MetalRenderer.supportsHdr())) {
+			LOGGER.info("This display has no EDR; HDR flicker skipped");
+			return;
+		}
+		if (ignoreHeadroom) {
+			System.setProperty("mine2metal.hdr.ignoreDisplayHeadroom", "true");
+		} else {
+			System.clearProperty("mine2metal.hdr.ignoreDisplayHeadroom");
+		}
+		singleplayer.getServer().runCommand("time set noon");
+		// A bright textured floor under the camera, which the expansion reaches.
+		int floor = (int) Math.floor(above.y) - 12;
+		singleplayer.getServer().runCommand(String.format(Locale.ROOT, "fill %d %d %d %d %d %d minecraft:sand", (int) above.x - 25, floor,
+				(int) above.z - 5, (int) above.x + 25, floor, (int) above.z + 30));
+		context.runOnClient(client -> {
+			settings.upscaling = upscaling;
+			settings.renderScale = 75;
+			settings.frameGeneration = MetalSettings.FrameGeneration.OFF;
+			settings.hdr = true;
+			settings.hdrBrightness = 200;
+			MetalRenderer.setHdr(true, 200);
+		});
+		hover(context, singleplayer, String.format(Locale.ROOT, "tp @a %.3f %.3f %.3f 0 50", above.x, above.y, above.z));
+		context.waitTicks(40);
+		float[] previous = null;
+		for (int i = 0; i < 12; i++) {
+			AtomicBoolean finished = new AtomicBoolean();
+			float[][] frame = new float[1][];
+			float[] headroom = new float[1];
+			context.runOnClient(client -> {
+				headroom[0] = MetalRenderer.hdrHeadroom();
+				MetalRenderer.readNextHdrFrame(client.gameRenderer.mainRenderTarget().width, client.gameRenderer.mainRenderTarget().height, values -> {
+					frame[0] = values;
+					finished.set(true);
+				});
+			});
+			context.waitFor(client -> finished.get());
+			float[] current = frame[0];
+			float peak = 0.0F;
+			int changedSdr = 0;
+			int changedExpanded = 0;
+			float largest = 0.0F;
+			double sumExpanded = 0.0;
+			double sumBright = 0.0;
+			int expanded = 0;
+			int bright = 0;
+			for (int j = 0; j < current.length; j += 4) {
+				float value = Math.max(current[j], Math.max(current[j + 1], current[j + 2]));
+				peak = Math.max(peak, value);
+				if (previous != null) {
+					float before = Math.max(previous[j], Math.max(previous[j + 1], previous[j + 2]));
+					float change = Math.abs(value - before) / Math.max(0.05F, Math.max(value, before));
+					largest = Math.max(largest, change);
+					float most = Math.max(value, before);
+					float least = Math.min(value, before);
+					if (least > 1.05F) {
+						sumExpanded += change;
+						expanded++;
+					} else if (least > 0.3F && most < 0.95F) {
+						sumBright += change;
+						bright++;
+					}
+					if (change > 0.03F) {
+						if (Math.max(value, before) > 1.0F) {
+							changedExpanded++;
+						} else {
+							changedSdr++;
+						}
+					}
+				}
+			}
+			LOGGER.info("HDR flicker ({}, ignore headroom {}), frame {}: headroom {}, peak {}, changed >3%: {} SDR / {} expanded of {}, largest {}; "
+					+ "mean change {} over {} expanded, {} over {} bright SDR", upscaling, ignoreHeadroom, i, headroom[0], peak, changedSdr, changedExpanded,
+					current.length / 4, largest, expanded > 0 ? sumExpanded / expanded : 0.0, expanded, bright > 0 ? sumBright / bright : 0.0, bright);
+			previous = current;
+		}
+		System.clearProperty("mine2metal.hdr.ignoreDisplayHeadroom");
+		context.runOnClient(client -> {
+			settings.hdr = false;
+			MetalRenderer.setHdr(false, settings.hdrBrightness);
 		});
 		context.waitTicks(10);
 	}
