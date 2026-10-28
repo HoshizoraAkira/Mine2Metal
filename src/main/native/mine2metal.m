@@ -148,6 +148,17 @@ int64_t m2m_context_max_buffer_length(int64_t ctx) {
 	return (int64_t)m2m_ctx(ctx).device.maxBufferLength;
 }
 
+void m2m_add_label_seconds(M2MContext *ctx, NSString *label, double seconds) {
+	@synchronized(ctx.gpuSecondsByLabel) {
+		NSNumber *total = ctx.gpuSecondsByLabel[label];
+		ctx.gpuSecondsByLabel[label] = @(total.doubleValue + seconds);
+	}
+}
+
+void m2m_context_set_stage_timing(int64_t ctx, int32_t enabled) {
+	m2m_ctx(ctx).stageTiming = enabled != 0;
+}
+
 int64_t m2m_context_commit(int64_t handle, const char *label) {
 	@autoreleasepool {
 		M2MContext *ctx = m2m_ctx(handle);
@@ -164,10 +175,7 @@ int64_t m2m_context_commit(int64_t handle, const char *label) {
 			double seconds = gpuEnd - gpuStart;
 			strongCtx.gpuSeconds += seconds;
 			if (timingLabel) {
-				@synchronized(strongCtx.gpuSecondsByLabel) {
-					NSNumber *total = strongCtx.gpuSecondsByLabel[timingLabel];
-					strongCtx.gpuSecondsByLabel[timingLabel] = @(total.doubleValue + seconds);
-				}
+				m2m_add_label_seconds(strongCtx, timingLabel, seconds);
 			}
 			strongCtx.completed = index;
 		});

@@ -44,6 +44,9 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
 	private long recordingIndex = 1L;
 	private final @Nullable FrameStats stats;
 	private @Nullable InterpolationDump interpolationDump;
+	private static final String FIRST_STAGE = "world";
+	/** The stage of the frame being recorded, for the stage times. */
+	private String stage = FIRST_STAGE;
 	private @Nullable HdrRead hdrRead;
 	/** Names render encoders after their renderpearl pass, for Xcode captures and Instruments traces. */
 	private final boolean labels;
@@ -58,6 +61,9 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
 		this.labels = labels || Boolean.getBoolean("mine2metal.labels") || FrameStats.ENABLED;
 		this.transientMemory = new MetalTransientMemory(ctx, this);
 		this.stats = FrameStats.ENABLED ? new FrameStats(ctx) : null;
+		if (FrameStats.STAGE_TIMES) {
+			MetalNative.contextSetStageTiming(ctx, true);
+		}
 	}
 
 	long recordingIndex() {
@@ -72,10 +78,23 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
 		this.deferred.add(new Deferred(this.recordingIndex, action));
 	}
 
+	/**
+	 * Marks where the frame moves on to stage next. With stage times on, the work recorded since the previous mark is
+	 * committed under the name of the stage it belongs to.
+	 */
+	void markStage(String next) {
+		if (FrameStats.STAGE_TIMES) {
+			this.flushPendingClears();
+			this.recordingIndex = MetalNative.contextCommit(this.ctx, "stage " + this.stage) + 1;
+		}
+		this.stage = next;
+	}
+
 	@Override
 	public void submit() {
 		this.transientMemory.endSubmit();
 		this.commit();
+		this.stage = FIRST_STAGE;
 		this.waitForGpu(this.recordingIndex - MAX_FRAMES_IN_FLIGHT);
 		this.runCompleted();
 		this.checkGpuErrors();
@@ -120,7 +139,7 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
 	/** Commits what has been recorded without ending the frame. */
 	private void commit() {
 		this.flushPendingClears();
-		this.recordingIndex = MetalNative.contextCommit(this.ctx) + 1;
+		this.recordingIndex = (FrameStats.STAGE_TIMES ? MetalNative.contextCommit(this.ctx, "stage " + this.stage) : MetalNative.contextCommit(this.ctx)) + 1;
 	}
 
 	private void runCompleted() {
@@ -427,6 +446,10 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
 		this.hdrRead = new HdrRead(width, height, done);
 	}
 
+	double frameGenerationGpuMillis() {
+		return MetalNative.frameGenerationGpuMillis(this.ctx);
+	}
+
 	void releaseFrameInterpolation() {
 		MetalNative.frameInterpolationRelease(this.ctx);
 	}
@@ -443,6 +466,7 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
 
 	/** Schedules the frame's present; it happens when the frame is committed in {@link #submit}. */
 	void present(long layer, MetalTextureView view) {
+		this.markStage("present");
 		this.flushPendingClears();
 		if (this.stats == null) {
 			MetalNative.present(this.ctx, layer, view.handle);

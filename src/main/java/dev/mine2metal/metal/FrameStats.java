@@ -13,6 +13,11 @@ final class FrameStats {
 	 */
 	static final boolean PASS_TIMES = Boolean.getBoolean("mine2metal.passTimes");
 	static final boolean ENABLED = PASS_TIMES || Boolean.getBoolean("mine2metal.stats");
+	/**
+	 * Without pass times, the stats report GPU time per stage of the frame (world, upscaling, world capture, hand,
+	 * effects and GUI, present, frame generation): each stage's work is committed in a command buffer of its own.
+	 */
+	static final boolean STAGE_TIMES = ENABLED && !PASS_TIMES;
 	private static final int TOP_PASSES = 8;
 	private static final long INTERVAL_NANOS = 5_000_000_000L;
 
@@ -104,9 +109,7 @@ final class FrameStats {
 				this.copyBytes / 1024 / this.frames,
 				String.format("%.1f", (double) this.writes / this.frames), String.format("%.1f", (double) this.cpuWrites / this.frames),
 				this.writeBytes / 1024 / this.frames, this.textureBytes / 1024 / this.frames, this.frames, this.blitTargets);
-		if (PASS_TIMES) {
-			this.logPassTimes();
-		}
+		this.logLabelTimes();
 
 		this.windowStart = now;
 		this.gpuSecondsAtStart = gpuSeconds;
@@ -163,8 +166,8 @@ final class FrameStats {
 		return String.format("%.2f", nanos / 1e6);
 	}
 
-	private void logPassTimes() {
-		StringBuilder line = new StringBuilder("GPU ms/frame by pass:");
+	private void logLabelTimes() {
+		StringBuilder line = new StringBuilder(PASS_TIMES ? "GPU ms/frame by pass:" : "GPU ms/frame by stage:");
 		String[] entries = MetalNative.contextTakeLabelTimes(this.ctx).split("\n");
 		for (int i = 0; i < Math.min(TOP_PASSES, entries.length); i++) {
 			int separator = entries[i].lastIndexOf('=');

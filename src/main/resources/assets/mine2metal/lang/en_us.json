@@ -35,6 +35,8 @@
 	"mine2metal.options.frame_generation.off": "Off",
 	"mine2metal.options.frame_generation.metalfx": "MetalFX",
 	"mine2metal.options.frame_generation.fsr3": "FSR 3.1",
-	"mine2metal.options.frame_generation.tooltip": "Shows a generated frame between each pair the game renders, for smoother motion: up to twice the frame rate on screen, capped at the display's refresh rate, so the game itself renders at most half of it. Input lags by about one rendered frame.\n\nMetalFX: Apple's frame interpolation (macOS 26 or newer).\nFSR 3.1: AMD FidelityFX Super Resolution 3.1 frame generation (MIT), run through Metal; about half the GPU cost of MetalFX.\n\nBoth are heavy on the GPU at large window sizes. Pair them with Temporal upscaling, and use them when the game runs below the refresh rate but the GPU has room to spare.",
-	"mine2metal.options.frame_generation.metalfx_unsupported": "MetalFX frame interpolation needs macOS 26 or newer."
+	"mine2metal.options.frame_generation.tooltip": "Shows a generated frame between each pair the game renders, for smoother motion: up to twice the frame rate on screen, capped at the display's refresh rate, so the game itself renders at most half of it. Input lags by about one rendered frame.\n\nMetalFX: Apple's frame interpolation (macOS 26 or newer).\nFSR 3.1: AMD FidelityFX Super Resolution 3.1 frame generation (MIT), run through Metal; about half the GPU cost of MetalFX.\n\nBoth are heavy on the GPU at large window sizes. Pair them with Temporal upscaling, and use them when the game runs below the refresh rate but the GPU has room to spare. If it costs more than it gains (over half the time between rendered frames), it pauses itself for 30 s and tries again.",
+	"mine2metal.options.frame_generation.metalfx_unsupported": "MetalFX frame interpolation needs macOS 26 or newer.",
+	"mine2metal.toast.frame_generation_paused": "Frame generation paused",
+	"mine2metal.toast.frame_generation_paused.detail": "It costs %s ms per frame with %s ms between frames: more than it gains. Trying again in 30 s."
 }

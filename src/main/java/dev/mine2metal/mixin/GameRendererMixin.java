@@ -5,6 +5,7 @@ import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
 import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
 import com.mojang.blaze3d.pipeline.RenderTarget;
 import com.mojang.renderpearl.api.buffers.GpuBufferSlice;
+import dev.mine2metal.metal.MetalRenderer;
 import dev.mine2metal.upscale.FrameInterpolation;
 import dev.mine2metal.upscale.HdrOutput;
 import dev.mine2metal.upscale.WorldUpscaler;
@@ -63,8 +64,11 @@ abstract class GameRendererMixin {
 	 */
 	@Inject(method = "render3dHud", at = @At("HEAD"))
 	private void mine2metal$upscaleBeforeHand(CallbackInfo ci) {
+		MetalRenderer.markStage("upscaling");
 		WorldUpscaler.end();
+		MetalRenderer.markStage("world capture");
 		this.mine2metal$captureWorld();
+		MetalRenderer.markStage("hand, effects and GUI");
 	}
 
 	@Unique

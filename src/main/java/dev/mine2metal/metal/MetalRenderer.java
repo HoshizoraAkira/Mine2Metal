@@ -67,6 +67,20 @@ public final class MetalRenderer {
 		return current != null && current.frameInterpolationSupported;
 	}
 
+	/** Where the frame moves on to another stage, for the GPU time per stage in the stats; nothing otherwise. */
+	public static void markStage(String next) {
+		MetalDevice current = device;
+		if (current != null) {
+			current.encoder().markStage(next);
+		}
+	}
+
+	/** Smoothed GPU milliseconds frame generation took per frame recently; 0 when Metal is not active. */
+	public static double frameGenerationGpuMillis() {
+		MetalDevice current = device;
+		return current != null ? current.encoder().frameGenerationGpuMillis() : 0.0;
+	}
+
 	/** AMD FSR 3.1 frame generation through the Metal backend (Apple GPUs from the M1 on). */
 	public static boolean supportsFsrFrameGeneration() {
 		MetalDevice current = device;

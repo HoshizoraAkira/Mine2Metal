@@ -196,6 +196,10 @@ static const NSUInteger M2M_PRESENT_SLOTS = 3;
 // Encoders created so far, for the frame stats.
 @property(nonatomic) int64_t renderEncoderCount;
 @property(nonatomic) int64_t blitEncoderCount;
+// Stage timings (-Dmine2metal.stats): frame generation commits the work before it as a stage of its own.
+@property(atomic) BOOL stageTiming;
+// Smoothed GPU time of frame generation (MetalFX or FSR), from the completion thread.
+@property(atomic) double frameGenerationSeconds;
 // GPU seconds per command buffer label, filled from the completion thread under @synchronized.
 @property(nonatomic, strong) NSMutableDictionary<NSString *, NSNumber *> *gpuSecondsByLabel;
 @end
@@ -302,6 +306,8 @@ id m2m_fsr_framegen_create(M2MContext *ctx, NSUInteger displayWidth, NSUInteger 
                            NSUInteger renderHeight, MTLPixelFormat format, BOOL hdr);
 BOOL m2m_fsr_framegen_encode(M2MContext *ctx, id generator, const M2MFsrFrame *frame);
 void m2m_fsr_framegen_release(M2MContext *ctx, id generator);
+// Adds seconds to label in gpuSecondsByLabel (mine2metal.m).
+void m2m_add_label_seconds(M2MContext *ctx, NSString *label, double seconds);
 // Copies message into a caller-provided buffer as NUL-terminated UTF-8, truncating to capacity.
 void m2m_copy_string(char *out, int64_t capacity, NSString *message);
 

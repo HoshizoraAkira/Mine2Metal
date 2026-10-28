@@ -400,6 +400,8 @@ public class MetalWorldGameTest implements FabricClientGameTest {
 			return;
 		}
 		Path screenshots = FabricLoader.getInstance().getGameDir().resolve("screenshots");
+		// A covered test window renders uncapped, which the frame generation guard would rightly pause.
+		System.setProperty("mine2metal.frameGenerationGuard", "false");
 		context.runOnClient(client -> {
 			settings.upscaling = MetalSettings.Upscaling.OFF;
 			settings.frameGeneration = MetalSettings.FrameGeneration.OFF;
@@ -456,6 +458,7 @@ public class MetalWorldGameTest implements FabricClientGameTest {
 			LOGGER.info("Wrote the generated frame for {} to {}", name, file);
 		}
 		System.clearProperty("mine2metal.interpolation.motionScale");
+		System.clearProperty("mine2metal.frameGenerationGuard");
 		context.runOnClient(client -> {
 			settings.upscaling = MetalSettings.Upscaling.OFF;
 			settings.frameGeneration = MetalSettings.FrameGeneration.OFF;
@@ -476,6 +479,7 @@ public class MetalWorldGameTest implements FabricClientGameTest {
 			return;
 		}
 		System.setProperty("mine2metal.hdr.ignoreDisplayHeadroom", "true");
+		System.setProperty("mine2metal.frameGenerationGuard", "false");
 		String still = String.format(Locale.ROOT, "tp @a %.3f %.3f %.3f 0 50", above.x, above.y, above.z);
 		boolean interpolation = context.computeOnClient(client -> MetalRenderer.supportsFrameInterpolation());
 		boolean fsr = context.computeOnClient(client -> MetalRenderer.supportsFsrFrameGeneration());
@@ -534,6 +538,7 @@ public class MetalWorldGameTest implements FabricClientGameTest {
 			check(hotbar <= 1.01F, "The hotbar should stay at SDR brightness (" + name + ")");
 		}
 		System.clearProperty("mine2metal.hdr.ignoreDisplayHeadroom");
+		System.clearProperty("mine2metal.frameGenerationGuard");
 		context.runOnClient(client -> {
 			settings.upscaling = MetalSettings.Upscaling.OFF;
 			settings.frameGeneration = MetalSettings.FrameGeneration.OFF;

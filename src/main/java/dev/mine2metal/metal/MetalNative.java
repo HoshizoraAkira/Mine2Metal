@@ -177,6 +177,22 @@ final class MetalNative {
 		}
 	}
 
+	static void contextSetStageTiming(long ctx, boolean enabled) {
+		try {
+			Functions.CONTEXT_SET_STAGE_TIMING.invokeExact(ctx, enabled ? 1 : 0);
+		} catch (Throwable t) {
+			throw rethrow(t);
+		}
+	}
+
+	static double frameGenerationGpuMillis(long ctx) {
+		try {
+			return (double) Functions.FRAME_GENERATION_GPU_MILLIS.invokeExact(ctx);
+		} catch (Throwable t) {
+			throw rethrow(t);
+		}
+	}
+
 	/** "label=seconds" lines for labelled commits since the last call. */
 	static String contextTakeLabelTimes(long ctx) {
 		try (Arena arena = Arena.ofConfined()) {
@@ -844,6 +860,8 @@ final class MetalNative {
 		static final MethodHandle METALFX_TEMPORAL_UPSCALE = function("m2m_metalfx_temporal_upscale", JAVA_INT, JAVA_LONG, JAVA_LONG, JAVA_LONG, JAVA_LONG,
 				ADDRESS, JAVA_FLOAT, JAVA_FLOAT, JAVA_INT);
 		static final MethodHandle FRAME_INTERPOLATION_SUPPORTED = function("m2m_frame_interpolation_supported", JAVA_INT, JAVA_LONG);
+		static final MethodHandle CONTEXT_SET_STAGE_TIMING = function("m2m_context_set_stage_timing", null, JAVA_LONG, JAVA_INT);
+		static final MethodHandle FRAME_GENERATION_GPU_MILLIS = function("m2m_frame_generation_gpu_millis", JAVA_DOUBLE, JAVA_LONG);
 		static final MethodHandle FSR_FRAMEGEN_SUPPORTED = function("m2m_fsr_framegen_supported", JAVA_INT, JAVA_LONG);
 		static final MethodHandle FRAME_INTERPOLATION_CAPTURE = function("m2m_frame_interpolation_capture", JAVA_INT, JAVA_LONG, JAVA_INT, JAVA_LONG,
 				JAVA_LONG, ADDRESS, ADDRESS, JAVA_INT);

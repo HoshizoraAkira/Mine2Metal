@@ -229,6 +229,42 @@ MTLTextureUsage m2m_frame_interpolation_ui_usage(M2MContext *ctx) {
 	return interpolator ? interpolator.interpolator.uiTextureUsage : 0;
 }
 
+// Frame generation runs in a command buffer of its own, so its GPU time can be measured: the work before it is
+// committed first (as the present stage, for the stage timings), then the generation itself.
+static void m2m_frame_generation_begin(M2MContext *ctx) {
+	__weak M2MContext *weakCtx = ctx;
+	BOOL stages = ctx.stageTiming;
+	m2m_commit_open(ctx, @"present", ^(CFTimeInterval gpuStart, CFTimeInterval gpuEnd, NSError *error) {
+		(void)error;
+		M2MContext *strongCtx = weakCtx;
+		strongCtx.gpuSeconds += gpuEnd - gpuStart;
+		if (stages) {
+			m2m_add_label_seconds(strongCtx, @"stage present", gpuEnd - gpuStart);
+		}
+	});
+}
+
+static void m2m_frame_generation_end(M2MContext *ctx) {
+	__weak M2MContext *weakCtx = ctx;
+	BOOL stages = ctx.stageTiming;
+	m2m_commit_open(ctx, @"frame generation", ^(CFTimeInterval gpuStart, CFTimeInterval gpuEnd, NSError *error) {
+		(void)error;
+		M2MContext *strongCtx = weakCtx;
+		double seconds = gpuEnd - gpuStart;
+		strongCtx.gpuSeconds += seconds;
+		// Smoothed over about ten frames; read by the frame generation guard.
+		double previous = strongCtx.frameGenerationSeconds;
+		strongCtx.frameGenerationSeconds = previous > 0.0 ? previous * 0.9 + seconds * 0.1 : seconds;
+		if (stages) {
+			m2m_add_label_seconds(strongCtx, @"stage frame generation", seconds);
+		}
+	});
+}
+
+double m2m_frame_generation_gpu_millis(int64_t ctx) {
+	return m2m_ctx(ctx).frameGenerationSeconds * 1000.0;
+}
+
 id<MTLTexture> m2m_frame_interpolation_encode(M2MContext *ctx, id<MTLTexture> ui, NSUInteger slot) {
 	M2MFrameInterpolator *interpolator = ctx.frameInterpolator;
 	if (!interpolator || !interpolator.pending || ui.width != interpolator.outputWidth || ui.height != interpolator.outputHeight ||
@@ -256,7 +292,9 @@ id<MTLTexture> m2m_frame_interpolation_encode(M2MContext *ctx, id<MTLTexture> ui
 		frame.motion_scale_y = camera.motion_scale_y;
 		frame.max_luminance = ctx.hdr ? MAX(1.0f, ctx.hdrPeak) : 1.0f;
 		frame.reset = !interpolator.previousValid;
+		m2m_frame_generation_begin(ctx);
 		BOOL encoded = m2m_fsr_framegen_encode(ctx, interpolator.fsr, &frame);
+		m2m_frame_generation_end(ctx);
 		return encoded && interpolator.previousValid ? output : nil;
 	}
 	if (!interpolator.previousValid) {
@@ -281,12 +319,13 @@ id<MTLTexture> m2m_frame_interpolation_encode(M2MContext *ctx, id<MTLTexture> ui
 	effect.jitterOffsetY = camera.jitter_y;
 	effect.depthReversed = NO;
 	effect.shouldResetHistory = NO;
-	m2m_end_encoding(ctx);
+	m2m_frame_generation_begin(ctx);
 	if (ctx.metal4) {
 		[(id<MTL4FXFrameInterpolator>)effect encodeToCommandBuffer:m2m_command_buffer4(ctx)];
 	} else {
 		[(id<MTLFXFrameInterpolator>)effect encodeToCommandBuffer:m2m_command_buffer(ctx)];
 	}
+	m2m_frame_generation_end(ctx);
 	return output;
 }
 

@@ -115,6 +115,25 @@ Hasil gametest di jendela yang terlihat (MacBook Air M3, 60 Hz):
 
 Kualitas frame buatan tidak berubah (FSR 31,21 dB, MetalFX 31,20 dB), dan gametest penuh lolos di bawah validation. Belum diukur: game di bawah 30 FPS dengan frame gen (penahanan > 1 refresh) dan layar ProMotion.
 
+### R4: waktu GPU per tahap dan pengaman frame gen (2026-10-28)
+
+**Waktu GPU per tahap.** Dengan `-Dmine2metal.stats=true` (tanpa `passTimes`), frame dipecah oleh penanda tahap, yaitu `MetalRenderer.markStage` di awal `render3dHud` dan di present:
+
+> dunia → upscaling → tangkapan dunia → tangan, efek dan GUI → present → frame gen
+
+Pekerjaan setiap tahap di-commit di command buffer berlabel, dan log mencatat `GPU ms/frame by stage`. Contoh (2560×1600, jendela tertutup): dunia 0,26, tangan/efek/GUI 0,53, present 0,06, frame gen 1,2 ms per frame. Commit tambahan hanya terjadi kalau statistik nyala.
+
+**Biaya frame gen selalu diukur.** Selama frame gen aktif, pekerjaannya (MetalFX maupun FSR) dijalankan di command buffer sendiri, cukup dua commit tambahan per frame. Waktunya dirata-rata (`m2m_frame_generation_gpu_millis`).
+
+**Pengaman.** Frame gen hanya menguntungkan kalau biayanya kurang dari separuh jarak antar frame render: dua gambar dalam T mengalahkan satu gambar dalam T − biaya tepat ketika T > 2 × biaya.
+- Kalau syarat itu terlanggar terus selama 3 detik, frame gen dijeda 30 detik lalu dicoba lagi. State native-nya tidak dilepas, jadi tidak perlu kompilasi ulang.
+- Jeda pertama memunculkan toast "Pembuatan frame dijeda" beserta angkanya; jeda berikutnya hanya dicatat di log.
+- Mengganti pilihan engine membatalkan jeda. `-Dmine2metal.frameGenerationGuard=false` mematikan pengaman; tes kualitas memakainya karena jendela tes yang tertutup render tanpa batas.
+
+Hasil uji: di 2560×1600, MetalFX (12,2 ms biaya vs 13,8 ms jarak) dan FSR (22,5 vs 25,0 ms) dijeda dengan benar. Gametest penuh lolos di bawah validation, kualitas frame buatan tetap 31,2 dB.
+
+Temuan yang perlu diverifikasi di layar sungguhan: di jendela gametest yang tertutup, upscaling temporal 2560×1600 tercatat ~13 ms per frame, padahal benchmark mandiri 2,1 ms. Kemungkinan macOS memberi GPU prioritas rendah ke aplikasi yang tidak terlihat. Itu juga bisa menjelaskan kenapa biaya MetalFX frame gen di gametest dulu berubah-ubah 10–90 ms.
+
 ### R3: lonjakan frame saat chunk dimuat (2026-10-28)
 
 Alat ukur baru yang berlaku untuk semua backend: mixin di mod gametest mencatat setiap `DebugScreenOverlay.logFrameDuration`. Mode `-Dmine2metal.test.chunkSpikes=true`: 1920×1080, render distance 16, VSync mati, berdiri 20 detik lalu berjalan 40 detik ke arah hutan (chunk baru terus dimuat). Untuk OpenGL/Vulkan dijalankan dengan `-Dmine2metal.enabled=false` dan `preferredGraphicsBackend` di `options.txt`.
@@ -231,7 +250,7 @@ Urutan di bawah adalah prioritas. Instalasi (M9) tetap terakhir, sesuai kesepaka
 | R1 ✅ | **FSR 3.1 frame gen di game** (F1 + F2; hasil di [fsr-frame-gen.md](fsr-frame-gen.md#hasil-r1-fsr-31-frame-generation-di-game-2026-10-28)) | Backend FFX masuk dylib (kode AMD C++ + `ffx_metal.mm`, MSL di jar, dikompilasi di thread latar + cache). Jalur Metal 4: encoder compute MTL4, argument table, barrier antar pass, residency. Input: W tanpa HUD, F, depth, motion vector (skala dan tanda dikalibrasi dengan uji PSNR yaw), kamera; HDR lewat transfer scRGB. Output ke slot thread present. Menu: Frame gen Mati / MetalFX / FSR 3.1 (satu saja) | ≥ 31 dB di uji yaw; lebih cepat dari MetalFX di uji jalan-ke-hutan; validation bersih di Metal 3 dan 4 |
 | R2 ✅ | **Pacing dengan `CAMetalDisplayLink`** (hasil di bagian "R2" di bawah) | Thread present memakai display link (macOS 14+). Frame buatan diletakkan di tengah dua frame asli menurut `targetPresentationTimestamp`, dan latensi diatur lewat `preferredFrameLatency`. Sekalian ukur VSync nyala di layar sungguhan | Jarak antar frame tampil rata (p95 ≈ 1 refresh) dengan frame gen nyala |
 | R3 ✅ | **Lonjakan CPU saat chunk dimuat** (hasil di bagian "R3" di bawah: bukan dari backend kita) | Tes jalan-ke-hutan yang sama di backend OpenGL/Vulkan bawaan sebagai pembanding (sekarang frame bisa tertahan 200–600 ms). Kalau dari backend kita, telusuri (upload buffer, kompilasi pipeline, sinkronisasi) | Penyebab diketahui; kalau dari kita, lonjakan ≤ backend bawaan |
-| R4 | **Waktu GPU per tahap + pengaman frame gen** | Timestamp di batas encoder (counter sample buffer) untuk dunia, upscaling, frame gen, HDR, present. Dari situ frame gen mati sendiri (dengan pesan) kalau biayanya melebihi anggaran | Statistik per tahap di `-Dmine2metal.stats`; frame gen tidak pernah menurunkan FPS di bawah separuh tanpa memberi tahu |
+| R4 ✅ | **Waktu GPU per tahap + pengaman frame gen** (hasil di bagian "R4" di bawah) | Timestamp di batas encoder (counter sample buffer) untuk dunia, upscaling, frame gen, HDR, present. Dari situ frame gen mati sendiri (dengan pesan) kalau biayanya melebihi anggaran | Statistik per tahap di `-Dmine2metal.stats`; frame gen tidak pernah menurunkan FPS di bawah separuh tanpa memberi tahu |
 | R5 | **Reactive mask untuk upscaling temporal** | `reactiveMaskTexture` MetalFX (macOS 14.4+): tandai piksel mob, partikel, dan air yang bergerak sendiri, supaya tidak meninggalkan jejak | Jejak samar di uji mob bergerak berkurang (diukur dengan screenshot) |
 | R6 | **Optimasi shader FSR** (F3) | FP16 manual untuk pass interpolasi utama dan optical flow, disocclusion di render penuh, dispatch concurrent untuk pass kecil | ≤ 6 ms di 1080p dengan render 50% (sekarang 8,7 ms) |
 | R7 | **Upscaler FSR sebagai pilihan** | FSR 1 dan FSR 3.1 di menu Upscaling di samping MetalFX. Sudah terbukti jalan, tapi 2–2,5× lebih berat; nilainya sebagai pilihan dan perbandingan kualitas | Kualitas dibandingkan dengan MetalFX di uji temporal; lolos validation |

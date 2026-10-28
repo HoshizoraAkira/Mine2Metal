@@ -52,6 +52,8 @@ M2M_EXPORT int64_t m2m_context_max_buffer_length(int64_t ctx);
 // (1, 2, ...); an empty frame still gets an index so fences stay simple. A non-null label
 // accumulates the buffer's GPU time under that name (see m2m_context_take_label_times).
 M2M_EXPORT int64_t m2m_context_commit(int64_t ctx, const char *label);
+// With stage timing on, frame generation's own commits are added to the label times as stages too.
+M2M_EXPORT void m2m_context_set_stage_timing(int64_t ctx, int32_t enabled);
 // Highest submit index the GPU has finished.
 M2M_EXPORT int64_t m2m_context_completed(int64_t ctx);
 // Render and blit encoders created so far, and passes that continued an existing render encoder.
@@ -211,6 +213,8 @@ M2M_EXPORT int32_t m2m_fsr_framegen_supported(int64_t ctx);
 // reset drops the history. Returns 0 if the engine refused the textures.
 M2M_EXPORT int32_t m2m_frame_interpolation_capture(int64_t ctx, int32_t engine, int64_t color, int64_t depth,
                                                    const float *matrices, const float *camera, int32_t reset);
+// Smoothed GPU milliseconds frame generation took per frame recently (0 before any).
+M2M_EXPORT double m2m_frame_generation_gpu_millis(int64_t ctx);
 // The generated frame shown by the most recent m2m_present (borrowed), or 0 if it showed none.
 M2M_EXPORT int64_t m2m_frame_interpolation_last_output(int64_t ctx);
 // Frees the interpolator's textures once the GPU is done with them; the next capture starts over.
