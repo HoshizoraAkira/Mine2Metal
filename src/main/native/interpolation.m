@@ -195,7 +195,7 @@ int32_t m2m_frame_interpolation_capture(int64_t handle, int32_t engine, int64_t 
 			return 0;
 		}
 		NSUInteger slot = (interpolator.latest + 1) % M2M_INTERPOLATION_SLOTS;
-		if (!m2m_encode_motion(ctx, sourceDepth, interpolator.motion, interpolator.depth, matrices)) {
+		if (!m2m_encode_motion(ctx, sourceDepth, interpolator.motion, interpolator.depth, matrices, nil, nil)) {
 			return 0;
 		}
 		if (format == color.pixelFormat) {

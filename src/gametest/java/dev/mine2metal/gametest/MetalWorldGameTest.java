@@ -120,6 +120,10 @@ public class MetalWorldGameTest implements FabricClientGameTest {
 				checkTemporalUpscaling(context, singleplayer, above);
 				return;
 			}
+			if (Boolean.getBoolean("mine2metal.test.reactiveOnly")) {
+				checkReactiveMask(context, singleplayer, above);
+				return;
+			}
 			if (Boolean.getBoolean("mine2metal.test.interpolationOnly")) {
 				checkFrameInterpolation(context, singleplayer, above);
 				return;
@@ -139,6 +143,7 @@ public class MetalWorldGameTest implements FabricClientGameTest {
 			if (backend.equals("Metal")) {
 				checkSpatialUpscaling(context, singleplayer, returnAbove);
 				checkTemporalUpscaling(context, singleplayer, above);
+				checkReactiveMask(context, singleplayer, above);
 				checkFrameInterpolation(context, singleplayer, above);
 				checkHdr(context, singleplayer, above);
 			}
@@ -383,6 +388,59 @@ public class MetalWorldGameTest implements FabricClientGameTest {
 			LOGGER.info("Average FPS from above with MetalFX temporal at {}%: {}", scale, averageFps(context));
 		}
 		context.runOnClient(client -> settings.upscaling = MetalSettings.Upscaling.OFF);
+		context.waitTicks(10);
+	}
+
+	/**
+	 * A gold block crossing the view (smoothed over three ticks, so it still moves in the screenshot frame), natively and through temporal upscaling at 50% with and without
+	 * the reactive mask. Each run also has a screenshot without the block; what differs between the two, compared
+	 * afterwards, is the block and any trail it leaves in the history. At 60 fps: uncapped, the test window runs so fast
+	 * that the block moves a fraction of a pixel a frame.
+	 */
+	private static void checkReactiveMask(ClientGameTestContext context, TestSingleplayerContext singleplayer, Vec3 above) {
+		MetalSettings settings = MetalSettings.get();
+		int framerateLimit = context.computeOnClient(client -> client.options.framerateLimit().get());
+		context.runOnClient(client -> client.options.framerateLimit().set(60));
+		String still = String.format(Locale.ROOT, "tp @a %.3f %.3f %.3f 0 50", above.x, above.y, above.z);
+		// About 25 blocks along the view, which looks 50 degrees down to +z.
+		double y = above.y - 19.0;
+		double z = above.z + 16.0;
+		String[][] cases = {{"native", "off", "true"}, {"temporal-mask", "temporal", "true"}, {"temporal-nomask", "temporal", "false"}};
+		for (String[] mode : cases) {
+			System.setProperty("mine2metal.temporal.reactiveMask", mode[2]);
+			context.runOnClient(client -> {
+				settings.upscaling = mode[1].equals("temporal") ? MetalSettings.Upscaling.TEMPORAL : MetalSettings.Upscaling.OFF;
+				settings.renderScale = 50;
+			});
+			hover(context, singleplayer, still);
+			context.takeScreenshot("mine2metal-reactive-" + mode[0] + "-empty");
+			singleplayer.getServer().runCommand(String.format(Locale.ROOT, "summon minecraft:block_display %.3f %.3f %.3f "
+					+ "{block_state:\"minecraft:gold_block\",teleport_duration:3,Tags:[\"mine2metal\"],transformation:{left_rotation:[0f,0f,0f,1f],"
+					+ "right_rotation:[0f,0f,0f,1f],translation:[0f,0f,0f],scale:[3f,3f,3f]}}", above.x - 24.0, y, z));
+			context.waitTicks(5);
+			// Three blocks a tick, about seven pixels a frame at the render resolution; the screenshot is taken halfway.
+			for (int step = -21; step <= 24; step += 3) {
+				singleplayer.getServer().runCommand(String.format(Locale.ROOT, "tp @e[tag=mine2metal] %.3f %.3f %.3f", above.x + step, y, z));
+				context.waitTicks(1);
+				if (step == 0) {
+					context.takeScreenshot("mine2metal-reactive-" + mode[0] + "-moving");
+				}
+			}
+			singleplayer.getServer().runCommand("kill @e[tag=mine2metal]");
+			context.waitTicks(2);
+			// Particles write no depth, so only the colour clamp of the scaler keeps them from trailing.
+			for (int tick = 0; tick < 20; tick++) {
+				singleplayer.getServer().runCommand(String.format(Locale.ROOT, "particle minecraft:end_rod %.3f %.3f %.3f 3 1 3 0.4 30 force", above.x, y, z));
+				context.waitTicks(1);
+			}
+			context.takeScreenshot("mine2metal-reactive-" + mode[0] + "-particles");
+			context.waitTicks(40);
+		}
+		System.clearProperty("mine2metal.temporal.reactiveMask");
+		context.runOnClient(client -> {
+			settings.upscaling = MetalSettings.Upscaling.OFF;
+			client.options.framerateLimit().set(framerateLimit);
+		});
 		context.waitTicks(10);
 	}
 

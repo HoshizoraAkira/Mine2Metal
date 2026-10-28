@@ -13,10 +13,11 @@ final class CameraMotion {
 	private static final double TELEPORT_DISTANCE = 16.0;
 
 	/**
-	 * This frame's inverse view-projection, the previous frame's view-projection and the camera's movement since then,
-	 * as {@code m2m_metalfx_temporal_upscale} takes them. Filled by {@link #begin}.
+	 * This frame's inverse view-projection, the previous frame's view-projection, the camera's movement since then
+	 * (and whether there is a previous frame) and the previous view-projection's inverse, as
+	 * {@code m2m_metalfx_temporal_upscale} takes them. Filled by {@link #begin}.
 	 */
-	final float[] matrices = new float[36];
+	final float[] matrices = new float[52];
 
 	private boolean hasHistory;
 	private final Matrix4f previousViewProjection = new Matrix4f();
@@ -44,6 +45,8 @@ final class CameraMotion {
 		this.matrices[32] = (float) delta.x;
 		this.matrices[33] = (float) delta.y;
 		this.matrices[34] = (float) delta.z;
+		this.matrices[35] = reset ? 0.0F : 1.0F;
+		new Matrix4f(previous).invert().get(this.matrices, 36);
 
 		this.currentViewProjection.set(viewProjection);
 		this.currentCameraPos = cameraPos;

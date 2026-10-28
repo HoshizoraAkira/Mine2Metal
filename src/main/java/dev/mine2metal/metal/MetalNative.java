@@ -527,10 +527,12 @@ final class MetalNative {
 		}
 	}
 
-	static boolean metalFxTemporalUpscale(long ctx, long color, long depth, long output, float[] matrices, float jitterX, float jitterY, boolean reset) {
+	static boolean metalFxTemporalUpscale(long ctx, long color, long depth, long output, float[] matrices, float jitterX, float jitterY, boolean reset,
+			boolean reactive) {
 		try (Arena arena = Arena.ofConfined()) {
 			MemorySegment params = arena.allocateFrom(JAVA_FLOAT, matrices);
-			return (int) Functions.METALFX_TEMPORAL_UPSCALE.invokeExact(ctx, color, depth, output, params, jitterX, jitterY, reset ? 1 : 0) != 0;
+			return (int) Functions.METALFX_TEMPORAL_UPSCALE.invokeExact(ctx, color, depth, output, params, jitterX, jitterY, reset ? 1 : 0,
+					reactive ? 1 : 0) != 0;
 		} catch (Throwable t) {
 			throw rethrow(t);
 		}
@@ -858,7 +860,7 @@ final class MetalNative {
 		static final MethodHandle METALFX_TEMPORAL_SUPPORTED = function("m2m_metalfx_temporal_supported", JAVA_INT, JAVA_LONG);
 		static final MethodHandle METALFX_TEMPORAL_SCALE_RANGE = function("m2m_metalfx_temporal_scale_range", null, JAVA_LONG, ADDRESS, ADDRESS);
 		static final MethodHandle METALFX_TEMPORAL_UPSCALE = function("m2m_metalfx_temporal_upscale", JAVA_INT, JAVA_LONG, JAVA_LONG, JAVA_LONG, JAVA_LONG,
-				ADDRESS, JAVA_FLOAT, JAVA_FLOAT, JAVA_INT);
+				ADDRESS, JAVA_FLOAT, JAVA_FLOAT, JAVA_INT, JAVA_INT);
 		static final MethodHandle FRAME_INTERPOLATION_SUPPORTED = function("m2m_frame_interpolation_supported", JAVA_INT, JAVA_LONG);
 		static final MethodHandle CONTEXT_SET_STAGE_TIMING = function("m2m_context_set_stage_timing", null, JAVA_LONG, JAVA_INT);
 		static final MethodHandle FRAME_GENERATION_GPU_MILLIS = function("m2m_frame_generation_gpu_millis", JAVA_DOUBLE, JAVA_LONG);

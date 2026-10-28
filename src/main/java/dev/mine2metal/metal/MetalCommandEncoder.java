@@ -426,9 +426,10 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
 	}
 
 	/** MetalFX temporal upscale of color into output, in command order; false if MetalFX rejected the sizes or formats. */
-	boolean upscaleTemporal(MetalTexture color, MetalTexture depth, MetalTexture output, float[] matrices, float jitterX, float jitterY, boolean reset) {
+	boolean upscaleTemporal(MetalTexture color, MetalTexture depth, MetalTexture output, float[] matrices, float jitterX, float jitterY, boolean reset,
+			boolean reactive) {
 		this.flushPendingClears();
-		return MetalNative.metalFxTemporalUpscale(this.ctx, color.handle, depth.handle, output.handle, matrices, jitterX, jitterY, reset);
+		return MetalNative.metalFxTemporalUpscale(this.ctx, color.handle, depth.handle, output.handle, matrices, jitterX, jitterY, reset, reactive);
 	}
 
 	/** Captures the world for frame interpolation, in command order; false if MetalFX rejected the sizes or formats. */

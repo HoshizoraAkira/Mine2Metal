@@ -53,13 +53,14 @@ public final class MetalRenderer {
 
 	/**
 	 * Upscales color onto output with MetalFX temporal scaling; see {@code m2m_metalfx_temporal_upscale} for the matrices.
-	 * False if Metal is not active or MetalFX refused these textures.
+	 * With reactive, moving entities are marked so MetalFX does not smear them. False if Metal is not active or MetalFX
+	 * refused these textures.
 	 */
 	public static boolean upscaleTemporal(GpuTexture color, GpuTexture depth, GpuTexture output, float[] matrices, float jitterX, float jitterY,
-			boolean reset) {
+			boolean reset, boolean reactive) {
 		MetalDevice current = device;
 		return current != null && current.encoder().upscaleTemporal((MetalTexture) color, (MetalTexture) depth, (MetalTexture) output, matrices, jitterX,
-				jitterY, reset);
+				jitterY, reset, reactive);
 	}
 
 	public static boolean supportsFrameInterpolation() {

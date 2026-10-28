@@ -175,11 +175,15 @@ M2M_EXPORT int32_t m2m_metalfx_temporal_supported(int64_t ctx);
 // The range of output/input size ratios the temporal scaler supports on this device.
 M2M_EXPORT void m2m_metalfx_temporal_scale_range(int64_t ctx, float *min_scale, float *max_scale);
 // Upscales color (rendered with a jitter of jitter_x, jitter_y pixels) into output with MetalFX temporal scaling.
-// matrices holds 36 floats, column-major: this frame's inverse unjittered view-projection, the previous frame's
-// view-projection, and the camera's movement since then (xyz, then padding). Motion vectors are derived from these
-// and depth. reset drops the history (first frame, cuts, teleports). Returns 0 if MetalFX refused the textures.
+// matrices holds 52 floats, column-major: this frame's inverse unjittered view-projection, the previous frame's
+// view-projection, the camera's movement since then (xyz, then 1 if there is a previous frame, else 0), and the
+// inverse of the previous view-projection. Motion vectors are derived from these and depth. reset drops the history
+// (first frame, cuts, teleports). With reactive (and macOS 14.4), pixels whose surface moved by itself or just came
+// into view are marked in a reactive mask, so MetalFX does not smear moving entities. Returns 0 if MetalFX refused the
+// textures.
 M2M_EXPORT int32_t m2m_metalfx_temporal_upscale(int64_t ctx, int64_t color, int64_t depth, int64_t output,
-                                                const float *matrices, float jitter_x, float jitter_y, int32_t reset);
+                                                const float *matrices, float jitter_x, float jitter_y, int32_t reset,
+                                                int32_t reactive);
 
 // EDR output
 

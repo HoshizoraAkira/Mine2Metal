@@ -115,6 +115,31 @@ Hasil gametest di jendela yang terlihat (MacBook Air M3, 60 Hz):
 
 Kualitas frame buatan tidak berubah (FSR 31,21 dB, MetalFX 31,20 dB), dan gametest penuh lolos di bawah validation. Belum diukur: game di bawah 30 FPS dengan frame gen (penahanan > 1 refresh) dan layar ProMotion.
 
+### R5: reactive mask untuk upscaling temporal (2026-10-28)
+
+MetalFX temporal (macOS 14.4+) sekarang menerima reactive mask, yaitu tanda di piksel yang riwayatnya tidak bisa dipercaya sehingga lebih bersandar ke frame sekarang. Mask dihitung di pass motion vector yang sudah ada, tanpa pass tambahan:
+- Permukaan di setiap piksel dilacak ke frame sebelumnya dengan gerak kamera, lalu dibandingkan dengan depth frame sebelumnya di sekitar titik itu (tetangga 3×3, yang terdekat dipakai).
+- Kalau tidak ada yang cukup dekat, permukaan itu bergerak sendiri (entitas, partikel) atau baru terlihat, dan piksel itu ditandai.
+- "Cukup dekat" diukur dalam piksel di kedalaman itu, ditambah jarak antar-sampel untuk permukaan yang miring tajam. Yang membuat jejak adalah gerak beberapa piksel per frame, sejauh apa pun bendanya. Ambang relatif terhadap jarak (versi pertama) tidak pernah menyala di 60 fps.
+- Depth frame sebelumnya disimpan bergantian di dua tekstur. Setelah reset atau scaler dibuat ulang, mask kosong untuk satu frame.
+
+Matriks kamera bertambah menjadi 52 float: invers view-projection frame sebelumnya, ditambah tanda ada-tidaknya frame sebelumnya. `-Dmine2metal.temporal.reactiveMask=false` mematikan mask (bawaan nyala).
+
+Uji (`-Dmine2metal.test.reactiveOnly=true`, 60 fps, render 427×240 → 854×480):
+
+| Kasus | Native | Temporal + mask | Temporal tanpa mask |
+|---|---|---|---|
+| Blok emas bergerak 3 blok/tick (~7 px/frame), PSNR area blok vs native | — | 29,30 dB | 29,14 dB |
+| Partikel end_rod, cahaya yang ditambahkan ke frame (run 1) | 264k | 255k | 132k |
+| Partikel end_rod, piksel terang > 200 (run 1 / run 2) | 1394 / 1760 | 211 / 536 | 0 / 300 |
+
+- **Entitas opak yang bergerak:** MetalFX sudah menanganinya sendiri lewat clamping warna. Jejaknya tidak terlihat dengan maupun tanpa mask, dan selisihnya masih dalam noise.
+- **Partikel** adalah manfaat utamanya. Partikel Minecraft menulis depth, jadi mask menangkapnya. Tanpa mask partikel pudar hampir hilang; dengan mask cahayanya tetap seperti native.
+- **Noise:** jitter membuat ~0,4% piksel ikut ditandai di tepi daun (cutout).
+- **Regresi:** tidak ada. Uji temporal tetap 30,49 dB diam dan 29,05 dB setelah berputar. Gametest penuh lolos di bawah validation.
+
+Yang tidak tertangkap: benda yang tidak menulis depth (sebagian translucency) dan tekstur animasi seperti air dan lava. Untuk itu perlu menandai piksel saat draw translucent dirender, yang merupakan perubahan desain lebih besar.
+
 ### R4: waktu GPU per tahap dan pengaman frame gen (2026-10-28)
 
 **Waktu GPU per tahap.** Dengan `-Dmine2metal.stats=true` (tanpa `passTimes`), frame dipecah oleh penanda tahap, yaitu `MetalRenderer.markStage` di awal `render3dHud` dan di present:
@@ -241,7 +266,7 @@ Hasil gametest (Apple M3, macOS 27, puncak 300%, headroom layar diabaikan lewat 
 
 ## Roadmap lanjutan (disusun 2026-10-28)
 
-Sudah selesai: backend inti (M0–M8), layar pengaturan (M10), upscaling MetalFX (M11), interpolasi frame MetalFX (M12), Metal 4 (M13), HDR/EDR (M14), satu jalur present, dan spike FSR 3 (F0, lihat [fsr-frame-gen.md](fsr-frame-gen.md)). Uji manual Metal 4, interpolasi, HDR, dan VSync nyala di layar sungguhan masih menunggu ([uji-manual.md](uji-manual.md) nomor 9, 17, 22–27).
+Sudah selesai: backend inti (M0–M8), layar pengaturan (M10), upscaling MetalFX (M11), interpolasi frame MetalFX (M12), Metal 4 (M13), HDR/EDR (M14), satu jalur present, dan spike FSR 3 (F0, lihat [fsr-frame-gen.md](fsr-frame-gen.md)). Uji manual Metal 4, interpolasi, HDR, dan VSync nyala di layar sungguhan masih menunggu ([uji-manual.md](uji-manual.md) nomor 9, 17, 22–31).
 
 Urutan di bawah adalah prioritas. Instalasi (M9) tetap terakhir, sesuai kesepakatan.
 
@@ -251,7 +276,7 @@ Urutan di bawah adalah prioritas. Instalasi (M9) tetap terakhir, sesuai kesepaka
 | R2 ✅ | **Pacing dengan `CAMetalDisplayLink`** (hasil di bagian "R2" di bawah) | Thread present memakai display link (macOS 14+). Frame buatan diletakkan di tengah dua frame asli menurut `targetPresentationTimestamp`, dan latensi diatur lewat `preferredFrameLatency`. Sekalian ukur VSync nyala di layar sungguhan | Jarak antar frame tampil rata (p95 ≈ 1 refresh) dengan frame gen nyala |
 | R3 ✅ | **Lonjakan CPU saat chunk dimuat** (hasil di bagian "R3" di bawah: bukan dari backend kita) | Tes jalan-ke-hutan yang sama di backend OpenGL/Vulkan bawaan sebagai pembanding (sekarang frame bisa tertahan 200–600 ms). Kalau dari backend kita, telusuri (upload buffer, kompilasi pipeline, sinkronisasi) | Penyebab diketahui; kalau dari kita, lonjakan ≤ backend bawaan |
 | R4 ✅ | **Waktu GPU per tahap + pengaman frame gen** (hasil di bagian "R4" di bawah) | Timestamp di batas encoder (counter sample buffer) untuk dunia, upscaling, frame gen, HDR, present. Dari situ frame gen mati sendiri (dengan pesan) kalau biayanya melebihi anggaran | Statistik per tahap di `-Dmine2metal.stats`; frame gen tidak pernah menurunkan FPS di bawah separuh tanpa memberi tahu |
-| R5 | **Reactive mask untuk upscaling temporal** | `reactiveMaskTexture` MetalFX (macOS 14.4+): tandai piksel mob, partikel, dan air yang bergerak sendiri, supaya tidak meninggalkan jejak | Jejak samar di uji mob bergerak berkurang (diukur dengan screenshot) |
+| R5 ✅ | **Reactive mask untuk upscaling temporal** (hasil di bagian "R5" di bawah) | `reactiveMaskTexture` MetalFX (macOS 14.4+): tandai piksel mob, partikel, dan air yang bergerak sendiri, supaya tidak meninggalkan jejak | Jejak samar di uji mob bergerak berkurang (diukur dengan screenshot) |
 | R6 | **Optimasi shader FSR** (F3) | FP16 manual untuk pass interpolasi utama dan optical flow, disocclusion di render penuh, dispatch concurrent untuk pass kecil | ≤ 6 ms di 1080p dengan render 50% (sekarang 8,7 ms) |
 | R7 | **Upscaler FSR sebagai pilihan** | FSR 1 dan FSR 3.1 di menu Upscaling di samping MetalFX. Sudah terbukti jalan, tapi 2–2,5× lebih berat; nilainya sebagai pilihan dan perbandingan kualitas | Kualitas dibandingkan dengan MetalFX di uji temporal; lolos validation |
 | R8 | **Rapikan arsitektur** | Satu objek alur "frame dunia" (tangkap/proyeksi/depth/jitter) menggantikan state statis di `WorldUpscaler`, `FrameInterpolation`, `HdrOutput`; paket di luar `upscale`; barrier Metal 4 dipersempit | Gametest penuh tetap lolos; tidak ada perubahan perilaku |

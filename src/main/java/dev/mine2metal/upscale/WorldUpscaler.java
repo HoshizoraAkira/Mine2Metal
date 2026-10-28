@@ -39,6 +39,11 @@ public final class WorldUpscaler {
 	private static final String JITTER_SIGN_PROPERTY = "mine2metal.temporal.jitterSign";
 	/** Measured against native resolution in the game test: the other three signs are visibly softer. */
 	private static final String DEFAULT_JITTER_SIGN = "1,1";
+	/**
+	 * Whether the temporal scaler gets a reactive mask for surfaces that moved by themselves (entities), so their
+	 * history does not trail behind them. A system property so the game test can compare with and without.
+	 */
+	private static final String REACTIVE_MASK_PROPERTY = "mine2metal.temporal.reactiveMask";
 	private static String jitterSignText = DEFAULT_JITTER_SIGN;
 	private static float[] jitterSign = parseJitterSign(DEFAULT_JITTER_SIGN);
 
@@ -204,7 +209,7 @@ public final class WorldUpscaler {
 			reset = true;
 		}
 		boolean upscaled = MetalRenderer.upscaleTemporal(target.getColorTexture(), target.getDepthTexture(), main.getColorTexture(), motion.matrices,
-				jitterSign[0] * jitterX, jitterSign[1] * jitterY, reset);
+				jitterSign[0] * jitterX, jitterSign[1] * jitterY, reset, Boolean.parseBoolean(System.getProperty(REACTIVE_MASK_PROPERTY, "true")));
 		motion.finish(upscaled);
 		return upscaled;
 	}

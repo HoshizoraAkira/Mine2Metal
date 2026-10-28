@@ -163,6 +163,7 @@ static const NSUInteger M2M_PRESENT_SLOTS = 3;
 @property(nonatomic, strong) id temporalUpscaler;
 @property(nonatomic, weak) id lastTemporalUpscaler;
 @property(nonatomic, strong) id<MTLRenderPipelineState> motionPipeline;
+@property(nonatomic, strong) id<MTLRenderPipelineState> motionReactivePipeline;
 @property(nonatomic, strong) id<MTLDepthStencilState> motionDepthState;
 // EDR output (hdr.m): the layer takes extended linear RGBA16Float, and the world's highlights go above SDR white.
 // hdrWorld is this frame's world before the hand and the GUI, compared with the finished frame to tell them apart.
@@ -264,8 +265,9 @@ id<MTL4CommandBuffer> m2m_present_command_buffer4(M2MContext *ctx);
 void m2m_commit_present4(M2MContext *ctx, id<MTL4CommandBuffer> commandBuffer, M2MCompletion completion);
 // Motion vectors (RG16Float, in pixels towards where each pixel was in the previous frame) and a Depth32Float copy
 // of sourceDepth, from the matrices described at m2m_metalfx_temporal_upscale (temporal.m). NO if the shader failed.
+// With previousDepth (the previous frame's Depth32Float copy) and reactive (R8Unorm), it also writes the reactive mask.
 BOOL m2m_encode_motion(M2MContext *ctx, id<MTLTexture> sourceDepth, id<MTLTexture> motion, id<MTLTexture> depth,
-                       const float *matrices);
+                       const float *matrices, id<MTLTexture> previousDepth, id<MTLTexture> reactive);
 // Frame interpolation (interpolation.m), called by m2m_present. pending: this frame's world was captured, so the
 // frame goes to the present thread. encode: the generated frame shown before this one (nil if there is none) for
 // present slot, encoded once ui (the finished frame) has been staged in a texture with ui_usage. presented ends the
