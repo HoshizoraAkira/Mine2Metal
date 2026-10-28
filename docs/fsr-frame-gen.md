@@ -128,3 +128,39 @@ Kualitas: frame buatan sudah berada di antara kedua frame asli (25,6 dB terhadap
 - FSR 3 **2–3× lebih murah** daripada MetalFX di ukuran yang sama, dan waktunya stabil. MetalFX berubah-ubah antara 10 dan 40 ms di 1080p.
 - Di output sekelas 1080p dengan render 50%, 8,7 ms masih muat di anggaran 33 ms per frame asli untuk 30 + 30 FPS. Di Retina penuh (40–54 ms), tidak ada generator frame yang bisa mencapai 30 + 30 di GPU M3 Air.
 - Ruang optimasi yang terlihat: pass interpolasi utama dan optical flow (ukuran threadgroup, FP16 manual karena jalur GLSL AMD tidak memakainya), serta disocclusion di render penuh.
+
+## Riset lanjutan dan optimasi (2026-10-28)
+
+### Optimasi backend frame generation
+
+| Percobaan | Hasil |
+|---|---|
+| Tekstur 1×1 kosong untuk input opsional yang tidak diberikan (distortion field, HUD-less), seperti null descriptor di backend Vulkan AMD | Dipertahankan: lebih benar (tidak ada tekstur `nil` yang di-sample), performa sama |
+| `spirv-opt --loop-unroll -O` sebelum spirv-cross, supaya array kecil jadi register | Loop AMD berisi `if`/`continue` sehingga tidak di-unroll; tidak ada perubahan; dibuang |
+| spirv-cross `--msl-force-native-arrays` (tanpa `spvUnsafeArray`) | Waktu sama; dibuang |
+| Pass membaca salinan biasa dari tekstur atomic `r32ui` (menguji tata letak memori atomic) | Waktu sama; dibuang |
+
+Kesimpulan: terjemahan GLSL → MSL tidak memperlambat apa pun. Biaya pass interpolasi utama, optical flow, dan disocclusion (render penuh) adalah biaya algoritmanya di GPU M3. Penghematan berikutnya butuh penulisan ulang manual (FP16, karena jalur GLSL AMD hampir tidak memakai `half`).
+
+Perbaikan yang ditemukan sambil jalan (sekarang di `ffx_metal.mm`):
+- Constant buffer dipad ke ukuran yang dideklarasikan shader. std140 membulatkan struct ke 16 byte, sedangkan struct C AMD tidak (148 vs 160 byte di upscaler FSR 3.1).
+- Clear ke resource opsional yang tidak diberikan dilewati.
+
+### Upscaler: FSR 1 dan FSR 3.1 vs MetalFX
+
+Kedua upscaler AMD ikut di-vendor (v1.1.4, MIT). Ke-12 pass-nya diterjemahkan otomatis, dan `tools/fsrbench/upscale.mm` (`fsrupscale`) mengukurnya berdampingan dengan MetalFX pada input yang sama. Di bawah validation tidak ada error. Waktu GPU per frame di Apple M3:
+
+| Output (render) | FSR 3.1 | MetalFX temporal | FSR 1 (EASU + RCAS) | MetalFX spatial |
+|---|---|---|---|---|
+| 1920×1080 (50%) | 2,67 ms | **1,09 ms** | 0,83 ms | **0,51 ms** |
+| 1920×1080 (75%) | 3,40 | **1,37** | 0,88 | **0,51** |
+| 2560×1600 (50%) | 4,87 | **2,14** | 1,60 | **1,01** |
+| 3840×2486 (50%) | 10,77 | **4,94** | 3,70 | **2,35** |
+
+MetalFX 2–2,5× lebih murah untuk upscaling, sementara FSR 2–3× lebih murah untuk frame generation. Kombinasi paling efisien di Mac ini: **upscaling MetalFX + frame generation FSR 3.1**. Upscaler FSR bisa disediakan sebagai pilihan, tapi akan selalu lebih berat. Kualitasnya belum dibandingkan, karena itu butuh gerakan nyata dari game.
+
+### Fitur Apple yang relevan (dari header SDK macOS 27)
+
+- `MTLFXTemporalScaler.reactiveMaskTexture` (macOS 14.4+): masker untuk mengurangi jejak samar mob dan partikel di upscaling temporal.
+- `CAMetalDisplayLink` (macOS 14+): drawable diberikan tepat waktu, lengkap dengan `targetPresentationTimestamp` dan `preferredFrameLatency`. Pengganti `nextDrawable` di thread present, supaya frame buatan bisa diletakkan di tengah dua frame asli dan latensinya terukur.
+- `jitteredMotionVectorsEnabled` / `outputResolutionMotionVectors` untuk temporal scaler (macOS 27).

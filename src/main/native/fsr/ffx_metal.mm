@@ -32,6 +32,10 @@ struct MetalPipeline {
 	id<MTLComputePipelineState> state;
 	MTLSize threadgroupSize;
 	std::vector<NSUInteger> srvTextures, uavTextures, srvBuffers, uavBuffers, constantBuffers;
+	// Component type of each shader resource texture, for the stand-in bound when a resource is missing.
+	std::vector<MTLDataType> srvTextureTypes;
+	// Size the shader declares for each constant buffer: std140 rounds structs up to 16 bytes, the C structs not.
+	std::vector<NSUInteger> constantBufferSizes;
 	std::vector<id<MTLSamplerState>> samplers;
 	std::vector<NSUInteger> samplerIndices;
 };
@@ -42,6 +46,9 @@ struct MetalBackend {
 	std::vector<MetalResource> resources;
 	std::vector<EffectContext> contexts;
 	std::vector<FfxGpuJobDescription> jobs;
+	// 1x1 zero textures bound where an optional input (a distortion field, a HUD-less color) is not given, like the
+	// null descriptors of AMD's Vulkan backend. By component type: float, uint, int.
+	id<MTLTexture> nullFloat, nullUint, nullInt;
 	// Constant data is copied here when staged and stays until the jobs that use it are encoded.
 	std::vector<uint32_t> constantRing;
 	size_t constantRingOffset = 0;
@@ -96,6 +103,31 @@ NSString *passName(FfxEffect effect, FfxPass pass) {
 	    @"ffx_opticalflow_filter_optical_flow_pass_v5",
 	    @"ffx_opticalflow_scale_optical_flow_advanced_pass_v5",
 	};
+	// Accumulate with and without sharpening share a shader; it is built without, so sharpening runs as RCAS.
+	static NSString *const fsr3Upscaler[] = {
+	    @"ffx_fsr3upscaler_prepare_inputs_pass",
+	    @"ffx_fsr3upscaler_luma_pyramid_pass",
+	    @"ffx_fsr3upscaler_shading_change_pyramid_pass",
+	    @"ffx_fsr3upscaler_shading_change_pass",
+	    @"ffx_fsr3upscaler_prepare_reactivity_pass",
+	    @"ffx_fsr3upscaler_luma_instability_pass",
+	    @"ffx_fsr3upscaler_accumulate_pass",
+	    @"ffx_fsr3upscaler_accumulate_pass",
+	    @"ffx_fsr3upscaler_rcas_pass",
+	    @"ffx_fsr3upscaler_debug_view_pass",
+	    @"ffx_fsr3upscaler_autogen_reactive_pass",
+	};
+	static NSString *const fsr1[] = {
+	    @"ffx_fsr1_easu_pass",
+	    @"ffx_fsr1_easu_pass",
+	    @"ffx_fsr1_rcas_pass",
+	};
+	if (effect == FFX_EFFECT_FSR3UPSCALER && pass < sizeof(fsr3Upscaler) / sizeof(fsr3Upscaler[0])) {
+		return fsr3Upscaler[pass];
+	}
+	if (effect == FFX_EFFECT_FSR1 && pass < sizeof(fsr1) / sizeof(fsr1[0])) {
+		return fsr1[pass];
+	}
 	if (effect == FFX_EFFECT_FRAMEINTERPOLATION && pass < sizeof(frameInterpolation) / sizeof(frameInterpolation[0])) {
 		return frameInterpolation[pass];
 	}
@@ -346,6 +378,7 @@ FfxErrorCode createPipeline(FfxInterface *backendInterface, FfxEffect effect, Ff
 			if (readOnly) {
 				addBinding(outPipeline->srvTextureBindings, outPipeline->srvTextureCount, binding.index, binding.name);
 				pipeline->srvTextures.push_back(binding.index);
+				pipeline->srvTextureTypes.push_back(((id<MTLTextureBinding>)binding).textureDataType);
 			} else {
 				addBinding(outPipeline->uavTextureBindings, outPipeline->uavTextureCount, binding.index, binding.name);
 				pipeline->uavTextures.push_back(binding.index);
@@ -355,6 +388,7 @@ FfxErrorCode createPipeline(FfxInterface *backendInterface, FfxEffect effect, Ff
 			if ([binding.name hasPrefix:@"cb"]) {
 				addBinding(outPipeline->constantBufferBindings, outPipeline->constCount, binding.index, binding.name);
 				pipeline->constantBuffers.push_back(binding.index);
+				pipeline->constantBufferSizes.push_back(((id<MTLBufferBinding>)binding).bufferDataSize);
 			} else if (readOnly) {
 				addBinding(outPipeline->srvBufferBindings, outPipeline->srvBufferCount, binding.index, binding.name);
 				pipeline->srvBuffers.push_back(binding.index);
@@ -402,6 +436,10 @@ id<MTLResource> objectOf(MetalBackend *backend, FfxResourceInternal resource) {
 
 void encodeClear(MetalBackend *backend, id<MTLCommandBuffer> commandBuffer, const FfxClearFloatJobDescription &clear) {
 	id<MTLResource> object = objectOf(backend, clear.target);
+	if (!object) {
+		// An optional resource that was not given.
+		return;
+	}
 	if ([object conformsToProtocol:@protocol(MTLBuffer)]) {
 		id<MTLBlitCommandEncoder> blit = [commandBuffer blitCommandEncoder];
 		[blit fillBuffer:(id<MTLBuffer>)object range:NSMakeRange(0, ((id<MTLBuffer>)object).length) value:(uint8_t)clear.color[0]];
@@ -476,7 +514,12 @@ void encodeCompute(MetalBackend *backend, id<MTLComputeCommandEncoder> encoder, 
 	auto *pipeline = static_cast<MetalPipeline *>(job.pipeline.pipeline);
 	[encoder setComputePipelineState:pipeline->state];
 	for (size_t i = 0; i < pipeline->srvTextures.size(); i++) {
-		[encoder setTexture:(id<MTLTexture>)objectOf(backend, job.srvTextures[i].resource) atIndex:pipeline->srvTextures[i]];
+		id<MTLTexture> texture = (id<MTLTexture>)objectOf(backend, job.srvTextures[i].resource);
+		if (!texture) {
+			MTLDataType type = pipeline->srvTextureTypes[i];
+			texture = type == MTLDataTypeUInt ? backend->nullUint : type == MTLDataTypeInt ? backend->nullInt : backend->nullFloat;
+		}
+		[encoder setTexture:texture atIndex:pipeline->srvTextures[i]];
 	}
 	for (size_t i = 0; i < pipeline->uavTextures.size(); i++) {
 		FfxResourceInternal resource = job.uavTextures[i].resource;
@@ -495,7 +538,15 @@ void encodeCompute(MetalBackend *backend, id<MTLComputeCommandEncoder> encoder, 
 		[encoder setBuffer:(id<MTLBuffer>)objectOf(backend, job.uavBuffers[i].resource) offset:job.uavBuffers[i].offset atIndex:pipeline->uavBuffers[i]];
 	}
 	for (size_t i = 0; i < pipeline->constantBuffers.size(); i++) {
-		[encoder setBytes:job.cbs[i].data length:job.cbs[i].num32BitEntries * 4 atIndex:pipeline->constantBuffers[i]];
+		NSUInteger length = job.cbs[i].num32BitEntries * 4;
+		NSUInteger declared = pipeline->constantBufferSizes[i];
+		if (declared > length) {
+			uint8_t padded[4096] = {};
+			memcpy(padded, job.cbs[i].data, length);
+			[encoder setBytes:padded length:std::min<NSUInteger>(declared, sizeof(padded)) atIndex:pipeline->constantBuffers[i]];
+		} else {
+			[encoder setBytes:job.cbs[i].data length:length atIndex:pipeline->constantBuffers[i]];
+		}
 	}
 	for (size_t i = 0; i < pipeline->samplers.size(); i++) {
 		[encoder setSamplerState:pipeline->samplers[i] atIndex:pipeline->samplerIndices[i]];
@@ -588,6 +639,16 @@ FfxErrorCode executeGpuJobs(FfxInterface *backendInterface, FfxCommandList comma
 	return FFX_OK;
 }
 
+id<MTLTexture> nullTexture(id<MTLDevice> device, MTLPixelFormat format) {
+	MTLTextureDescriptor *descriptor = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:format width:1 height:1 mipmapped:NO];
+	descriptor.usage = MTLTextureUsageShaderRead;
+	descriptor.storageMode = MTLStorageModeShared;
+	id<MTLTexture> texture = [device newTextureWithDescriptor:descriptor];
+	const uint64_t zero[2] = {0, 0};
+	[texture replaceRegion:MTLRegionMake2D(0, 0, 1, 1) mipmapLevel:0 withBytes:zero bytesPerRow:16];
+	return texture;
+}
+
 } // namespace
 
 size_t ffxGetScratchMemorySizeMetal(void) {
@@ -603,6 +664,9 @@ FfxErrorCode ffxGetInterfaceMetal(FfxInterface *backendInterface, id<MTLDevice> 
 	backend->device = device;
 	backend->shaders = shaders;
 	backend->constantRing.resize(CONSTANT_RING_WORDS);
+	backend->nullFloat = nullTexture(device, MTLPixelFormatRGBA16Float);
+	backend->nullUint = nullTexture(device, MTLPixelFormatR32Uint);
+	backend->nullInt = nullTexture(device, MTLPixelFormatR32Sint);
 	*static_cast<MetalBackend **>(scratch) = backend;
 
 	*backendInterface = {};

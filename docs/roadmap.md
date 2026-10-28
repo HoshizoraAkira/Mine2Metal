@@ -187,6 +187,24 @@ Hasil gametest (Apple M3, macOS 27, puncak 300%, headroom layar diabaikan lewat 
 - Belum dilihat di layar sungguhan. MacBook Air hanya punya headroom kalau slider kecerahan di bawah maksimum.
 - Keterbatasan: yang dinaikkan semua yang sangat terang, termasuk salju dan awan di siang hari, bukan hanya sumber cahaya. Minecraft tidak memberi informasi blok mana yang memancarkan cahaya.
 
+## Roadmap lanjutan (disusun 2026-10-28)
+
+Sudah selesai: backend inti (M0–M8), layar pengaturan (M10), upscaling MetalFX (M11), interpolasi frame MetalFX (M12), Metal 4 (M13), HDR/EDR (M14), satu jalur present, dan spike FSR 3 (F0, lihat [fsr-frame-gen.md](fsr-frame-gen.md)). Uji manual Metal 4, interpolasi, HDR, dan VSync nyala di layar sungguhan masih menunggu ([uji-manual.md](uji-manual.md) nomor 9, 17, 22–27).
+
+Urutan di bawah adalah prioritas. Instalasi (M9) tetap terakhir, sesuai kesepakatan.
+
+| # | Pekerjaan | Isi | Gerbang selesai |
+|---|---|---|---|
+| R1 | **FSR 3.1 frame gen di game** (F1 + F2) | Backend FFX masuk dylib (kode AMD C++ + `ffx_metal.mm`, MSL di jar, dikompilasi di thread latar + cache). Jalur Metal 4: encoder compute MTL4, argument table, barrier antar pass, residency. Input: W tanpa HUD, F, depth, motion vector (skala dan tanda dikalibrasi dengan uji PSNR yaw), kamera; HDR lewat transfer scRGB. Output ke slot thread present. Menu: Frame gen Mati / MetalFX / FSR 3.1 (satu saja) | ≥ 31 dB di uji yaw; lebih cepat dari MetalFX di uji jalan-ke-hutan; validation bersih di Metal 3 dan 4 |
+| R2 | **Pacing dengan `CAMetalDisplayLink`** | Thread present memakai display link (macOS 14+). Frame buatan diletakkan di tengah dua frame asli menurut `targetPresentationTimestamp`, dan latensi diatur lewat `preferredFrameLatency`. Sekalian ukur VSync nyala di layar sungguhan | Jarak antar frame tampil rata (p95 ≈ 1 refresh) dengan frame gen nyala |
+| R3 | **Lonjakan CPU saat chunk dimuat** | Tes jalan-ke-hutan yang sama di backend OpenGL/Vulkan bawaan sebagai pembanding (sekarang frame bisa tertahan 200–600 ms). Kalau dari backend kita, telusuri (upload buffer, kompilasi pipeline, sinkronisasi) | Penyebab diketahui; kalau dari kita, lonjakan ≤ backend bawaan |
+| R4 | **Waktu GPU per tahap + pengaman frame gen** | Timestamp di batas encoder (counter sample buffer) untuk dunia, upscaling, frame gen, HDR, present. Dari situ frame gen mati sendiri (dengan pesan) kalau biayanya melebihi anggaran | Statistik per tahap di `-Dmine2metal.stats`; frame gen tidak pernah menurunkan FPS di bawah separuh tanpa memberi tahu |
+| R5 | **Reactive mask untuk upscaling temporal** | `reactiveMaskTexture` MetalFX (macOS 14.4+): tandai piksel mob, partikel, dan air yang bergerak sendiri, supaya tidak meninggalkan jejak | Jejak samar di uji mob bergerak berkurang (diukur dengan screenshot) |
+| R6 | **Optimasi shader FSR** (F3) | FP16 manual untuk pass interpolasi utama dan optical flow, disocclusion di render penuh, dispatch concurrent untuk pass kecil | ≤ 6 ms di 1080p dengan render 50% (sekarang 8,7 ms) |
+| R7 | **Upscaler FSR sebagai pilihan** | FSR 1 dan FSR 3.1 di menu Upscaling di samping MetalFX. Sudah terbukti jalan, tapi 2–2,5× lebih berat; nilainya sebagai pilihan dan perbandingan kualitas | Kualitas dibandingkan dengan MetalFX di uji temporal; lolos validation |
+| R8 | **Rapikan arsitektur** | Satu objek alur "frame dunia" (tangkap/proyeksi/depth/jitter) menggantikan state statis di `WorldUpscaler`, `FrameInterpolation`, `HdrOutput`; paket di luar `upscale`; barrier Metal 4 dipersempit | Gametest penuh tetap lolos; tidak ada perubahan perilaku |
+| R9 | **Instalasi (M9)** | Seperti di atas: rilis Modrinth/CurseForge, `.mrpack`, pesan jelas di Mac yang tidak didukung | — |
+
 ## Fitur khas Metal (setelah M5)
 
 | Fitur | API Apple | macOS | Input yang dibutuhkan | Kesulitan |
