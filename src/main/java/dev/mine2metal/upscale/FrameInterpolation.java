@@ -33,8 +33,6 @@ public final class FrameInterpolation {
 	 */
 	private static final String MOTION_SCALE_PROPERTY = "mine2metal.interpolation.motionScale";
 	private static final String DEFAULT_MOTION_SCALE = "1,1";
-	/** Minecraft's near plane, for a projection whose planes cannot be read back. */
-	private static final float NEAR_PLANE = 0.05F;
 
 	private static final CameraMotion motion = new CameraMotion();
 	private static final SystemToast.SystemToastId PAUSE_TOAST = new SystemToast.SystemToastId(10_000L);
@@ -131,7 +129,7 @@ public final class FrameInterpolation {
 		guard(engine, deltaTime, now);
 
 		float[] values = new float[9];
-		planes(projection, camera, values);
+		CameraMotion.planes(projection, camera.depthFar, values);
 		values[2] = (float) Math.toDegrees(2.0 * Math.atan(1.0 / projection.m11()));
 		values[3] = projection.m11() / projection.m00();
 		values[4] = WorldUpscaler.worldJitterX();
@@ -180,21 +178,6 @@ public final class FrameInterpolation {
 			SystemToast.add(client.gui.toastManager(), PAUSE_TOAST, Component.translatable("mine2metal.toast.frame_generation_paused"),
 					Component.translatable("mine2metal.toast.frame_generation_paused.detail", millis, interval));
 		}
-	}
-
-	/**
-	 * Near and far plane into values[0..1]. The Metal device reports zero-to-one depth, so the projection has
-	 * m22 = f / (n - f) and m32 = n f / (n - f).
-	 */
-	private static void planes(Matrix4f projection, CameraRenderState camera, float[] values) {
-		float near = projection.m32() / projection.m22();
-		float far = projection.m32() / (projection.m22() + 1.0F);
-		if (!(near > 0.0F && far > near && Float.isFinite(far))) {
-			near = NEAR_PLANE;
-			far = camera.depthFar;
-		}
-		values[0] = near;
-		values[1] = far;
 	}
 
 	private static float[] parseScale(String value) {

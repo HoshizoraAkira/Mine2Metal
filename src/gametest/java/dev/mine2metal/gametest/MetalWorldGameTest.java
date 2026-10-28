@@ -343,9 +343,10 @@ public class MetalWorldGameTest implements FabricClientGameTest {
 	}
 
 	/**
-	 * Temporal upscaling against native resolution, for each sign of the jitter MetalFX is told about: still, where only
-	 * the jitter matters, and right after a turn, where the motion vectors must carry the history along. The
-	 * screenshots are compared afterwards (PSNR against the native ones).
+	 * Temporal upscaling against native resolution, by MetalFX and by FSR 3.1, for each sign of the jitter the scaler is
+	 * told about: still, where only the jitter matters, and right after a turn, where the motion vectors must carry the
+	 * history along. Then the spatial upscalers, MetalFX and FSR 1, still. The screenshots are compared afterwards (PSNR
+	 * against the native ones).
 	 */
 	private static void checkTemporalUpscaling(ClientGameTestContext context, TestSingleplayerContext singleplayer, Vec3 above) {
 		MetalSettings settings = MetalSettings.get();
@@ -359,24 +360,43 @@ public class MetalWorldGameTest implements FabricClientGameTest {
 		context.takeScreenshot("mine2metal-native-still");
 
 		String[] signs = Boolean.getBoolean("mine2metal.test.jitterSigns") ? new String[] {"1,1", "-1,-1", "-1,1", "1,-1"} : new String[] {"1,1"};
-		for (String sign : signs) {
-			String name = sign.replace(",", "_").replace("-1", "m").replace("1", "p");
-			System.setProperty("mine2metal.temporal.jitterSign", sign);
+		for (MetalSettings.Upscaling engine : new MetalSettings.Upscaling[] {MetalSettings.Upscaling.TEMPORAL, MetalSettings.Upscaling.FSR3}) {
+			if (engine == MetalSettings.Upscaling.FSR3 && !MetalRenderer.supportsFsrUpscaling()) {
+				continue;
+			}
+			String prefix = engine == MetalSettings.Upscaling.TEMPORAL ? "mine2metal-temporal-50-" : "mine2metal-fsr3-50-";
+			for (String sign : signs) {
+				String name = sign.replace(",", "_").replace("-1", "m").replace("1", "p");
+				System.setProperty("mine2metal.temporal.jitterSign", sign);
+				context.runOnClient(client -> {
+					settings.upscaling = engine;
+					settings.renderScale = 50;
+				});
+				hover(context, singleplayer, still);
+				context.takeScreenshot(prefix + "still-" + name);
+				// Turn by 3 degrees a tick, then capture right away: stale history shows as ghosting.
+				for (int yaw = 3; yaw <= 30; yaw += 3) {
+					singleplayer.getServer().runCommand(String.format(Locale.ROOT, "tp @a %.3f %.3f %.3f %d 50", above.x, above.y, above.z, yaw));
+					context.waitTicks(1);
+				}
+				context.takeScreenshot(prefix + "turned-" + name);
+				LOGGER.info("Average FPS from above with {} at 50% (jitter sign {}): {}", engine, sign, averageFps(context));
+			}
+		}
+		System.clearProperty("mine2metal.temporal.jitterSign");
+
+		for (MetalSettings.Upscaling engine : new MetalSettings.Upscaling[] {MetalSettings.Upscaling.SPATIAL, MetalSettings.Upscaling.FSR1}) {
+			if (engine == MetalSettings.Upscaling.FSR1 && !MetalRenderer.supportsFsrUpscaling()) {
+				continue;
+			}
 			context.runOnClient(client -> {
-				settings.upscaling = MetalSettings.Upscaling.TEMPORAL;
+				settings.upscaling = engine;
 				settings.renderScale = 50;
 			});
 			hover(context, singleplayer, still);
-			context.takeScreenshot("mine2metal-temporal-50-still-" + name);
-			// Turn by 3 degrees a tick, then capture right away: stale history shows as ghosting.
-			for (int yaw = 3; yaw <= 30; yaw += 3) {
-				singleplayer.getServer().runCommand(String.format(Locale.ROOT, "tp @a %.3f %.3f %.3f %d 50", above.x, above.y, above.z, yaw));
-				context.waitTicks(1);
-			}
-			context.takeScreenshot("mine2metal-temporal-50-turned-" + name);
-			LOGGER.info("Average FPS from above with MetalFX temporal at 50% (jitter sign {}): {}", sign, averageFps(context));
+			context.takeScreenshot("mine2metal-" + engine.name().toLowerCase(Locale.ROOT) + "-50-still");
+			LOGGER.info("Average FPS from above with {} at 50%: {}", engine, averageFps(context));
 		}
-		System.clearProperty("mine2metal.temporal.jitterSign");
 
 		for (int scale : new int[] {75, 100}) {
 			context.runOnClient(client -> {

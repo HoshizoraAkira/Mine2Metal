@@ -181,6 +181,8 @@ static const NSUInteger M2M_PRESENT_SLOTS = 3;
 @property(nonatomic, strong) id frameInterpolator;
 // MetalFX spatial scaler state (metalfx.m), kept untyped here so other files need not import MetalFX.
 @property(nonatomic, strong) id spatialUpscaler;
+// FSR 1 in place of the spatial scaler (fsr_upscale.mm).
+@property(nonatomic, strong) id fsrSpatialUpscaler;
 
 // Committed command buffers not yet known to be finished, oldest first.
 @property(nonatomic, strong) NSMutableArray<id<MTLCommandBuffer>> *inFlight;
@@ -308,6 +310,29 @@ id m2m_fsr_framegen_create(M2MContext *ctx, NSUInteger displayWidth, NSUInteger 
                            NSUInteger renderHeight, MTLPixelFormat format, BOOL hdr);
 BOOL m2m_fsr_framegen_encode(M2MContext *ctx, id generator, const M2MFsrFrame *frame);
 void m2m_fsr_framegen_release(M2MContext *ctx, id generator);
+// FSR 3.1 upscaling (fsr_upscale.mm), in place of the MetalFX temporal scaler: the inputs temporal.m prepares for that.
+typedef struct {
+	__unsafe_unretained id<MTLTexture> color;
+	// Depth32Float, and motion vectors in pixels towards the previous frame (RG16Float), both at render size.
+	__unsafe_unretained id<MTLTexture> depth;
+	__unsafe_unretained id<MTLTexture> motion;
+	// R8Unorm, or nil.
+	__unsafe_unretained id<MTLTexture> reactive;
+	__unsafe_unretained id<MTLTexture> output;
+	float near_plane;
+	float far_plane;
+	// Vertical, in radians.
+	float field_of_view;
+	float jitter_x;
+	float jitter_y;
+	float frame_time_ms;
+	BOOL reset;
+} M2MFsrUpscale;
+id m2m_fsr3_upscaler_create(M2MContext *ctx, NSUInteger renderWidth, NSUInteger renderHeight, NSUInteger displayWidth,
+                            NSUInteger displayHeight);
+BOOL m2m_fsr3_upscaler_encode(M2MContext *ctx, id upscaler, const M2MFsrUpscale *frame);
+// Lets an FSR upscaler go once the GPU is done with it.
+void m2m_fsr_upscaler_release(M2MContext *ctx, id upscaler);
 // Adds seconds to label in gpuSecondsByLabel (mine2metal.m).
 void m2m_add_label_seconds(M2MContext *ctx, NSString *label, double seconds);
 // Copies message into a caller-provided buffer as NUL-terminated UTF-8, truncating to capacity.

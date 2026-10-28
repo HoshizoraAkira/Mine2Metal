@@ -17,14 +17,14 @@ import java.util.Locale;
 import java.util.Objects;
 
 /**
- * Renders the world at a lower resolution and upscales it with MetalFX onto the window-sized main target before the
- * hand, post effects and the GUI, which all stay at full resolution.
+ * Renders the world at a lower resolution and upscales it onto the window-sized main target before the hand, post
+ * effects and the GUI, which all stay at full resolution: with MetalFX, or with AMD's FSR 1 or FSR 3.1.
  * <p>
  * The main target object itself stays in place; only its textures are swapped for smaller ones while the world renders.
  * Minecraft keeps references to that object across frames (the sky renderer captures it when it is rebuilt), so
  * swapping the object would leave them drawing into, and later reading from, a target that no longer exists.
  * <p>
- * Temporal upscaling also shifts the world's projection by a different subpixel offset each frame. MetalFX combines
+ * Temporal upscaling also shifts the world's projection by a different subpixel offset each frame. The scaler combines
  * those samples over time, following each pixel with motion vectors derived from depth and the camera matrices.
  * <p>
  * Driven from {@code GameRendererMixin}: {@link #begin} at the start of renderLevel, {@link #captureProjection} when
@@ -44,6 +44,8 @@ public final class WorldUpscaler {
 	 * history does not trail behind them. A system property so the game test can compare with and without.
 	 */
 	private static final String REACTIVE_MASK_PROPERTY = "mine2metal.temporal.reactiveMask";
+	/** RCAS sharpening after FSR 1, from 0 (sharpest) to 2; AMD's sample uses 0.2. */
+	private static final float FSR1_SHARPNESS = 0.2F;
 	private static String jitterSignText = DEFAULT_JITTER_SIGN;
 	private static float[] jitterSign = parseJitterSign(DEFAULT_JITTER_SIGN);
 
@@ -53,6 +55,8 @@ public final class WorldUpscaler {
 	private static @Nullable RenderTarget lentTo;
 	/** Whether this frame's world was drawn into the small textures. */
 	private static boolean scaledFrame;
+	/** The upscaling this frame's world pass began with. */
+	private static MetalSettings.Upscaling frameMode = MetalSettings.Upscaling.OFF;
 	private static boolean warnedFailure;
 
 	/** The camera whose projection is jittered for this frame; null when the frame is not temporal. */
@@ -68,6 +72,9 @@ public final class WorldUpscaler {
 	private static boolean projectionCaptured;
 
 	private static final CameraMotion motion = new CameraMotion();
+	/** Near and far plane, vertical field of view in radians and milliseconds since the previous frame, for FSR 3.1. */
+	private static final float[] cameraValues = new float[4];
+	private static long previousUpscaleNanos;
 
 	private WorldUpscaler() {
 	}
@@ -82,7 +89,15 @@ public final class WorldUpscaler {
 			// At 100% the temporal scaler still runs, as anti-aliasing, when the device allows a ratio of 1.
 			case TEMPORAL -> MetalRenderer.supportsTemporalRatio(MetalSettings.MAX_RENDER_SCALE / (float) settings.renderScale)
 					? MetalSettings.Upscaling.TEMPORAL : MetalSettings.Upscaling.OFF;
+			case FSR1 -> settings.renderScale < MetalSettings.MAX_RENDER_SCALE && MetalRenderer.supportsFsrUpscaling()
+					? MetalSettings.Upscaling.FSR1 : MetalSettings.Upscaling.OFF;
+			// FSR 3.1 at 100% is AMD's native anti-aliasing mode.
+			case FSR3 -> MetalRenderer.supportsFsrUpscaling() ? MetalSettings.Upscaling.FSR3 : MetalSettings.Upscaling.OFF;
 		};
+	}
+
+	private static boolean temporal(MetalSettings.Upscaling mode) {
+		return mode == MetalSettings.Upscaling.TEMPORAL || mode == MetalSettings.Upscaling.FSR3;
 	}
 
 	/** At the start of the world pass: gives main the smaller textures and jitters the camera if upscaling is on. */
@@ -94,6 +109,7 @@ public final class WorldUpscaler {
 		scaledFrame = false;
 		jitteredFrame = false;
 		MetalSettings.Upscaling mode = activeMode();
+		frameMode = mode;
 		if (mode == MetalSettings.Upscaling.OFF) {
 			release();
 			motion.reset();
@@ -117,7 +133,7 @@ public final class WorldUpscaler {
 		lentTo = main;
 		scaledFrame = true;
 
-		if (mode == MetalSettings.Upscaling.TEMPORAL) {
+		if (temporal(mode)) {
 			jitter(camera, width, height, main.width / (float) width);
 		} else {
 			motion.reset();
@@ -126,7 +142,7 @@ public final class WorldUpscaler {
 
 	/**
 	 * Shifts the projection by the next point of a Halton (2, 3) sequence. Apple suggests at least 8 phases times the
-	 * square of the upscale ratio, so each output pixel is sampled at several positions.
+	 * square of the upscale ratio, so each output pixel is sampled at several positions; so does AMD for FSR.
 	 */
 	private static void jitter(CameraRenderState camera, int width, int height, float ratio) {
 		int phases = Math.max(8, (int) Math.ceil(8.0F * ratio * ratio));
@@ -162,7 +178,7 @@ public final class WorldUpscaler {
 		return Objects.requireNonNull(depth, "depth texture");
 	}
 
-	/** How far this frame's world was shifted, in pixels of {@link #worldDepth}, as told to MetalFX; 0 unless temporal. */
+	/** How far this frame's world was shifted, in pixels of {@link #worldDepth}, as told to the scaler; 0 unless temporal. */
 	public static float worldJitterX() {
 		return jitteredFrame ? jitterSign[0] * jitterX : 0.0F;
 	}
@@ -173,6 +189,7 @@ public final class WorldUpscaler {
 
 	/** Before the hand is drawn: takes the textures back and upscales the world onto main. */
 	public static void end() {
+		MetalSettings.Upscaling mode = frameMode;
 		RenderTarget main = lentTo;
 		TextureTarget target = scaled;
 		if (main == null || target == null) {
@@ -183,24 +200,34 @@ public final class WorldUpscaler {
 		CameraRenderState camera = jitteredCamera;
 		restoreProjection();
 
-		if (camera != null && projectionCaptured && upscaleTemporal(camera, target, main)) {
+		if (camera != null && projectionCaptured && upscaleTemporal(mode == MetalSettings.Upscaling.FSR3, camera, target, main)) {
 			return;
 		}
 		motion.reset();
-		if (camera == null && MetalRenderer.upscaleSpatial(target.getColorTexture(), main.getColorTexture())) {
-			return;
+		if (camera == null) {
+			boolean upscaled = mode == MetalSettings.Upscaling.FSR1
+					? MetalRenderer.upscaleFsr1(target.getColorTexture(), main.getColorTexture(), FSR1_SHARPNESS)
+					: MetalRenderer.upscaleSpatial(target.getColorTexture(), main.getColorTexture());
+			if (upscaled) {
+				return;
+			}
 		}
 		if (!warnedFailure) {
 			warnedFailure = true;
-			Mine2Metal.LOGGER.warn("MetalFX could not upscale {}x{} to {}x{}; falling back to a plain blit", target.width, target.height, main.width,
+			Mine2Metal.LOGGER.warn("{} could not upscale {}x{} to {}x{}; falling back to a plain blit", mode, target.width, target.height, main.width,
 					main.height);
 		}
 		target.blitAndBlendToTexture(main.getColorTextureView(), main.getDepthTextureView());
 	}
 
-	private static boolean upscaleTemporal(CameraRenderState camera, TextureTarget target, RenderTarget main) {
+	private static boolean upscaleTemporal(boolean fsr, CameraRenderState camera, TextureTarget target, RenderTarget main) {
 		Matrix4f viewProjection = new Matrix4f(projection).mul(camera.viewRotationMatrix);
 		boolean reset = motion.begin(viewProjection, camera.pos, target.width, target.height);
+		long now = System.nanoTime();
+		CameraMotion.planes(projection, camera.depthFar, cameraValues);
+		cameraValues[2] = (float) (2.0 * Math.atan(1.0 / projection.m11()));
+		cameraValues[3] = previousUpscaleNanos == 0L ? 16.7F : Math.min((now - previousUpscaleNanos) / 1.0e6F, 1000.0F);
+		previousUpscaleNanos = now;
 
 		String signText = System.getProperty(JITTER_SIGN_PROPERTY, DEFAULT_JITTER_SIGN);
 		if (!signText.equals(jitterSignText)) {
@@ -208,8 +235,8 @@ public final class WorldUpscaler {
 			jitterSign = parseJitterSign(signText);
 			reset = true;
 		}
-		boolean upscaled = MetalRenderer.upscaleTemporal(target.getColorTexture(), target.getDepthTexture(), main.getColorTexture(), motion.matrices,
-				jitterSign[0] * jitterX, jitterSign[1] * jitterY, reset, Boolean.parseBoolean(System.getProperty(REACTIVE_MASK_PROPERTY, "true")));
+		boolean upscaled = MetalRenderer.upscaleTemporal(fsr, target.getColorTexture(), target.getDepthTexture(), main.getColorTexture(), motion.matrices,
+				cameraValues, jitterSign[0] * jitterX, jitterSign[1] * jitterY, reset, Boolean.parseBoolean(System.getProperty(REACTIVE_MASK_PROPERTY, "true")));
 		motion.finish(upscaled);
 		return upscaled;
 	}

@@ -26,6 +26,7 @@ for source in "$ROOT"/src/main/native/fsr/*.mm; do
 done
 # AMD's code is compiled as it is: its own warnings are not ours to fix.
 for source in "$FFX/src/components/frameinterpolation/ffx_frameinterpolation.cpp" "$FFX/src/components/opticalflow/ffx_opticalflow.cpp" \
+	"$FFX/src/components/fsr3upscaler/ffx_fsr3upscaler.cpp" "$FFX/src/components/fsr1/ffx_fsr1.cpp" \
 	"$FFX/src/shared/ffx_assert.cpp" "$FFX/src/shared/ffx_message.cpp" "$FFX/src/shared/ffx_object_management.cpp"; do
 	# shellcheck disable=SC2086
 	xcrun clang++ $COMMON -std=c++17 -w -include "$ROOT/src/main/native/fsr/ffx_macos_compat.h" $FFX_INCLUDES \

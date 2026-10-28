@@ -21,8 +21,14 @@ public final class MetalSettings {
 
 	public enum Upscaling {
 		OFF,
+		/** MetalFX spatial scaling. */
 		SPATIAL,
-		TEMPORAL
+		/** MetalFX temporal scaling. */
+		TEMPORAL,
+		/** AMD FidelityFX Super Resolution 1 (EASU and RCAS sharpening), spatial, through the Metal backend. */
+		FSR1,
+		/** AMD FidelityFX Super Resolution 3.1 upscaling, temporal, through the Metal backend. */
+		FSR3
 	}
 
 	public enum FrameGeneration {
@@ -123,6 +129,8 @@ public final class MetalSettings {
 				# off: render the world at full resolution
 				# spatial: render the world at renderScale percent and upscale it with MetalFX, frame by frame
 				# temporal: the same, combining several frames for more detail; at 100 it only smooths edges
+				# fsr1 / fsr3: like spatial / temporal, with AMD FidelityFX Super Resolution 1 / 3.1 (about twice the GPU
+				#   time of MetalFX on Apple GPUs)
 				upscaling=%s
 				renderScale=%d
 				#

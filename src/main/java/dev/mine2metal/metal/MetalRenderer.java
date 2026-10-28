@@ -52,15 +52,15 @@ public final class MetalRenderer {
 	}
 
 	/**
-	 * Upscales color onto output with MetalFX temporal scaling; see {@code m2m_metalfx_temporal_upscale} for the matrices.
-	 * With reactive, moving entities are marked so MetalFX does not smear them. False if Metal is not active or MetalFX
-	 * refused these textures.
+	 * Upscales color onto output with MetalFX temporal scaling, or with FSR 3.1; see {@code m2m_temporal_upscale} for the
+	 * matrices and the camera values. With reactive, moving entities and particles are marked so the scaler does not
+	 * smear them. False if Metal is not active or the scaler refused these textures.
 	 */
-	public static boolean upscaleTemporal(GpuTexture color, GpuTexture depth, GpuTexture output, float[] matrices, float jitterX, float jitterY,
-			boolean reset, boolean reactive) {
+	public static boolean upscaleTemporal(boolean fsr, GpuTexture color, GpuTexture depth, GpuTexture output, float[] matrices, float[] camera,
+			float jitterX, float jitterY, boolean reset, boolean reactive) {
 		MetalDevice current = device;
-		return current != null && current.encoder().upscaleTemporal((MetalTexture) color, (MetalTexture) depth, (MetalTexture) output, matrices, jitterX,
-				jitterY, reset, reactive);
+		return current != null && current.encoder().upscaleTemporal(fsr, (MetalTexture) color, (MetalTexture) depth, (MetalTexture) output, matrices,
+				camera, jitterX, jitterY, reset, reactive);
 	}
 
 	public static boolean supportsFrameInterpolation() {
@@ -86,6 +86,11 @@ public final class MetalRenderer {
 	public static boolean supportsFsrFrameGeneration() {
 		MetalDevice current = device;
 		return current != null && current.fsrFrameGenerationSupported;
+	}
+
+	/** AMD's upscalers run on the same GPUs as its frame generation. */
+	public static boolean supportsFsrUpscaling() {
+		return supportsFsrFrameGeneration();
 	}
 
 	/**
@@ -172,5 +177,11 @@ public final class MetalRenderer {
 	public static boolean upscaleSpatial(GpuTexture input, GpuTexture output) {
 		MetalDevice current = device;
 		return current != null && current.encoder().upscaleSpatial((MetalTexture) input, (MetalTexture) output);
+	}
+
+	/** Upscales input onto output with FSR 1, sharpening by sharpness (0 sharpest to 2); false as for {@link #upscaleSpatial}. */
+	public static boolean upscaleFsr1(GpuTexture input, GpuTexture output, float sharpness) {
+		MetalDevice current = device;
+		return current != null && current.encoder().upscaleFsr1((MetalTexture) input, (MetalTexture) output, sharpness);
 	}
 }

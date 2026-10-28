@@ -425,11 +425,12 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
 		MetalNative.timestampWrite(this.ctx, ((MetalTimestampQueryPool) pool).handle, index);
 	}
 
-	/** MetalFX temporal upscale of color into output, in command order; false if MetalFX rejected the sizes or formats. */
-	boolean upscaleTemporal(MetalTexture color, MetalTexture depth, MetalTexture output, float[] matrices, float jitterX, float jitterY, boolean reset,
-			boolean reactive) {
+	/** Temporal upscale of color into output by MetalFX or FSR 3.1, in command order; false if the scaler rejected the sizes or formats. */
+	boolean upscaleTemporal(boolean fsr, MetalTexture color, MetalTexture depth, MetalTexture output, float[] matrices, float[] camera, float jitterX,
+			float jitterY, boolean reset, boolean reactive) {
 		this.flushPendingClears();
-		return MetalNative.metalFxTemporalUpscale(this.ctx, color.handle, depth.handle, output.handle, matrices, jitterX, jitterY, reset, reactive);
+		return MetalNative.temporalUpscale(this.ctx, fsr ? MetalNative.TEMPORAL_FSR : MetalNative.TEMPORAL_METALFX, color.handle, depth.handle,
+				output.handle, matrices, camera, jitterX, jitterY, reset, reactive);
 	}
 
 	/** Captures the world for frame interpolation, in command order; false if MetalFX rejected the sizes or formats. */
@@ -463,6 +464,11 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
 	boolean upscaleSpatial(MetalTexture input, MetalTexture output) {
 		this.flushPendingClears();
 		return MetalNative.metalFxSpatialUpscale(this.ctx, input.handle, output.handle);
+	}
+
+	boolean upscaleFsr1(MetalTexture input, MetalTexture output, float sharpness) {
+		this.flushPendingClears();
+		return MetalNative.fsr1Upscale(this.ctx, input.handle, output.handle, sharpness);
 	}
 
 	/** Schedules the frame's present; it happens when the frame is committed in {@link #submit}. */

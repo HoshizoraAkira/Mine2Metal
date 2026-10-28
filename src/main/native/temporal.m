@@ -110,19 +110,23 @@ typedef struct {
 } M2MMotionParams;
 
 @interface M2MTemporalUpscaler : NSObject
-// An MTLFXTemporalScaler, or an MTL4FXTemporalScaler with Metal 4.
+// M2M_TEMPORAL_METALFX or M2M_TEMPORAL_FSR.
+@property(nonatomic) int32_t engine;
+// An MTLFXTemporalScaler, or an MTL4FXTemporalScaler with Metal 4; nil with FSR.
 @property(nonatomic, strong) id<MTLFXTemporalScalerBase> scaler;
+// The FSR 3.1 upscaler (fsr_upscale.mm), which takes the same inputs.
+@property(nonatomic, strong) id fsr;
 @property(nonatomic) NSUInteger inputWidth, inputHeight, outputWidth, outputHeight;
 @property(nonatomic) MTLPixelFormat colorFormat, outputFormat;
 @property(nonatomic, strong) id<MTLTexture> motion;
 // This frame's depth copy and the previous frame's, alternating; the previous one feeds the reactive mask.
 @property(nonatomic, strong) NSArray<id<MTLTexture>> *depths;
 @property(nonatomic) NSUInteger depthIndex;
-// The reactive mask, when MetalFX takes one (macOS 14.4+) and it is on.
+// The reactive mask, when it is on and the scaler takes one (MetalFX from macOS 14.4).
 @property(nonatomic, strong) id<MTLTexture> reactive;
 // Until its first frame, when the previous depth holds nothing yet.
 @property(nonatomic) BOOL fresh;
-// As for the spatial scaler: written by MetalFX when the game's target lacks the usages it needs, then copied over.
+// As for the spatial scaler: written by the scaler when the game's target lacks the usages it needs, then copied over.
 @property(nonatomic, strong) id<MTLTexture> staging;
 @end
 
@@ -150,13 +154,69 @@ static BOOL m2m_reactive_mask_supported(void) {
 	return NO;
 }
 
-static M2MTemporalUpscaler *m2m_temporal_upscaler(M2MContext *ctx, id<MTLTexture> color, id<MTLTexture> output, BOOL reactive) {
+static void m2m_temporal_retire(M2MContext *ctx, M2MTemporalUpscaler *upscaler) {
+	m2m_retire(ctx, upscaler.motion);
+	for (id<MTLTexture> texture in upscaler.depths) {
+		m2m_retire(ctx, texture);
+	}
+	m2m_retire(ctx, upscaler.reactive);
+	m2m_retire(ctx, upscaler.staging);
+	m2m_retire(ctx, upscaler.scaler);
+	if (upscaler.fsr) {
+		m2m_fsr_upscaler_release(ctx, upscaler.fsr);
+	}
+}
+
+// FSR 3.1 in place of MetalFX: the same inputs, plain shader read and write usages.
+static M2MTemporalUpscaler *m2m_temporal_fsr(M2MContext *ctx, id<MTLTexture> color, id<MTLTexture> output, BOOL reactive) {
+	M2MTemporalUpscaler *created = [M2MTemporalUpscaler new];
+	created.engine = M2M_TEMPORAL_FSR;
+	created.fsr = m2m_fsr3_upscaler_create(ctx, color.width, color.height, output.width, output.height);
+	if (!created.fsr) {
+		return nil;
+	}
+	MTLTextureUsage read = MTLTextureUsageRenderTarget | MTLTextureUsageShaderRead;
+	created.motion = m2m_new_private_texture(ctx, MTLPixelFormatRG16Float, color.width, color.height, read);
+	created.depths = @[
+		m2m_new_private_texture(ctx, MTLPixelFormatDepth32Float, color.width, color.height, read),
+		m2m_new_private_texture(ctx, MTLPixelFormatDepth32Float, color.width, color.height, read),
+	];
+	if (reactive) {
+		created.reactive = m2m_new_private_texture(ctx, MTLPixelFormatR8Unorm, color.width, color.height, read);
+	}
+	MTLTextureUsage needed = MTLTextureUsageShaderRead | MTLTextureUsageShaderWrite;
+	if ((output.usage & needed) != needed) {
+		created.staging = m2m_new_private_texture(ctx, output.pixelFormat, output.width, output.height, needed);
+	}
+	return created;
+}
+
+static M2MTemporalUpscaler *m2m_temporal_upscaler(M2MContext *ctx, int32_t engine, id<MTLTexture> color, id<MTLTexture> output,
+                                                  BOOL reactive) {
 	M2MTemporalUpscaler *current = ctx.temporalUpscaler;
-	reactive = reactive && m2m_reactive_mask_supported();
-	if (current && current.inputWidth == color.width && current.inputHeight == color.height &&
+	reactive = reactive && (engine == M2M_TEMPORAL_FSR || m2m_reactive_mask_supported());
+	if (current && current.engine == engine && current.inputWidth == color.width && current.inputHeight == color.height &&
 	    current.outputWidth == output.width && current.outputHeight == output.height &&
 	    current.colorFormat == color.pixelFormat && current.outputFormat == output.pixelFormat && (current.reactive != nil) == reactive) {
 		return current;
+	}
+	if (engine == M2M_TEMPORAL_FSR) {
+		M2MTemporalUpscaler *created = m2m_temporal_fsr(ctx, color, output, reactive);
+		if (!created) {
+			return nil;
+		}
+		created.fresh = YES;
+		created.inputWidth = color.width;
+		created.inputHeight = color.height;
+		created.outputWidth = output.width;
+		created.outputHeight = output.height;
+		created.colorFormat = color.pixelFormat;
+		created.outputFormat = output.pixelFormat;
+		if (current) {
+			m2m_temporal_retire(ctx, current);
+		}
+		ctx.temporalUpscaler = created;
+		return created;
 	}
 
 	MTLFXTemporalScalerDescriptor *descriptor = [MTLFXTemporalScalerDescriptor new];
@@ -176,6 +236,7 @@ static M2MTemporalUpscaler *m2m_temporal_upscaler(M2MContext *ctx, id<MTLTexture
 	}
 
 	M2MTemporalUpscaler *created = [M2MTemporalUpscaler new];
+	created.engine = M2M_TEMPORAL_METALFX;
 	created.fresh = YES;
 	if (ctx.metal4) {
 		created.scaler = [descriptor newTemporalScalerWithDevice:ctx.device compiler:ctx.compiler];
@@ -208,13 +269,9 @@ static M2MTemporalUpscaler *m2m_temporal_upscaler(M2MContext *ctx, id<MTLTexture
 	if ((output.usage & needed) != needed) {
 		created.staging = m2m_new_private_texture(ctx, output.pixelFormat, output.width, output.height, needed);
 	}
-	m2m_retire(ctx, current.motion);
-	for (id<MTLTexture> texture in current.depths) {
-		m2m_retire(ctx, texture);
+	if (current) {
+		m2m_temporal_retire(ctx, current);
 	}
-	m2m_retire(ctx, current.reactive);
-	m2m_retire(ctx, current.staging);
-	m2m_retire(ctx, current.scaler);
 	ctx.temporalUpscaler = created;
 	return created;
 }
@@ -293,15 +350,15 @@ BOOL m2m_encode_motion(M2MContext *ctx, id<MTLTexture> sourceDepth, id<MTLTextur
 	return YES;
 }
 
-int32_t m2m_metalfx_temporal_upscale(int64_t handle, int64_t color_handle, int64_t depth_handle, int64_t output_handle,
-                                     const float *matrices, float jitter_x, float jitter_y, int32_t reset, int32_t reactive) {
+int32_t m2m_temporal_upscale(int64_t handle, int32_t engine, int64_t color_handle, int64_t depth_handle, int64_t output_handle,
+                             const float *matrices, const float *camera, float jitter_x, float jitter_y, int32_t reset, int32_t reactive) {
 	@autoreleasepool {
 		M2MContext *ctx = m2m_ctx(handle);
 		id<MTLTexture> color = m2m_borrow(color_handle);
 		id<MTLTexture> sourceDepth = m2m_borrow(depth_handle);
 		id<MTLTexture> output = m2m_borrow(output_handle);
 		BOOL rebuilt = ctx.temporalUpscaler == nil;
-		M2MTemporalUpscaler *upscaler = m2m_temporal_upscaler(ctx, color, output, reactive != 0);
+		M2MTemporalUpscaler *upscaler = m2m_temporal_upscaler(ctx, engine, color, output, reactive != 0);
 		if (!upscaler) {
 			return 0;
 		}
@@ -319,6 +376,31 @@ int32_t m2m_metalfx_temporal_upscale(int64_t handle, int64_t color_handle, int64
 		}
 		rebuilt = rebuilt || upscaler != ctx.lastTemporalUpscaler;
 		ctx.lastTemporalUpscaler = upscaler;
+
+		if (upscaler.fsr) {
+			M2MFsrUpscale frame = {
+				.color = color,
+				.depth = depth,
+				.motion = upscaler.motion,
+				.reactive = upscaler.reactive,
+				.output = upscaler.staging ?: output,
+				.near_plane = camera[0],
+				.far_plane = camera[1],
+				.field_of_view = camera[2],
+				.jitter_x = jitter_x,
+				.jitter_y = jitter_y,
+				.frame_time_ms = camera[3],
+				.reset = reset != 0 || rebuilt,
+			};
+			if (!m2m_fsr3_upscaler_encode(ctx, upscaler.fsr, &frame)) {
+				return 0;
+			}
+			m2m_end_encoding(ctx);
+			if (upscaler.staging) {
+				[m2m_copier(ctx) copyFromTexture:upscaler.staging toTexture:output];
+			}
+			return 1;
+		}
 
 		id<MTLFXTemporalScalerBase> scaler = upscaler.scaler;
 		scaler.colorTexture = color;

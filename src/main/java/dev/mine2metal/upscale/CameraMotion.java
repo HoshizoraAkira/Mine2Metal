@@ -11,6 +11,8 @@ import org.jspecify.annotations.Nullable;
 final class CameraMotion {
 	/** A camera that moves further than this between frames has teleported; its history is useless. */
 	private static final double TELEPORT_DISTANCE = 16.0;
+	/** Minecraft's near plane, for a projection whose planes cannot be read back. */
+	private static final float NEAR_PLANE = 0.05F;
 
 	/**
 	 * This frame's inverse view-projection, the previous frame's view-projection, the camera's movement since then
@@ -66,5 +68,20 @@ final class CameraMotion {
 
 	void reset() {
 		this.hasHistory = false;
+	}
+
+	/**
+	 * Near and far plane into values[0..1], for AMD's code. The Metal device reports zero-to-one depth, so the projection
+	 * has m22 = f / (n - f) and m32 = n f / (n - f). depthFar stands in when the projection does not say.
+	 */
+	static void planes(Matrix4f projection, float depthFar, float[] values) {
+		float near = projection.m32() / projection.m22();
+		float far = projection.m32() / (projection.m22() + 1.0F);
+		if (!(near > 0.0F && far > near && Float.isFinite(far))) {
+			near = NEAR_PLANE;
+			far = depthFar;
+		}
+		values[0] = near;
+		values[1] = far;
 	}
 }

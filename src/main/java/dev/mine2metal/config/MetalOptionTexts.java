@@ -38,7 +38,7 @@ final class MetalOptionTexts {
 	}
 
 	static boolean upscalingAvailable() {
-		return MetalRenderer.supportsSpatialUpscaling() || MetalRenderer.supportsTemporalUpscaling();
+		return upscalingModes().size() > 1;
 	}
 
 	/** The upscaling modes this Mac can run. */
@@ -49,6 +49,10 @@ final class MetalOptionTexts {
 		}
 		if (MetalRenderer.supportsTemporalUpscaling()) {
 			modes.add(MetalSettings.Upscaling.TEMPORAL);
+		}
+		if (MetalRenderer.supportsFsrUpscaling()) {
+			modes.add(MetalSettings.Upscaling.FSR1);
+			modes.add(MetalSettings.Upscaling.FSR3);
 		}
 		return modes;
 	}

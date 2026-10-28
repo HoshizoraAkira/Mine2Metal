@@ -174,16 +174,23 @@ M2M_EXPORT int32_t m2m_clear_region(int64_t ctx, int64_t color, float r, float g
 M2M_EXPORT int32_t m2m_metalfx_temporal_supported(int64_t ctx);
 // The range of output/input size ratios the temporal scaler supports on this device.
 M2M_EXPORT void m2m_metalfx_temporal_scale_range(int64_t ctx, float *min_scale, float *max_scale);
-// Upscales color (rendered with a jitter of jitter_x, jitter_y pixels) into output with MetalFX temporal scaling.
+// Upscales color (rendered with a jitter of jitter_x, jitter_y pixels) into output with temporal scaling.
 // matrices holds 52 floats, column-major: this frame's inverse unjittered view-projection, the previous frame's
 // view-projection, the camera's movement since then (xyz, then 1 if there is a previous frame, else 0), and the
 // inverse of the previous view-projection. Motion vectors are derived from these and depth. reset drops the history
 // (first frame, cuts, teleports). With reactive (and macOS 14.4), pixels whose surface moved by itself or just came
-// into view are marked in a reactive mask, so MetalFX does not smear moving entities. Returns 0 if MetalFX refused the
-// textures.
-M2M_EXPORT int32_t m2m_metalfx_temporal_upscale(int64_t ctx, int64_t color, int64_t depth, int64_t output,
-                                                const float *matrices, float jitter_x, float jitter_y, int32_t reset,
-                                                int32_t reactive);
+// into view are marked in a reactive mask, so the scaler does not smear moving entities and particles. Returns 0 if the
+// scaler refused the textures.
+// engine is M2M_TEMPORAL_METALFX or M2M_TEMPORAL_FSR (AMD FSR 3.1); camera holds four floats for FSR: near and far
+// plane, vertical field of view in radians, and milliseconds since the previous frame.
+M2M_EXPORT int32_t m2m_temporal_upscale(int64_t ctx, int32_t engine, int64_t color, int64_t depth, int64_t output,
+                                        const float *matrices, const float *camera, float jitter_x, float jitter_y,
+                                        int32_t reset, int32_t reactive);
+#define M2M_TEMPORAL_METALFX 1
+#define M2M_TEMPORAL_FSR 2
+// FSR 1 (EASU and RCAS sharpening, 0 sharpest to 2) in place of m2m_metalfx_spatial_upscale; needs what FSR frame
+// generation needs (m2m_fsr_framegen_supported).
+M2M_EXPORT int32_t m2m_fsr1_upscale(int64_t ctx, int64_t color, int64_t output, float sharpness);
 
 // EDR output
 

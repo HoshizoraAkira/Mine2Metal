@@ -115,6 +115,28 @@ Hasil gametest di jendela yang terlihat (MacBook Air M3, 60 Hz):
 
 Kualitas frame buatan tidak berubah (FSR 31,21 dB, MetalFX 31,20 dB), dan gametest penuh lolos di bawah validation. Belum diukur: game di bawah 30 FPS dengan frame gen (penahanan > 1 refresh) dan layar ProMotion.
 
+### R7: upscaler FSR sebagai pilihan (2026-10-28)
+
+Menu Upscaling sekarang berisi Mati / MetalFX Spasial / MetalFX Temporal / FSR 1 / FSR 3.1. Pilihan ini terpisah dari Pembuatan Frame, jadi kombinasi seperti MetalFX Temporal + FSR 3.1 frame gen atau FSR 3.1 + FSR 3.1 frame gen bisa dipakai. Semuanya lewat Metal.
+
+- **FSR 3.1** menggantikan scaler temporal MetalFX dengan input yang sama (`temporal.m`): pass motion vector, salinan depth, reactive mask R5, dan jitter Halton yang sama. Ditambah near/far/FOV dan waktu antar frame. Di 100% FSR 3.1 menjadi anti-aliasing (mode native AMD).
+- **FSR 1** (EASU lalu RCAS, ketajaman 0,2 seperti contoh AMD) menggantikan scaler spasial.
+- **Kode host FSR** dipakai bersama frame gen (`fsr/fsr_host.mm`). Shader kedua upscaler ikut di-embed di dylib (41 pass total).
+
+Uji temporal (`-Dmine2metal.test.temporalOnly=true`, 854×480, render 50%), PSNR terhadap native:
+
+| | Diam | Setelah berputar 30° |
+|---|---|---|
+| MetalFX Temporal | 30,46 dB | 29,05 dB |
+| FSR 3.1 | **30,73 dB** | **29,27 dB** |
+| MetalFX Spasial | 29,12 dB | — |
+| FSR 1 | **29,81 dB** | — |
+
+- **Tanda jitter:** dengan keempat tanda (`-Dmine2metal.test.jitterSigns=true`), FSR 3.1 juga paling baik di `1,1`, sama dengan MetalFX.
+- **Kualitas:** kedua upscaler AMD sedikit lebih tajam (daun, tepi) dan unggul tipis di PSNR.
+- **Biaya GPU:** dari benchmark `fsrupscale` (bagian upscaler di [fsr-frame-gen.md](fsr-frame-gen.md)), FSR 3.1 2,67 ms vs MetalFX 1,09 ms dan FSR 1 0,83 ms vs MetalFX Spasial 0,51 ms di 1080p/50%. Karena itu MetalFX tetap pilihan yang disarankan.
+- **Validation:** bersih di Metal 3 dan Metal 4; gametest penuh lolos.
+
 ### R5: reactive mask untuk upscaling temporal (2026-10-28)
 
 MetalFX temporal (macOS 14.4+) sekarang menerima reactive mask, yaitu tanda di piksel yang riwayatnya tidak bisa dipercaya sehingga lebih bersandar ke frame sekarang. Mask dihitung di pass motion vector yang sudah ada, tanpa pass tambahan:
@@ -266,7 +288,7 @@ Hasil gametest (Apple M3, macOS 27, puncak 300%, headroom layar diabaikan lewat 
 
 ## Roadmap lanjutan (disusun 2026-10-28)
 
-Sudah selesai: backend inti (M0–M8), layar pengaturan (M10), upscaling MetalFX (M11), interpolasi frame MetalFX (M12), Metal 4 (M13), HDR/EDR (M14), satu jalur present, dan spike FSR 3 (F0, lihat [fsr-frame-gen.md](fsr-frame-gen.md)). Uji manual Metal 4, interpolasi, HDR, dan VSync nyala di layar sungguhan masih menunggu ([uji-manual.md](uji-manual.md) nomor 9, 17, 22–31).
+Sudah selesai: backend inti (M0–M8), layar pengaturan (M10), upscaling MetalFX (M11), interpolasi frame MetalFX (M12), Metal 4 (M13), HDR/EDR (M14), satu jalur present, dan spike FSR 3 (F0, lihat [fsr-frame-gen.md](fsr-frame-gen.md)). Uji manual Metal 4, interpolasi, HDR, dan VSync nyala di layar sungguhan masih menunggu ([uji-manual.md](uji-manual.md) nomor 9, 17, 22–32).
 
 Urutan di bawah adalah prioritas. Instalasi (M9) tetap terakhir, sesuai kesepakatan.
 
@@ -278,7 +300,7 @@ Urutan di bawah adalah prioritas. Instalasi (M9) tetap terakhir, sesuai kesepaka
 | R4 ✅ | **Waktu GPU per tahap + pengaman frame gen** (hasil di bagian "R4" di bawah) | Timestamp di batas encoder (counter sample buffer) untuk dunia, upscaling, frame gen, HDR, present. Dari situ frame gen mati sendiri (dengan pesan) kalau biayanya melebihi anggaran | Statistik per tahap di `-Dmine2metal.stats`; frame gen tidak pernah menurunkan FPS di bawah separuh tanpa memberi tahu |
 | R5 ✅ | **Reactive mask untuk upscaling temporal** (hasil di bagian "R5" di bawah) | `reactiveMaskTexture` MetalFX (macOS 14.4+): tandai piksel mob, partikel, dan air yang bergerak sendiri, supaya tidak meninggalkan jejak | Jejak samar di uji mob bergerak berkurang (diukur dengan screenshot) |
 | R6 ✅ | **Optimasi shader FSR** (F3; hasil di [fsr-frame-gen.md](fsr-frame-gen.md#hasil-r6-optimasi-fsr-frame-gen-2026-10-28)) | FP16 manual untuk pass interpolasi utama dan optical flow, disocclusion di render penuh, dispatch concurrent untuk pass kecil | ≤ 6 ms di 1080p dengan render 50% (sebelumnya 8,7 ms; sekarang 3,7 ms) |
-| R7 | **Upscaler FSR sebagai pilihan** | FSR 1 dan FSR 3.1 di menu Upscaling di samping MetalFX. Sudah terbukti jalan, tapi 2–2,5× lebih berat; nilainya sebagai pilihan dan perbandingan kualitas | Kualitas dibandingkan dengan MetalFX di uji temporal; lolos validation |
+| R7 ✅ | **Upscaler FSR sebagai pilihan** (hasil di bagian "R7" di bawah) | FSR 1 dan FSR 3.1 di menu Upscaling di samping MetalFX. Sudah terbukti jalan, tapi 2–2,5× lebih berat; nilainya sebagai pilihan dan perbandingan kualitas | Kualitas dibandingkan dengan MetalFX di uji temporal; lolos validation |
 | R8 | **Rapikan arsitektur** | Satu objek alur "frame dunia" (tangkap/proyeksi/depth/jitter) menggantikan state statis di `WorldUpscaler`, `FrameInterpolation`, `HdrOutput`; paket di luar `upscale`; barrier Metal 4 dipersempit | Gametest penuh tetap lolos; tidak ada perubahan perilaku |
 | R10 | **Upgrade ke FSR 3.1.6** (SDK v2.3.0, MIT) | Kode FSR 3 di SDK 2.x ternyata MIT (lihat ralat di fsr-frame-gen.md), dengan frame interpolation 3.1.6 dan upscaler 3.1.5. Shadernya hanya HLSL, jadi terjemahan beralih ke `dxc` → SPIR-V → spirv-cross; host code dan backend `ffx_metal` tetap | Kualitas uji yaw ≥ v1.1.4; validation bersih |
 | R9 | **Instalasi (M9)** | Seperti di atas: rilis Modrinth/CurseForge, `.mrpack`, pesan jelas di Mac yang tidak didukung | — |
