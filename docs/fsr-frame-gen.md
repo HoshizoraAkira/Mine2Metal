@@ -196,3 +196,41 @@ Hasil gametest (Apple M3, 854×480; uji yaw 0° → 4°, dibandingkan dengan fra
 - HDR + FSR dan HDR + MetalFX: hotbar tetap 1,0× putih SDR, highlight dunia 1,72×. Lolos di Metal 4 dan Metal 3.
 - Gametest penuh lolos di bawah Metal API validation (Metal 4), tanpa error.
 - **Belum terukur di layar sungguhan:** FPS MetalFX vs FSR di game. Angka FPS gametest berubah-ubah menurut status jendela dan suhu (contoh di 2560×1600: MetalFX 29 lalu 53, FSR 30 lalu 48 dalam satu run). Perbandingan yang andal tetap waktu GPU di benchmark: FSR 2–3× lebih murah. Masuk uji manual nomor 28.
+
+## Hasil R6: optimasi FSR frame gen (2026-10-28)
+
+Ukuran di `tools/fsrbench`, Apple M3, frame gametest yaw 0° → 4°. Kualitas diukur terhadap frame asli di yaw 2°.
+
+| Output (render) | Sebelum R6 | Sesudah R6 |
+|---|---|---|
+| 1920×1080 (50%) | 8,7 ms | **3,7 ms** |
+| 1920×1080 (100%) | 11,0 ms | **6,5 ms** |
+| 2560×1600 (50%) | 16,9 ms | **7,0 ms** |
+| 3840×2486 (50%) | 40 ms | **16,2 ms** |
+
+Profil per ukuran dispatch (`FFX_METAL_PROFILE=1` sekarang mencatat ukuran grid) menunjukkan sumber biaya yang sebenarnya:
+- Level paling halus optical flow, di resolusi layar penuh, memakan 1,4–2,0 ms.
+- Pass interpolasi utama membaca 16 texel warna per piksel secara manual.
+
+Perubahan, semuanya di `src/main/native/fsr/glsl`. File AMD di `third_party` tidak disentuh; `build-fsr-shaders.sh` memakai pass dari sana kalau namanya sama.
+
+1. **Optical flow di setengah resolusi.**
+   - HUD-less world diperkecil 2× (rata-rata 2×2) oleh kernel kecil di `fsr_framegen.mm`. Resolusi konteks optical flow dan `opticalFlowScale` mengikuti ukuran itu.
+   - Parameter itu memang disediakan AMD. Hanya pass `optical_flow_vector_field` yang perlu pengecekan batas, karena host AMD menghitung dispatch-nya dari ukuran layar.
+   - Field vektor yang ¼ ukuran juga membuat pass yang membacanya lebih murah: pass interpolasi utama turun dari ~1,1 ke ~0,55 ms.
+   - Kualitas tidak turun. Di bench (hanya optical flow) 25,63 dB vs 25,40 dB sebelumnya. Di game, FSR 31,23 dB dan FSR + temporal 29,61 dB, sama seperti sebelumnya.
+2. **Bilinear hardware di pass interpolasi utama.**
+   - AMD membaca 4 texel lalu menormalisasi ulang bobot yang ada di dalam rect. Untuk rect seukuran tekstur, satu sample bilinear dengan clamp-to-edge memberi hasil yang sama, karena tap yang di-clamp mengulang texel tepi.
+   - Hasilnya 61,6 dB terhadap versi AMD (beda presisi filter saja), dan 2,8 → 2,2 ms sebelum langkah 1.
+   - Temuan sampingan: `s_LinearClamp` milik frame interpolation mendapat sampler pertama pipeline, yaitu sampler **point**, juga di backend DirectX/Vulkan AMD (register s0). Backend kita sudah setia pada perilaku itu. Sampler linear kita adalah binding kedua.
+3. **Tanpa distortion field.**
+   - Game tidak pernah memberi distortion field, jadi tiga pass men-sample tekstur nol 1×1 di setiap tap (8× per piksel di disocclusion).
+   - Override pass-nya tidak memasang binding itu dan mengembalikan nol. Hasilnya identik bit-per-bit, dan lebih cepat 0,1–0,2 ms.
+
+Yang dicoba dan tidak membantu:
+- `FFX_HALF=1`: jalur GLSL AMD tidak memakai tipe 16-bit, sehingga MSL-nya identik.
+- Menghitung SAD optical flow dari byte yang diekstrak sekali, karena GPU Apple tidak punya `msad4`. Hasilnya identik bit-per-bit tapi tidak lebih cepat; compiler Metal sudah menangani versi AMD.
+
+Belum dikerjakan: FP16 manual dan dispatch concurrent. Bench memakai depth datar dan motion vector nol, sehingga cabang berat disocclusion jarang jalan. Optimasi selanjutnya perlu profil dengan data game, misalnya dengan menangkap input FSR dari gametest.
+
+Di game (jendela gametest tertutup, 2560×1600, FSR saja), biaya yang dicatat pengaman R4 turun dari 22,5 ke 15,3 ms. Angka dari jendela tertutup tidak stabil (lihat R4), jadi bench tetap jadi acuan. Gametest penuh lolos di bawah validation di Metal 4, begitu juga interpolasi dan HDR di Metal 3.

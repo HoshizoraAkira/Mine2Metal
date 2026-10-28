@@ -781,6 +781,10 @@ id<MTLResource> ffxCreateResourceMetal(id<MTLDevice> device, const FfxCreateReso
 }
 
 - (void)dispatchThreadgroups:(MTLSize)threadgroups threadsPerThreadgroup:(MTLSize)threadsPerThreadgroup {
+	if (_profile) {
+		// The same pass runs at several sizes (the optical flow levels); time each size apart.
+		_jobLabel = [NSString stringWithFormat:@"%@ (%lux%lu groups)", _jobLabel, (unsigned long)threadgroups.width, (unsigned long)threadgroups.height];
+	}
 	[self.compute dispatchThreadgroups:threadgroups threadsPerThreadgroup:threadsPerThreadgroup];
 }
 

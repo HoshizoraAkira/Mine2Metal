@@ -54,6 +54,7 @@ tasks.register('buildFsrShaders', Exec) {
 	def isMac = System.getProperty('os.name').startsWith('Mac')
 
 	inputs.dir('third_party/fidelityfx-1.1.4')
+	inputs.dir('src/main/native/fsr/glsl')
 	inputs.files('scripts/build-fsr-shaders.sh', 'scripts/build-fsr-embedded.sh')
 	outputs.file(outputDirectory.map { it.file('fsr_shaders.c') })
 

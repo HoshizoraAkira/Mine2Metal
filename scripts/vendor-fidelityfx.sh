@@ -1,7 +1,7 @@
 #!/bin/sh
 # Copies the parts of AMD FidelityFX SDK v1.1.4 (MIT) that FSR 3 frame generation and the FSR 1 and FSR 3.1 upscalers
-# need into third_party/. Later SDK
-# versions are not MIT licensed; see docs/fsr-frame-gen.md.
+# need into third_party/. The FSR code of SDK 2.x is MIT too; moving to it is R10 in docs/roadmap.md.
+# Passes rewritten for Apple GPUs live apart from AMD's files, in src/main/native/fsr/glsl.
 set -eu
 TAG=v1.1.4
 REPO=GPUOpen-LibrariesAndSDKs/FidelityFX-SDK

@@ -18,6 +18,28 @@ extern "C" {
 // FRAMEINTERPOLATION_SHADER_PERMUTATION_LOW_RES_MOTION_VECTORS in AMD's private header: motion vectors at render size.
 static const uint32_t M2M_FSR_LOW_RES_MOTION_VECTORS = 1u << 0;
 
+// Optical flow runs on the HUD-less world at half the display size, averaged over 2x2 pixels. At display size its
+// finest level alone took half of the whole frame generation on an M3; at half size the generated frame matches the
+// real middle frame as well (docs/fsr-frame-gen.md, R6), and the smaller vector field also makes the interpolation
+// passes that read it cheaper.
+static const NSUInteger M2M_FSR_OPTICAL_FLOW_DIVISOR = 2;
+
+static NSString *const M2M_FSR_HALVE_SHADER =
+    @"#include <metal_stdlib>\n"
+     "using namespace metal;\n"
+     "kernel void m2m_fsr_halve(texture2d<float, access::read> source [[texture(0)]],\n"
+     "                          texture2d<float, access::write> half_size [[texture(1)]],\n"
+     "                          uint2 position [[thread_position_in_grid]]) {\n"
+     "    if (any(position >= uint2(half_size.get_width(), half_size.get_height()))) {\n"
+     "        return;\n"
+     "    }\n"
+     "    uint2 last = uint2(source.get_width(), source.get_height()) - 1;\n"
+     "    uint2 first = position * 2;\n"
+     "    float4 sum = source.read(min(first, last)) + source.read(min(first + uint2(1, 0), last)) +\n"
+     "                 source.read(min(first + uint2(0, 1), last)) + source.read(min(first + uint2(1, 1), last));\n"
+     "    half_size.write(sum * 0.25, position);\n"
+     "}\n";
+
 @interface M2MFfxHost : NSObject <FfxMetalHost>
 @property(nonatomic, weak) M2MContext *ctx;
 @end
@@ -130,6 +152,9 @@ static FfxResource m2m_ffx_resource(id<MTLTexture> texture, uint32_t usage, cons
 @property(nonatomic) NSUInteger displayWidth, displayHeight, renderWidth, renderHeight;
 @property(nonatomic) BOOL hdr;
 @property(nonatomic) uint64_t frameId;
+@property(nonatomic, strong) id<MTLComputePipelineState> halvePipeline;
+// The HUD-less world at the size optical flow runs at.
+@property(nonatomic, strong) id<MTLTexture> opticalFlowInput;
 @end
 
 @implementation M2MFsrFrameGenerator {
@@ -191,9 +216,27 @@ id m2m_fsr_framegen_create(M2MContext *ctx, NSUInteger displayWidth, NSUInteger 
 		return nil;
 	}
 
+	NSError *compileError = nil;
+	id<MTLLibrary> library = [ctx.device newLibraryWithSource:M2M_FSR_HALVE_SHADER options:nil error:&compileError];
+	id<MTLFunction> halve = [library newFunctionWithName:@"m2m_fsr_halve"];
+	generator.halvePipeline = halve ? [ctx.device newComputePipelineStateWithFunction:halve error:&compileError] : nil;
+	if (!generator.halvePipeline) {
+		NSLog(@"mine2metal: could not compile the optical flow input shader: %@", compileError);
+		return nil;
+	}
+	NSUInteger flowWidth = (displayWidth + M2M_FSR_OPTICAL_FLOW_DIVISOR - 1) / M2M_FSR_OPTICAL_FLOW_DIVISOR;
+	NSUInteger flowHeight = (displayHeight + M2M_FSR_OPTICAL_FLOW_DIVISOR - 1) / M2M_FSR_OPTICAL_FLOW_DIVISOR;
+	MTLTextureDescriptor *flowInput = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:format width:flowWidth height:flowHeight mipmapped:NO];
+	flowInput.usage = MTLTextureUsageShaderRead | MTLTextureUsageShaderWrite;
+	flowInput.storageMode = MTLStorageModePrivate;
+	generator.opticalFlowInput = [ctx.device newTextureWithDescriptor:flowInput];
+	generator.opticalFlowInput.label = @"FSR optical flow input";
+	m2m_track(ctx, (id<MTLAllocation>)generator.opticalFlowInput);
+	[generator.shared addObject:generator.opticalFlowInput];
+
 	FfxOpticalflowContextDescription opticalFlow = {};
 	opticalFlow.backendInterface = generator->_backend;
-	opticalFlow.resolution = (FfxDimensions2D){(uint32_t)displayWidth, (uint32_t)displayHeight};
+	opticalFlow.resolution = (FfxDimensions2D){(uint32_t)flowWidth, (uint32_t)flowHeight};
 	error = ffxOpticalflowContextCreate(&generator->_opticalFlow, &opticalFlow);
 	if (error != FFX_OK) {
 		NSLog(@"mine2metal: could not create the FSR optical flow context (0x%x)", (unsigned)error);
@@ -272,9 +315,16 @@ BOOL m2m_fsr_framegen_encode(M2MContext *ctx, id generator, const M2MFsrFrame *f
 	prepare.cameraForward[2] = 1.0f;
 	FfxErrorCode error = ffxFrameInterpolationPrepare(&fsr->_interpolation, &prepare);
 
+	id<MTLTexture> flowInput = fsr.opticalFlowInput;
+	m2m_compute_begin(ctx, fsr.halvePipeline);
+	m2m_bind_texture(ctx, 0, frame->hudless, NO, NO);
+	m2m_bind_texture(ctx, 1, flowInput, NO, NO);
+	m2m_compute_dispatch(ctx, MTLSizeMake((flowInput.width + 7) / 8, (flowInput.height + 7) / 8, 1), MTLSizeMake(8, 8, 1));
+	m2m_end_encoding(ctx);
+
 	FfxOpticalflowDispatchDescription flow = {};
 	flow.commandList = commandList;
-	flow.color = hudless;
+	flow.color = m2m_ffx_resource(flowInput, FFX_RESOURCE_USAGE_READ_ONLY, L"optical flow input");
 	flow.opticalFlowVector = fsr->_opticalFlowVector;
 	flow.opticalFlowSCD = fsr->_opticalFlowSceneChange;
 	flow.reset = reset;
@@ -295,7 +345,8 @@ BOOL m2m_fsr_framegen_encode(M2MContext *ctx, id generator, const M2MFsrFrame *f
 	dispatch.opticalFlowVector = fsr->_opticalFlowVector;
 	dispatch.opticalFlowSceneChangeDetection = fsr->_opticalFlowSceneChange;
 	dispatch.opticalFlowBufferSize = (FfxDimensions2D){fsr->_opticalFlowVector.description.width, fsr->_opticalFlowVector.description.height};
-	dispatch.opticalFlowScale = (FfxFloatCoords2D){1.0f / fsr.displayWidth, 1.0f / fsr.displayHeight};
+	// In units of the optical flow input, which also sizes the vector field (AMD's GetOpticalFlowSize).
+	dispatch.opticalFlowScale = (FfxFloatCoords2D){1.0f / flowInput.width, 1.0f / flowInput.height};
 	dispatch.opticalFlowBlockSize = 8;
 	dispatch.cameraNear = frame->near_plane;
 	dispatch.cameraFar = frame->far_plane;

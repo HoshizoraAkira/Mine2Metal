@@ -151,7 +151,10 @@ int main(int argc, const char **argv) {
 		FfxOpticalflowContext opticalFlow;
 		FfxOpticalflowContextDescription opticalFlowDescription = {};
 		opticalFlowDescription.backendInterface = backend;
-		opticalFlowDescription.resolution = {width, height};
+		// Optical flow runs on images of half the size, as in the game; FSR_OF_DIVISOR=1 runs it at full size, as AMD does.
+		uint32_t flowDivisor = getenv("FSR_OF_DIVISOR") ? (uint32_t)atoi(getenv("FSR_OF_DIVISOR")) : 2;
+		uint32_t flowWidth = width / flowDivisor, flowHeight = height / flowDivisor;
+		opticalFlowDescription.resolution = {flowWidth, flowHeight};
 		check(ffxOpticalflowContextCreate(&opticalFlow, &opticalFlowDescription), "ffxOpticalflowContextCreate");
 
 		FfxFrameInterpolationContext interpolation;
@@ -177,8 +180,13 @@ int main(int argc, const char **argv) {
 
 		id<MTLTexture> images[2] = {loadImage(device, @(argv[2]), width, height), loadImage(device, @(argv[3]), width, height)};
 		FfxResource colors[2];
+		FfxResource flowColors[2];
 		for (int i = 0; i < 2; i++) {
 			colors[i] = wrap(images[i], textureDescription(FFX_SURFACE_FORMAT_R8G8B8A8_UNORM, width, height, FFX_RESOURCE_USAGE_READ_ONLY), L"color");
+			flowColors[i] = flowDivisor == 1 ? colors[i]
+			                                 : wrap(loadImage(device, @(argv[2 + i]), flowWidth, flowHeight),
+			                                        textureDescription(FFX_SURFACE_FORMAT_R8G8B8A8_UNORM, flowWidth, flowHeight, FFX_RESOURCE_USAGE_READ_ONLY),
+			                                        L"flow color");
 		}
 		// A static camera: depth far away, no game motion. The motion between the images is left to optical flow.
 		float depthValue = 0.999f;
@@ -223,7 +231,7 @@ int main(int argc, const char **argv) {
 
 			FfxOpticalflowDispatchDescription flow = {};
 			flow.commandList = ffxGetCommandListMetal(host);
-			flow.color = current;
+			flow.color = flowColors[frame % 2];
 			flow.opticalFlowVector = opticalFlowVector;
 			flow.opticalFlowSCD = opticalFlowSCD;
 			flow.reset = reset;
@@ -244,7 +252,7 @@ int main(int argc, const char **argv) {
 			dispatch.opticalFlowVector = opticalFlowVector;
 			dispatch.opticalFlowSceneChangeDetection = opticalFlowSCD;
 			dispatch.opticalFlowBufferSize = {opticalFlowVector.description.width, opticalFlowVector.description.height};
-			dispatch.opticalFlowScale = {1.0f / width, 1.0f / height};
+			dispatch.opticalFlowScale = {1.0f / flowWidth, 1.0f / flowHeight};
 			dispatch.opticalFlowBlockSize = 8;
 			dispatch.cameraNear = prepare.cameraNear;
 			dispatch.cameraFar = prepare.cameraFar;

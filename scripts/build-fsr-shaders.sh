@@ -53,6 +53,9 @@ for source in $SOURCES; do
 	ffx_fsr3upscaler_*) defines="$FSR3UPSCALER" ;;
 	*) defines="$FSR1" ;;
 	esac
+	# Passes rewritten for Apple GPUs replace AMD's (src/main/native/fsr/glsl, see the comments there).
+	override="$ROOT/src/main/native/fsr/glsl/$name.glsl"
+	[ -f "$override" ] && source="$override"
 	# shellcheck disable=SC2086
 	if ! glslangValidator -V --target-env vulkan1.2 -S comp -Os $COMMON $defines "$source" -o "$OUT/spv/$name.spv" > "$OUT/spv/$name.log" 2>&1; then
 		echo "GLSL failed: $name (see $OUT/spv/$name.log)"; failed=1; continue
