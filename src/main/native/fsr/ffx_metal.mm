@@ -42,6 +42,7 @@ struct MetalPipeline {
 
 struct MetalBackend {
 	id<MTLDevice> device;
+	id<FfxMetalHost> host;
 	FfxMetalShaderSource shaders;
 	std::vector<MetalResource> resources;
 	std::vector<EffectContext> contexts;
@@ -235,6 +236,9 @@ FfxErrorCode destroyBackendContext(FfxInterface *backendInterface, FfxUInt32 eff
 	MetalBackend *backend = backendOf(backendInterface);
 	for (MetalResource &resource : backend->resources) {
 		if (resource.inUse && resource.effectContextId == effectContextId) {
+			if (!resource.registered) {
+				[backend->host releaseResource:resource.object];
+			}
 			resource = {};
 		}
 	}
@@ -252,6 +256,7 @@ FfxErrorCode createResource(FfxInterface *backendInterface, const FfxCreateResou
 		return FFX_ERROR_OUT_OF_MEMORY;
 	}
 	object.label = [NSString stringWithUTF8String:narrow(description->name).c_str()];
+	[backend->host didCreateResource:object];
 	MetalResource resource = {object, {}, description->resourceDescription, effectContextId, false, true};
 	if ([object conformsToProtocol:@protocol(MTLTexture)]) {
 		resource.description.mipCount = (uint32_t)((id<MTLTexture>)object).mipmapLevelCount;
@@ -271,9 +276,6 @@ FfxErrorCode registerResource(FfxInterface *backendInterface, const FfxResource 
 	MetalResource resource = {(__bridge id<MTLResource>)inResource->resource, {}, inResource->description, effectContextId, true, true};
 	fillMipViews(resource);
 	outResource->internalIndex = addResource(backend, resource);
-	if (getenv("FFX_METAL_TRACE")) {
-		NSLog(@"ffx_metal trace: register #%d %@ (context %u)", outResource->internalIndex, resource.object.label, effectContextId);
-	}
 	return FFX_OK;
 }
 
@@ -304,7 +306,11 @@ FfxResourceDescription getResourceDescription(FfxInterface *backendInterface, Ff
 FfxErrorCode destroyResource(FfxInterface *backendInterface, FfxResourceInternal resource, FfxUInt32) {
 	MetalBackend *backend = backendOf(backendInterface);
 	if (resource.internalIndex >= 0 && static_cast<size_t>(resource.internalIndex) < backend->resources.size()) {
-		backend->resources[resource.internalIndex] = {};
+		MetalResource &entry = backend->resources[resource.internalIndex];
+		if (entry.inUse && !entry.registered) {
+			[backend->host releaseResource:entry.object];
+		}
+		entry = {};
 	}
 	return FFX_OK;
 }
@@ -335,7 +341,7 @@ FfxErrorCode createPipeline(FfxInterface *backendInterface, FfxEffect effect, Ff
                             const FfxPipelineDescription *description, FfxUInt32, FfxPipelineState *outPipeline) {
 	MetalBackend *backend = backendOf(backendInterface);
 	NSString *name = passName(effect, pass);
-	NSString *source = name ? backend->shaders(name) : nil;
+	NSString *source = name ? backend->shaders(name, permutationOptions) : nil;
 	if (!source) {
 		NSLog(@"ffx_metal: no shader for effect %d pass %d", (int)effect, (int)pass);
 		return FFX_ERROR_INVALID_ARGUMENT;
@@ -357,9 +363,6 @@ FfxErrorCode createPipeline(FfxInterface *backendInterface, FfxEffect effect, Ff
 	if (!state) {
 		NSLog(@"ffx_metal: could not create the pipeline for %@: %@", name, error);
 		return FFX_ERROR_BACKEND_API_ERROR;
-	}
-	if (permutationOptions != 0) {
-		NSLog(@"ffx_metal: %@ asked for permutation 0x%x; using the one built", name, permutationOptions);
 	}
 
 	auto *pipeline = new MetalPipeline();
@@ -434,92 +437,45 @@ id<MTLResource> objectOf(MetalBackend *backend, FfxResourceInternal resource) {
 	return backend->resources[resource.internalIndex].object;
 }
 
-void encodeClear(MetalBackend *backend, id<MTLCommandBuffer> commandBuffer, const FfxClearFloatJobDescription &clear) {
+void encodeClear(MetalBackend *backend, const FfxClearFloatJobDescription &clear) {
 	id<MTLResource> object = objectOf(backend, clear.target);
 	if (!object) {
 		// An optional resource that was not given.
 		return;
 	}
 	if ([object conformsToProtocol:@protocol(MTLBuffer)]) {
-		id<MTLBlitCommandEncoder> blit = [commandBuffer blitCommandEncoder];
-		[blit fillBuffer:(id<MTLBuffer>)object range:NSMakeRange(0, ((id<MTLBuffer>)object).length) value:(uint8_t)clear.color[0]];
-		[blit endEncoding];
+		[backend->host fillBuffer:(id<MTLBuffer>)object value:(uint8_t)clear.color[0]];
 		return;
 	}
-	id<MTLTexture> texture = (id<MTLTexture>)object;
-	if ((texture.usage & MTLTextureUsageRenderTarget) == 0) {
-		// Not ours to render into (a texture the caller registered): copy zeros over it instead.
-		if (clear.color[0] != 0.0f || clear.color[1] != 0.0f || clear.color[2] != 0.0f || clear.color[3] != 0.0f) {
-			NSLog(@"ffx_metal: cannot clear %@ to a non-zero color; cleared to zero", texture.label);
-		}
-		NSUInteger bytesPerRow = texture.width * 16;
-		id<MTLBuffer> zeros = [backend->device newBufferWithLength:bytesPerRow * texture.height options:MTLResourceStorageModePrivate];
-		id<MTLBlitCommandEncoder> blit = [commandBuffer blitCommandEncoder];
-		[blit fillBuffer:zeros range:NSMakeRange(0, zeros.length) value:0];
-		for (NSUInteger level = 0; level < texture.mipmapLevelCount; level++) {
-			NSUInteger levelWidth = std::max<NSUInteger>(1, texture.width >> level);
-			NSUInteger levelHeight = std::max<NSUInteger>(1, texture.height >> level);
-			[blit copyFromBuffer:zeros
-			           sourceOffset:0
-			      sourceBytesPerRow:bytesPerRow
-			    sourceBytesPerImage:bytesPerRow * levelHeight
-			             sourceSize:MTLSizeMake(levelWidth, levelHeight, 1)
-			              toTexture:texture
-			       destinationSlice:0
-			       destinationLevel:level
-			      destinationOrigin:MTLOriginMake(0, 0, 0)];
-		}
-		[blit endEncoding];
-		return;
-	}
-	for (NSUInteger level = 0; level < texture.mipmapLevelCount; level++) {
-		MTLRenderPassDescriptor *pass = [MTLRenderPassDescriptor renderPassDescriptor];
-		pass.colorAttachments[0].texture = texture;
-		pass.colorAttachments[0].level = level;
-		pass.colorAttachments[0].loadAction = MTLLoadActionClear;
-		pass.colorAttachments[0].storeAction = MTLStoreActionStore;
-		pass.colorAttachments[0].clearColor = MTLClearColorMake(clear.color[0], clear.color[1], clear.color[2], clear.color[3]);
-		[[commandBuffer renderCommandEncoderWithDescriptor:pass] endEncoding];
-	}
+	[backend->host clearTexture:(id<MTLTexture>)object color:MTLClearColorMake(clear.color[0], clear.color[1], clear.color[2], clear.color[3])];
 }
 
-void encodeCopy(MetalBackend *backend, id<MTLCommandBuffer> commandBuffer, const FfxCopyJobDescription &copy) {
+void encodeCopy(MetalBackend *backend, const FfxCopyJobDescription &copy) {
 	id<MTLResource> source = objectOf(backend, copy.src);
 	id<MTLResource> destination = objectOf(backend, copy.dst);
-	id<MTLBlitCommandEncoder> blit = [commandBuffer blitCommandEncoder];
+	if (!source || !destination) {
+		return;
+	}
 	if ([source conformsToProtocol:@protocol(MTLBuffer)]) {
 		id<MTLBuffer> from = (id<MTLBuffer>)source;
 		NSUInteger size = copy.size ? copy.size : from.length - copy.srcOffset;
-		[blit copyFromBuffer:from sourceOffset:copy.srcOffset toBuffer:(id<MTLBuffer>)destination destinationOffset:copy.dstOffset size:size];
+		[backend->host copyBuffer:from offset:copy.srcOffset toBuffer:(id<MTLBuffer>)destination offset:copy.dstOffset size:size];
 	} else {
-		id<MTLTexture> from = (id<MTLTexture>)source;
-		id<MTLTexture> to = (id<MTLTexture>)destination;
-		NSUInteger levels = std::min(from.mipmapLevelCount, to.mipmapLevelCount);
-		for (NSUInteger level = 0; level < levels; level++) {
-			[blit copyFromTexture:from
-			              sourceSlice:0
-			              sourceLevel:level
-			             sourceOrigin:MTLOriginMake(0, 0, 0)
-			               sourceSize:MTLSizeMake(std::min(from.width, to.width) >> level ?: 1, std::min(from.height, to.height) >> level ?: 1, 1)
-			                toTexture:to
-			         destinationSlice:0
-			         destinationLevel:level
-			        destinationOrigin:MTLOriginMake(0, 0, 0)];
-		}
+		[backend->host copyTexture:(id<MTLTexture>)source toTexture:(id<MTLTexture>)destination];
 	}
-	[blit endEncoding];
 }
 
-void encodeCompute(MetalBackend *backend, id<MTLComputeCommandEncoder> encoder, const FfxComputeJobDescription &job) {
+void encodeCompute(MetalBackend *backend, const FfxComputeJobDescription &job) {
+	id<FfxMetalHost> host = backend->host;
 	auto *pipeline = static_cast<MetalPipeline *>(job.pipeline.pipeline);
-	[encoder setComputePipelineState:pipeline->state];
+	[host setComputePipeline:pipeline->state];
 	for (size_t i = 0; i < pipeline->srvTextures.size(); i++) {
 		id<MTLTexture> texture = (id<MTLTexture>)objectOf(backend, job.srvTextures[i].resource);
 		if (!texture) {
 			MTLDataType type = pipeline->srvTextureTypes[i];
 			texture = type == MTLDataTypeUInt ? backend->nullUint : type == MTLDataTypeInt ? backend->nullInt : backend->nullFloat;
 		}
-		[encoder setTexture:texture atIndex:pipeline->srvTextures[i]];
+		[host setTexture:texture atIndex:pipeline->srvTextures[i]];
 	}
 	for (size_t i = 0; i < pipeline->uavTextures.size(); i++) {
 		FfxResourceInternal resource = job.uavTextures[i].resource;
@@ -529,13 +485,13 @@ void encodeCompute(MetalBackend *backend, id<MTLComputeCommandEncoder> encoder, 
 			uint32_t mip = job.uavTextures[i].mip;
 			texture = mip < entry.mipViews.size() ? entry.mipViews[mip] : (id<MTLTexture>)entry.object;
 		}
-		[encoder setTexture:texture atIndex:pipeline->uavTextures[i]];
+		[host setTexture:texture atIndex:pipeline->uavTextures[i]];
 	}
 	for (size_t i = 0; i < pipeline->srvBuffers.size(); i++) {
-		[encoder setBuffer:(id<MTLBuffer>)objectOf(backend, job.srvBuffers[i].resource) offset:job.srvBuffers[i].offset atIndex:pipeline->srvBuffers[i]];
+		[host setBuffer:(id<MTLBuffer>)objectOf(backend, job.srvBuffers[i].resource) offset:job.srvBuffers[i].offset atIndex:pipeline->srvBuffers[i]];
 	}
 	for (size_t i = 0; i < pipeline->uavBuffers.size(); i++) {
-		[encoder setBuffer:(id<MTLBuffer>)objectOf(backend, job.uavBuffers[i].resource) offset:job.uavBuffers[i].offset atIndex:pipeline->uavBuffers[i]];
+		[host setBuffer:(id<MTLBuffer>)objectOf(backend, job.uavBuffers[i].resource) offset:job.uavBuffers[i].offset atIndex:pipeline->uavBuffers[i]];
 	}
 	for (size_t i = 0; i < pipeline->constantBuffers.size(); i++) {
 		NSUInteger length = job.cbs[i].num32BitEntries * 4;
@@ -543,98 +499,42 @@ void encodeCompute(MetalBackend *backend, id<MTLComputeCommandEncoder> encoder, 
 		if (declared > length) {
 			uint8_t padded[4096] = {};
 			memcpy(padded, job.cbs[i].data, length);
-			[encoder setBytes:padded length:std::min<NSUInteger>(declared, sizeof(padded)) atIndex:pipeline->constantBuffers[i]];
+			[host setBytes:padded length:std::min<NSUInteger>(declared, sizeof(padded)) atIndex:pipeline->constantBuffers[i]];
 		} else {
-			[encoder setBytes:job.cbs[i].data length:length atIndex:pipeline->constantBuffers[i]];
+			[host setBytes:job.cbs[i].data length:length atIndex:pipeline->constantBuffers[i]];
 		}
 	}
 	for (size_t i = 0; i < pipeline->samplers.size(); i++) {
-		[encoder setSamplerState:pipeline->samplers[i] atIndex:pipeline->samplerIndices[i]];
+		[host setSamplerState:pipeline->samplers[i] atIndex:pipeline->samplerIndices[i]];
 	}
-	[encoder dispatchThreadgroups:MTLSizeMake(job.dimensions[0], job.dimensions[1], job.dimensions[2])
-	        threadsPerThreadgroup:pipeline->threadgroupSize];
+	[host dispatchThreadgroups:MTLSizeMake(job.dimensions[0], job.dimensions[1], job.dimensions[2]) threadsPerThreadgroup:pipeline->threadgroupSize];
 }
 
-// FFX_METAL_PROFILE=1 (for tools/fsrbench): each job gets a command buffer of its own, committed right away, and its
-// GPU time is added up per pass and printed every few hundred jobs. Only correct when the command list holds nothing
-// else, as these run ahead of it.
-void profileJob(MetalBackend *backend, id<MTLCommandBuffer> commandBuffer, const FfxGpuJobDescription &job) {
-	static NSMutableDictionary<NSString *, NSNumber *> *totals;
-	static NSMutableDictionary<NSString *, NSNumber *> *counts;
-	static int jobs;
-	if (!totals) {
-		totals = [NSMutableDictionary dictionary];
-		counts = [NSMutableDictionary dictionary];
-	}
-	NSString *label = [NSString stringWithUTF8String:narrow(job.jobType == FFX_GPU_JOB_COMPUTE ? job.computeJobDescriptor.pipeline.name : job.jobLabel).c_str()];
-	[commandBuffer addCompletedHandler:^(id<MTLCommandBuffer> finished) {
-		@synchronized(totals) {
-			totals[label] = @(totals[label].doubleValue + (finished.GPUEndTime - finished.GPUStartTime) * 1000.0);
-			counts[label] = @(counts[label].intValue + 1);
-			if (++jobs % 600 == 0) {
-				NSArray *labels = [totals keysSortedByValueUsingComparator:^NSComparisonResult(NSNumber *a, NSNumber *b) { return [b compare:a]; }];
-				for (NSString *name in labels) {
-					printf("  %-70s %6.3f ms x %d\n", name.UTF8String, totals[name].doubleValue / counts[name].intValue, counts[name].intValue);
-				}
-				[totals removeAllObjects];
-				[counts removeAllObjects];
-			}
-		}
-	}];
-	(void)backend;
-}
-
-FfxErrorCode executeGpuJobs(FfxInterface *backendInterface, FfxCommandList commandList, FfxUInt32) {
+FfxErrorCode executeGpuJobs(FfxInterface *backendInterface, FfxCommandList, FfxUInt32) {
 	MetalBackend *backend = backendOf(backendInterface);
-	id<MTLCommandBuffer> commandBuffer = (__bridge id<MTLCommandBuffer>)commandList;
-	if (getenv("FFX_METAL_PROFILE")) {
-		for (const FfxGpuJobDescription &job : backend->jobs) {
-			if (job.jobType == FFX_GPU_JOB_BARRIER || job.jobType == FFX_GPU_JOB_DISCARD) {
-				continue;
-			}
-			id<MTLCommandBuffer> own = [commandBuffer.commandQueue commandBuffer];
-			if (job.jobType == FFX_GPU_JOB_COMPUTE) {
-				id<MTLComputeCommandEncoder> compute = [own computeCommandEncoder];
-				encodeCompute(backend, compute, job.computeJobDescriptor);
-				[compute endEncoding];
-			} else if (job.jobType == FFX_GPU_JOB_CLEAR_FLOAT) {
-				encodeClear(backend, own, job.clearJobDescriptor);
-			} else if (job.jobType == FFX_GPU_JOB_COPY) {
-				encodeCopy(backend, own, job.copyJobDescriptor);
-			}
-			profileJob(backend, own, job);
-			[own commit];
-		}
-		backend->jobs.clear();
-		return FFX_OK;
-	}
-	id<MTLComputeCommandEncoder> compute = nil;
+	id<FfxMetalHost> host = backend->host;
+	BOOL labels = [host respondsToSelector:@selector(beginJob:)];
 	for (const FfxGpuJobDescription &job : backend->jobs) {
-		if (job.jobType == FFX_GPU_JOB_COMPUTE) {
-			if (!compute) {
-				compute = [commandBuffer computeCommandEncoder];
-				compute.label = @"FidelityFX";
-			}
-			encodeCompute(backend, compute, job.computeJobDescriptor);
-			continue;
-		}
 		if (job.jobType == FFX_GPU_JOB_BARRIER || job.jobType == FFX_GPU_JOB_DISCARD) {
-			// Metal tracks hazards between the passes of a command buffer.
+			// Dispatches are ordered by the host; copies and clears end a compute run.
 			continue;
 		}
-		[compute endEncoding];
-		compute = nil;
-		if (job.jobType == FFX_GPU_JOB_CLEAR_FLOAT) {
-			if (getenv("FFX_METAL_TRACE")) {
-				id<MTLResource> target = objectOf(backend, job.clearJobDescriptor.target);
-				NSLog(@"ffx_metal trace: clear %s -> #%d %@", narrow(job.jobLabel).c_str(), job.clearJobDescriptor.target.internalIndex, target.label);
-			}
-			encodeClear(backend, commandBuffer, job.clearJobDescriptor);
+		if (labels) {
+			const wchar_t *label = job.jobType == FFX_GPU_JOB_COMPUTE ? job.computeJobDescriptor.pipeline.name : job.jobLabel;
+			[host beginJob:[NSString stringWithUTF8String:narrow(label).c_str()]];
+		}
+		if (job.jobType == FFX_GPU_JOB_COMPUTE) {
+			encodeCompute(backend, job.computeJobDescriptor);
+		} else if (job.jobType == FFX_GPU_JOB_CLEAR_FLOAT) {
+			encodeClear(backend, job.clearJobDescriptor);
 		} else if (job.jobType == FFX_GPU_JOB_COPY) {
-			encodeCopy(backend, commandBuffer, job.copyJobDescriptor);
+			encodeCopy(backend, job.copyJobDescriptor);
+		}
+		if (labels) {
+			[host endJob];
 		}
 	}
-	[compute endEncoding];
+	[host endEncoding];
 	backend->jobs.clear();
 	return FFX_OK;
 }
@@ -655,18 +555,22 @@ size_t ffxGetScratchMemorySizeMetal(void) {
 	return sizeof(MetalBackend *);
 }
 
-FfxErrorCode ffxGetInterfaceMetal(FfxInterface *backendInterface, id<MTLDevice> device, FfxMetalShaderSource shaders, void *scratch,
-                                  size_t scratchSize) {
-	if (!backendInterface || !device || !scratch || scratchSize < ffxGetScratchMemorySizeMetal()) {
+FfxErrorCode ffxGetInterfaceMetal(FfxInterface *backendInterface, id<MTLDevice> device, id<FfxMetalHost> host,
+                                  FfxMetalShaderSource shaders, void *scratch, size_t scratchSize) {
+	if (!backendInterface || !device || !host || !scratch || scratchSize < ffxGetScratchMemorySizeMetal()) {
 		return FFX_ERROR_INVALID_ARGUMENT;
 	}
 	auto *backend = new MetalBackend();
 	backend->device = device;
+	backend->host = host;
 	backend->shaders = shaders;
 	backend->constantRing.resize(CONSTANT_RING_WORDS);
 	backend->nullFloat = nullTexture(device, MTLPixelFormatRGBA16Float);
 	backend->nullUint = nullTexture(device, MTLPixelFormatR32Uint);
 	backend->nullInt = nullTexture(device, MTLPixelFormatR32Sint);
+	[host didCreateResource:backend->nullFloat];
+	[host didCreateResource:backend->nullUint];
+	[host didCreateResource:backend->nullInt];
 	*static_cast<MetalBackend **>(scratch) = backend;
 
 	*backendInterface = {};
@@ -703,8 +607,15 @@ FfxResource ffxGetResourceMetal(id<MTLResource> resource, FfxResourceDescription
 	return result;
 }
 
-FfxCommandList ffxGetCommandListMetal(id<MTLCommandBuffer> commandBuffer) {
-	return (__bridge void *)commandBuffer;
+void ffxDestroyInterfaceMetal(FfxInterface *backendInterface) {
+	if (backendInterface && backendInterface->scratchBuffer) {
+		delete backendOf(backendInterface);
+		*static_cast<MetalBackend **>(backendInterface->scratchBuffer) = nullptr;
+	}
+}
+
+FfxCommandList ffxGetCommandListMetal(id<FfxMetalHost> host) {
+	return (__bridge void *)host;
 }
 
 MTLPixelFormat ffxGetMetalPixelFormat(FfxSurfaceFormat format) {
@@ -809,3 +720,154 @@ id<MTLResource> ffxCreateResourceMetal(id<MTLDevice> device, const FfxCreateReso
 	}
 	return texture;
 }
+
+@implementation FfxMetalCommandBufferHost {
+	id<MTLComputeCommandEncoder> _compute;
+	id<MTLCommandBuffer> _target;
+	NSString *_jobLabel;
+	BOOL _profile;
+}
+
+- (instancetype)init {
+	if ((self = [super init])) {
+		_profile = getenv("FFX_METAL_PROFILE") != NULL;
+	}
+	return self;
+}
+
+- (id<MTLCommandBuffer>)target {
+	return _target ?: _commandBuffer;
+}
+
+- (id<MTLComputeCommandEncoder>)compute {
+	if (!_compute) {
+		_compute = [self.target computeCommandEncoder];
+		_compute.label = @"FidelityFX";
+	}
+	return _compute;
+}
+
+- (void)endEncoding {
+	[_compute endEncoding];
+	_compute = nil;
+}
+
+- (void)didCreateResource:(id<MTLResource>)resource {
+	(void)resource;
+}
+
+- (void)releaseResource:(id<MTLResource>)resource {
+	(void)resource;
+}
+
+- (void)setComputePipeline:(id<MTLComputePipelineState>)pipeline {
+	[self.compute setComputePipelineState:pipeline];
+}
+
+- (void)setTexture:(id<MTLTexture>)texture atIndex:(NSUInteger)index {
+	[self.compute setTexture:texture atIndex:index];
+}
+
+- (void)setBuffer:(id<MTLBuffer>)buffer offset:(NSUInteger)offset atIndex:(NSUInteger)index {
+	[self.compute setBuffer:buffer offset:offset atIndex:index];
+}
+
+- (void)setBytes:(const void *)bytes length:(NSUInteger)length atIndex:(NSUInteger)index {
+	[self.compute setBytes:bytes length:length atIndex:index];
+}
+
+- (void)setSamplerState:(id<MTLSamplerState>)sampler atIndex:(NSUInteger)index {
+	[self.compute setSamplerState:sampler atIndex:index];
+}
+
+- (void)dispatchThreadgroups:(MTLSize)threadgroups threadsPerThreadgroup:(MTLSize)threadsPerThreadgroup {
+	[self.compute dispatchThreadgroups:threadgroups threadsPerThreadgroup:threadsPerThreadgroup];
+}
+
+- (void)clearTexture:(id<MTLTexture>)texture color:(MTLClearColor)color {
+	[self endEncoding];
+	for (NSUInteger level = 0; level < texture.mipmapLevelCount; level++) {
+		MTLRenderPassDescriptor *pass = [MTLRenderPassDescriptor renderPassDescriptor];
+		pass.colorAttachments[0].texture = texture;
+		pass.colorAttachments[0].level = level;
+		pass.colorAttachments[0].loadAction = MTLLoadActionClear;
+		pass.colorAttachments[0].storeAction = MTLStoreActionStore;
+		pass.colorAttachments[0].clearColor = color;
+		[[self.target renderCommandEncoderWithDescriptor:pass] endEncoding];
+	}
+}
+
+- (void)fillBuffer:(id<MTLBuffer>)buffer value:(uint8_t)value {
+	[self endEncoding];
+	id<MTLBlitCommandEncoder> blit = [self.target blitCommandEncoder];
+	[blit fillBuffer:buffer range:NSMakeRange(0, buffer.length) value:value];
+	[blit endEncoding];
+}
+
+- (void)copyBuffer:(id<MTLBuffer>)source offset:(NSUInteger)sourceOffset toBuffer:(id<MTLBuffer>)destination
+            offset:(NSUInteger)destinationOffset size:(NSUInteger)size {
+	[self endEncoding];
+	id<MTLBlitCommandEncoder> blit = [self.target blitCommandEncoder];
+	[blit copyFromBuffer:source sourceOffset:sourceOffset toBuffer:destination destinationOffset:destinationOffset size:size];
+	[blit endEncoding];
+}
+
+- (void)copyTexture:(id<MTLTexture>)source toTexture:(id<MTLTexture>)destination {
+	[self endEncoding];
+	id<MTLBlitCommandEncoder> blit = [self.target blitCommandEncoder];
+	NSUInteger levels = std::min(source.mipmapLevelCount, destination.mipmapLevelCount);
+	for (NSUInteger level = 0; level < levels; level++) {
+		[blit copyFromTexture:source
+		          sourceSlice:0
+		          sourceLevel:level
+		         sourceOrigin:MTLOriginMake(0, 0, 0)
+		           sourceSize:MTLSizeMake(std::max<NSUInteger>(1, std::min(source.width, destination.width) >> level),
+		                                  std::max<NSUInteger>(1, std::min(source.height, destination.height) >> level), 1)
+		            toTexture:destination
+		     destinationSlice:0
+		     destinationLevel:level
+		    destinationOrigin:MTLOriginMake(0, 0, 0)];
+	}
+	[blit endEncoding];
+}
+
+- (void)beginJob:(NSString *)label {
+	if (_profile) {
+		[self endEncoding];
+		_target = [_commandBuffer.commandQueue commandBuffer];
+		_jobLabel = label;
+	}
+}
+
+- (void)endJob {
+	if (!_profile) {
+		return;
+	}
+	[self endEncoding];
+	static NSMutableDictionary<NSString *, NSNumber *> *totals;
+	static NSMutableDictionary<NSString *, NSNumber *> *counts;
+	static int jobs;
+	if (!totals) {
+		totals = [NSMutableDictionary dictionary];
+		counts = [NSMutableDictionary dictionary];
+	}
+	NSString *label = _jobLabel;
+	[_target addCompletedHandler:^(id<MTLCommandBuffer> finished) {
+		@synchronized(totals) {
+			totals[label] = @(totals[label].doubleValue + (finished.GPUEndTime - finished.GPUStartTime) * 1000.0);
+			counts[label] = @(counts[label].intValue + 1);
+			if (++jobs % 600 == 0) {
+				NSArray *labels = [totals keysSortedByValueUsingComparator:^NSComparisonResult(NSNumber *a, NSNumber *b) { return [b compare:a]; }];
+				for (NSString *name in labels) {
+					printf("  %-70s %6.3f ms x %d\n", name.UTF8String, totals[name].doubleValue / counts[name].intValue, counts[name].intValue);
+				}
+				[totals removeAllObjects];
+				[counts removeAllObjects];
+			}
+		}
+	}];
+	[_target commit];
+	_target = nil;
+}
+
+@end

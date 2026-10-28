@@ -196,15 +196,21 @@ M2M_EXPORT int64_t m2m_hdr_last_frame(int64_t ctx);
 
 // Frame interpolation
 
+// The engines of m2m_frame_interpolation_capture.
+#define M2M_FRAMEGEN_METALFX 1
+#define M2M_FRAMEGEN_FSR 2
+
+// MetalFX frame interpolation needs macOS 26; FSR 3.1 frame generation an Apple GPU from the M1 on.
 M2M_EXPORT int32_t m2m_frame_interpolation_supported(int64_t ctx);
-// Captures this frame's world for MetalFX frame interpolation: color is the world before the hand and the GUI, depth
-// the depth it was drawn with (its size may be smaller, when upscaling). matrices are as for
+M2M_EXPORT int32_t m2m_fsr_framegen_supported(int64_t ctx);
+// Captures this frame's world for frame generation with engine (MetalFX or FSR): color is the world before the hand
+// and the GUI, depth the depth it was drawn with (its size may be smaller, when upscaling). matrices are as for
 // m2m_metalfx_temporal_upscale; camera holds nine floats: near and far plane, vertical field of view in degrees,
 // aspect ratio, the jitter in pixels of depth, seconds since the previous capture, and the motion vector scale (x, y).
-// The next m2m_present then shows the frame MetalFX generates between the previous capture and this one before
-// this frame. reset drops the history. Returns 0 if MetalFX refused the textures.
-M2M_EXPORT int32_t m2m_frame_interpolation_capture(int64_t ctx, int64_t color, int64_t depth, const float *matrices,
-                                                   const float *camera, int32_t reset);
+// The next m2m_present then shows the frame generated between the previous capture and this one before this frame.
+// reset drops the history. Returns 0 if the engine refused the textures.
+M2M_EXPORT int32_t m2m_frame_interpolation_capture(int64_t ctx, int32_t engine, int64_t color, int64_t depth,
+                                                   const float *matrices, const float *camera, int32_t reset);
 // The generated frame shown by the most recent m2m_present (borrowed), or 0 if it showed none.
 M2M_EXPORT int64_t m2m_frame_interpolation_last_output(int64_t ctx);
 // Frees the interpolator's textures once the GPU is done with them; the next capture starts over.

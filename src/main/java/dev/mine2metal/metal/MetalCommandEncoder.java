@@ -413,9 +413,9 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
 	}
 
 	/** Captures the world for frame interpolation, in command order; false if MetalFX rejected the sizes or formats. */
-	boolean captureForInterpolation(MetalTexture color, MetalTexture depth, float[] matrices, float[] camera, boolean reset) {
+	boolean captureForInterpolation(int engine, MetalTexture color, MetalTexture depth, float[] matrices, float[] camera, boolean reset) {
 		this.flushPendingClears();
-		return MetalNative.frameInterpolationCapture(this.ctx, color.handle, depth.handle, matrices, camera, reset);
+		return MetalNative.frameInterpolationCapture(this.ctx, engine, color.handle, depth.handle, matrices, camera, reset);
 	}
 
 	void captureWorldForHdr(MetalTexture color) {

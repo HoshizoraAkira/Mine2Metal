@@ -25,6 +25,14 @@ public final class MetalSettings {
 		TEMPORAL
 	}
 
+	public enum FrameGeneration {
+		OFF,
+		/** MetalFX frame interpolation (macOS 26 or newer). */
+		METALFX,
+		/** AMD FidelityFX Super Resolution 3.1 frame generation, through the Metal backend. */
+		FSR3
+	}
+
 	public enum MetalVersion {
 		/** Metal 4 when this Mac supports it (macOS 26, Apple M1 or later), otherwise Metal 3. */
 		AUTO,
@@ -38,8 +46,8 @@ public final class MetalSettings {
 	public Upscaling upscaling = Upscaling.OFF;
 	/** Percent of the window's width and height the world is rendered at while upscaling. */
 	public int renderScale = 75;
-	/** MetalFX frame interpolation: a generated frame between each pair the game renders (macOS 26 or newer). */
-	public boolean frameInterpolation;
+	/** A generated frame between each pair the game renders, by MetalFX or by FSR 3.1; one at a time. */
+	public FrameGeneration frameGeneration = FrameGeneration.OFF;
 	public static final int MIN_HDR_BRIGHTNESS = 125;
 	public static final int MAX_HDR_BRIGHTNESS = 400;
 	public static final int HDR_BRIGHTNESS_STEP = 25;
@@ -89,7 +97,9 @@ public final class MetalSettings {
 		settings.metalVersion = parseMetalVersion(values.getProperty("metalVersion", "auto"));
 		settings.upscaling = parseUpscaling(values.getProperty("upscaling", "off"));
 		settings.renderScale = clampScale(parseInt(values.getProperty("renderScale"), settings.renderScale));
-		settings.frameInterpolation = Boolean.parseBoolean(values.getProperty("frameInterpolation", "false"));
+		// frameInterpolation=true is what versions with only MetalFX wrote.
+		String legacy = Boolean.parseBoolean(values.getProperty("frameInterpolation", "false")) ? "metalfx" : "off";
+		settings.frameGeneration = parseFrameGeneration(values.getProperty("frameGeneration", legacy));
 		settings.hdr = Boolean.parseBoolean(values.getProperty("hdr", "false"));
 		settings.hdrBrightness = clampHdrBrightness(parseInt(values.getProperty("hdrBrightness"), settings.hdrBrightness));
 		settings.performanceHud = Boolean.parseBoolean(values.getProperty("performanceHud", "false"));
@@ -116,11 +126,14 @@ public final class MetalSettings {
 				upscaling=%s
 				renderScale=%d
 				#
-				# MetalFX frame interpolation (macOS 26 or newer): shows a generated frame between each pair the game
-				# renders, for up to twice the frame rate on screen, capped at the display's refresh rate. Frames are
-				# paced to the display even with vsync off, and input lags by about one rendered frame. Heavy on the
-				# GPU at large window sizes; best together with temporal upscaling.
-				frameInterpolation=%s
+				# Frame generation: shows a generated frame between each pair the game renders, for up to twice the
+				# frame rate on screen, capped at the display's refresh rate. Frames are paced to the display even with
+				# vsync off, and input lags by about one rendered frame.
+				# off
+				# metalfx: MetalFX frame interpolation (macOS 26 or newer)
+				# fsr3: AMD FidelityFX Super Resolution 3.1 frame generation, about half the GPU cost of MetalFX
+				# Heavy on the GPU at large window sizes; best together with temporal upscaling.
+				frameGeneration=%s
 				#
 				# HDR (EDR) output on displays that can show brighter than SDR white: the world's brightest parts (sky,
 				# sun, lava, light sources) reach hdrBrightness percent of SDR white (125-400), as far as the display's
@@ -130,7 +143,7 @@ public final class MetalSettings {
 				#
 				# Apple's Metal Performance HUD (frame rate, frame times, GPU time, memory) over the game window.
 				performanceHud=%s
-				""".formatted(this.enabled, metalVersionName(this.metalVersion), this.upscaling.name().toLowerCase(Locale.ROOT), this.renderScale, this.frameInterpolation,
+				""".formatted(this.enabled, metalVersionName(this.metalVersion), this.upscaling.name().toLowerCase(Locale.ROOT), this.renderScale, this.frameGeneration.name().toLowerCase(Locale.ROOT),
 						this.hdr, this.hdrBrightness, this.performanceHud);
 		Path file = file();
 		try {
@@ -164,6 +177,14 @@ public final class MetalSettings {
 			case AUTO -> "auto";
 			case METAL_4 -> "metal4";
 			case METAL_3 -> "metal3";
+		};
+	}
+
+	private static FrameGeneration parseFrameGeneration(String value) {
+		return switch (value.trim().toLowerCase(Locale.ROOT)) {
+			case "metalfx" -> FrameGeneration.METALFX;
+			case "fsr3", "fsr" -> FrameGeneration.FSR3;
+			default -> FrameGeneration.OFF;
 		};
 	}
 

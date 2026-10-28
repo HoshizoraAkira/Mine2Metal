@@ -53,14 +53,35 @@ final class MetalOptionTexts {
 		return modes;
 	}
 
-	static Component frameInterpolationTooltip() {
+	static Component frameGenerationName(MetalSettings.FrameGeneration value) {
+		return Component.translatable("mine2metal.options.frame_generation." + value.name().toLowerCase(Locale.ROOT));
+	}
+
+	static Component frameGenerationTooltip() {
 		if (!MetalRenderer.isActive()) {
 			return Component.translatable("mine2metal.options.metal_inactive");
 		}
+		Component tooltip = Component.translatable("mine2metal.options.frame_generation.tooltip");
 		if (!MetalRenderer.supportsFrameInterpolation()) {
-			return Component.translatable("mine2metal.options.frame_interpolation.unsupported");
+			tooltip = tooltip.copy().append("\n\n").append(Component.translatable("mine2metal.options.frame_generation.metalfx_unsupported"));
 		}
-		return Component.translatable("mine2metal.options.frame_interpolation.tooltip");
+		return tooltip;
+	}
+
+	static boolean frameGenerationAvailable() {
+		return frameGenerationModes().size() > 1;
+	}
+
+	/** The frame generation engines this Mac can run. */
+	static EnumSet<MetalSettings.FrameGeneration> frameGenerationModes() {
+		EnumSet<MetalSettings.FrameGeneration> modes = EnumSet.of(MetalSettings.FrameGeneration.OFF);
+		if (MetalRenderer.supportsFrameInterpolation()) {
+			modes.add(MetalSettings.FrameGeneration.METALFX);
+		}
+		if (MetalRenderer.supportsFsrFrameGeneration()) {
+			modes.add(MetalSettings.FrameGeneration.FSR3);
+		}
+		return modes;
 	}
 
 	/** Explains EDR and says how much brighter than SDR white the display can go at its current brightness. */

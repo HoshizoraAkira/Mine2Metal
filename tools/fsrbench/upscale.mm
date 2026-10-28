@@ -73,10 +73,13 @@ static void check(FfxErrorCode code, const char *what) {
 }
 
 // Encodes one frame per call into a fresh command buffer and reports the median GPU time after a warm-up.
+static FfxMetalCommandBufferHost *host;
+
 static void measure(id<MTLCommandQueue> queue, const char *name, int frames, std::function<void(id<MTLCommandBuffer>, int)> encode) {
 	std::vector<double> times;
 	for (int frame = 0; frame < frames; frame++) {
 		id<MTLCommandBuffer> commandBuffer = [queue commandBuffer];
+		host.commandBuffer = commandBuffer;
 		encode(commandBuffer, frame);
 		[commandBuffer commit];
 		[commandBuffer waitUntilCompleted];
@@ -136,7 +139,8 @@ int main(int argc, const char **argv) {
 
 		static uint8_t scratch[64];
 		FfxInterface backend;
-		check(ffxGetInterfaceMetal(&backend, device, ^NSString *(NSString *pass) {
+		host = [FfxMetalCommandBufferHost new];
+		check(ffxGetInterfaceMetal(&backend, device, host, ^NSString *(NSString *pass, uint32_t) {
 			      return [NSString stringWithContentsOfFile:[shaderDirectory stringByAppendingFormat:@"/%@.metal", pass]
 			                                       encoding:NSUTF8StringEncoding
 			                                          error:nil];
@@ -186,9 +190,9 @@ int main(int argc, const char **argv) {
 		spatialDescriptor.colorProcessingMode = MTLFXSpatialScalerColorProcessingModePerceptual;
 		id<MTLFXSpatialScaler> spatial = [spatialDescriptor newSpatialScalerWithDevice:device];
 
-		measure(queue, "FSR 3.1 upscaler", frames, [&](id<MTLCommandBuffer> commandBuffer, int frame) {
+		measure(queue, "FSR 3.1 upscaler", frames, [&](id<MTLCommandBuffer>, int frame) {
 			FfxFsr3UpscalerDispatchDescription dispatch = {};
-			dispatch.commandList = ffxGetCommandListMetal(commandBuffer);
+			dispatch.commandList = ffxGetCommandListMetal(host);
 			dispatch.color = colorResource;
 			dispatch.depth = depthResource;
 			dispatch.motionVectors = motionResource;
@@ -220,9 +224,9 @@ int main(int argc, const char **argv) {
 			temporal.reset = frame == 0;
 			[temporal encodeToCommandBuffer:commandBuffer];
 		});
-		measure(queue, "FSR 1 (EASU + RCAS)", frames, [&](id<MTLCommandBuffer> commandBuffer, int) {
+		measure(queue, "FSR 1 (EASU + RCAS)", frames, [&](id<MTLCommandBuffer>, int) {
 			FfxFsr1DispatchDescription dispatch = {};
-			dispatch.commandList = ffxGetCommandListMetal(commandBuffer);
+			dispatch.commandList = ffxGetCommandListMetal(host);
 			dispatch.color = colorResource;
 			dispatch.output = outputResource;
 			dispatch.renderSize = {renderWidth, renderHeight};

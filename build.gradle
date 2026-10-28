@@ -47,14 +47,35 @@ fabricApi {
 	}
 }
 
-// The Objective-C side is a single dylib built with the system clang and shipped inside the jar.
+// FSR frame generation shaders: AMD's GLSL translated to MSL (glslangValidator and spirv-cross, both in Homebrew) and
+// embedded in the dylib as C.
+tasks.register('buildFsrShaders', Exec) {
+	def outputDirectory = layout.buildDirectory.dir('fsr-shaders')
+	def isMac = System.getProperty('os.name').startsWith('Mac')
+
+	inputs.dir('third_party/fidelityfx-1.1.4')
+	inputs.files('scripts/build-fsr-shaders.sh', 'scripts/build-fsr-embedded.sh')
+	outputs.file(outputDirectory.map { it.file('fsr_shaders.c') })
+
+	onlyIf { isMac }
+
+	commandLine 'sh', 'scripts/build-fsr-embedded.sh', outputDirectory.get().asFile.absolutePath
+}
+
+// The native side is a single dylib built with the system clang and shipped inside the jar: the Objective-C backend,
+// the FidelityFX backend and AMD's FidelityFX host code (see scripts/build-native.sh).
 tasks.register('buildNative', Exec) {
-	def sources = fileTree('src/main/native') { include '**/*.m', '**/*.h' }
+	def sources = fileTree('src/main/native') { include '**/*.m', '**/*.mm', '**/*.h' }
 	def output = layout.buildDirectory.file('native/libmine2metal.dylib')
+	def shaders = layout.buildDirectory.file('fsr-shaders/fsr_shaders.c')
 	def minVersion = project.macos_min_version
 	def isMac = System.getProperty('os.name').startsWith('Mac')
 
+	dependsOn 'buildFsrShaders'
 	inputs.files(sources)
+	inputs.dir('third_party/fidelityfx-1.1.4')
+	inputs.files('scripts/build-native.sh')
+	inputs.file(shaders)
 	inputs.property 'macosMinVersion', minVersion
 	outputs.file(output)
 
@@ -62,22 +83,7 @@ tasks.register('buildNative', Exec) {
 
 	doFirst { output.get().asFile.parentFile.mkdirs() }
 
-	commandLine 'xcrun', 'clang',
-		'-dynamiclib',
-		'-fobjc-arc',
-		'-fvisibility=hidden',
-		'-O2',
-		'-Wall', '-Wextra', '-Werror',
-		'-arch', 'arm64',
-		"-mmacosx-version-min=${minVersion}",
-		'-framework', 'AppKit',
-		'-framework', 'Foundation',
-		'-framework', 'Metal',
-		'-framework', 'MetalFX',
-		'-framework', 'QuartzCore',
-		'-install_name', '@rpath/libmine2metal.dylib',
-		'-o', output.get().asFile.absolutePath,
-		*sources.filter { it.name.endsWith('.m') }.files.collect { it.absolutePath }.sort()
+	commandLine 'sh', 'scripts/build-native.sh', output.get().asFile.absolutePath, minVersion, shaders.get().asFile.absolutePath
 }
 
 processResources {
@@ -90,6 +96,11 @@ processResources {
 
 	from(tasks.named('buildNative')) {
 		into 'natives/macos-arm64'
+	}
+	// The dylib contains AMD FidelityFX SDK code, whose MIT license must ship with it.
+	from('third_party/fidelityfx-1.1.4/LICENSE.txt') {
+		into 'META-INF/licenses'
+		rename { 'AMD-FidelityFX-SDK-LICENSE.txt' }
 	}
 }
 

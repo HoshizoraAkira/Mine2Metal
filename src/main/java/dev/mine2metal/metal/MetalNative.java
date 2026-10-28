@@ -528,11 +528,20 @@ final class MetalNative {
 		}
 	}
 
-	static boolean frameInterpolationCapture(long ctx, long color, long depth, float[] matrices, float[] camera, boolean reset) {
+	static boolean fsrFrameGenerationSupported(long ctx) {
+		try {
+			return (int) Functions.FSR_FRAMEGEN_SUPPORTED.invokeExact(ctx) != 0;
+		} catch (Throwable t) {
+			throw rethrow(t);
+		}
+	}
+
+	/** engine: 1 for MetalFX, 2 for FSR 3.1 (M2M_FRAMEGEN_* in mine2metal.h). */
+	static boolean frameInterpolationCapture(long ctx, int engine, long color, long depth, float[] matrices, float[] camera, boolean reset) {
 		try (Arena arena = Arena.ofConfined()) {
 			MemorySegment params = arena.allocateFrom(JAVA_FLOAT, matrices);
 			MemorySegment values = arena.allocateFrom(JAVA_FLOAT, camera);
-			return (int) Functions.FRAME_INTERPOLATION_CAPTURE.invokeExact(ctx, color, depth, params, values, reset ? 1 : 0) != 0;
+			return (int) Functions.FRAME_INTERPOLATION_CAPTURE.invokeExact(ctx, engine, color, depth, params, values, reset ? 1 : 0) != 0;
 		} catch (Throwable t) {
 			throw rethrow(t);
 		}
@@ -835,8 +844,9 @@ final class MetalNative {
 		static final MethodHandle METALFX_TEMPORAL_UPSCALE = function("m2m_metalfx_temporal_upscale", JAVA_INT, JAVA_LONG, JAVA_LONG, JAVA_LONG, JAVA_LONG,
 				ADDRESS, JAVA_FLOAT, JAVA_FLOAT, JAVA_INT);
 		static final MethodHandle FRAME_INTERPOLATION_SUPPORTED = function("m2m_frame_interpolation_supported", JAVA_INT, JAVA_LONG);
-		static final MethodHandle FRAME_INTERPOLATION_CAPTURE = function("m2m_frame_interpolation_capture", JAVA_INT, JAVA_LONG, JAVA_LONG, JAVA_LONG,
-				ADDRESS, ADDRESS, JAVA_INT);
+		static final MethodHandle FSR_FRAMEGEN_SUPPORTED = function("m2m_fsr_framegen_supported", JAVA_INT, JAVA_LONG);
+		static final MethodHandle FRAME_INTERPOLATION_CAPTURE = function("m2m_frame_interpolation_capture", JAVA_INT, JAVA_LONG, JAVA_INT, JAVA_LONG,
+				JAVA_LONG, ADDRESS, ADDRESS, JAVA_INT);
 		static final MethodHandle FRAME_INTERPOLATION_LAST_OUTPUT = function("m2m_frame_interpolation_last_output", JAVA_LONG, JAVA_LONG);
 		static final MethodHandle FRAME_INTERPOLATION_RELEASE = function("m2m_frame_interpolation_release", null, JAVA_LONG);
 		static final MethodHandle METALFX_SPATIAL_UPSCALE = function("m2m_metalfx_spatial_upscale", JAVA_INT, JAVA_LONG, JAVA_LONG, JAVA_LONG);

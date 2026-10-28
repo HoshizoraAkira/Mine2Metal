@@ -201,6 +201,11 @@ static const MTLStages M2M_COPY_STAGES = MTLStageBlit | MTLStageDispatch;
 
 void m2m_end_encoding(M2MContext *ctx) {
 	if (ctx.metal4) {
+		if (ctx.computeEncoder4) {
+			m2m_barrier_at_end(ctx.computeEncoder4, MTLStageDispatch);
+			[ctx.computeEncoder4 endEncoding];
+			ctx.computeEncoder4 = nil;
+		}
 		if (ctx.transferEncoder4) {
 			m2m_barrier_at_end(ctx.transferEncoder4, M2M_COPY_STAGES);
 			[ctx.transferEncoder4 endEncoding];
@@ -219,12 +224,45 @@ void m2m_end_encoding(M2MContext *ctx) {
 		[ctx.blitEncoder endEncoding];
 		ctx.blitEncoder = nil;
 	}
+	if (ctx.computeEncoder) {
+		[ctx.computeEncoder endEncoding];
+		ctx.computeEncoder = nil;
+	}
 	if (ctx.renderEncoder) {
 		[ctx.renderEncoder endEncoding];
 		ctx.renderEncoder = nil;
 		ctx.renderEncoderReusable = NO;
 		ctx.renderEncoderAttachments = nil;
 	}
+}
+
+void m2m_compute_begin(M2MContext *ctx, id<MTLComputePipelineState> pipeline) {
+	if (ctx.metal4) {
+		if (!ctx.computeEncoder4) {
+			m2m_end_encoding(ctx);
+			ctx.computeEncoder4 = [m2m_command_buffer4(ctx) computeCommandEncoder];
+			m2m_barrier_at_start(ctx.computeEncoder4, MTLStageDispatch);
+			[ctx.computeEncoder4 setArgumentTable:ctx.argumentTable];
+		}
+		[ctx.computeEncoder4 setComputePipelineState:pipeline];
+		return;
+	}
+	if (!ctx.computeEncoder) {
+		m2m_end_encoding(ctx);
+		ctx.computeEncoder = [m2m_command_buffer(ctx) computeCommandEncoder];
+	}
+	[ctx.computeEncoder setComputePipelineState:pipeline];
+}
+
+void m2m_compute_dispatch(M2MContext *ctx, MTLSize threadgroups, MTLSize threadsPerThreadgroup) {
+	if (ctx.metal4) {
+		[ctx.computeEncoder4 dispatchThreadgroups:threadgroups threadsPerThreadgroup:threadsPerThreadgroup];
+		// Each dispatch may read what the one before wrote; Metal 3 orders a serial encoder's dispatches itself.
+		[ctx.computeEncoder4 barrierAfterEncoderStages:MTLStageDispatch beforeEncoderStages:MTLStageDispatch
+		                             visibilityOptions:MTL4VisibilityOptionDevice];
+		return;
+	}
+	[ctx.computeEncoder dispatchThreadgroups:threadgroups threadsPerThreadgroup:threadsPerThreadgroup];
 }
 
 id<M2MCopier> m2m_copier(M2MContext *ctx) {
@@ -325,6 +363,10 @@ void m2m_bind_buffer(M2MContext *ctx, NSUInteger index, id<MTLBuffer> buffer, NS
 		[ctx.argumentTable setAddress:buffer ? buffer.gpuAddress + offset : 0 atIndex:index];
 		return;
 	}
+	if (ctx.computeEncoder) {
+		[ctx.computeEncoder setBuffer:buffer offset:offset atIndex:index];
+		return;
+	}
 	if (vertex) {
 		[ctx.renderEncoder setVertexBuffer:buffer offset:offset atIndex:index];
 	}
@@ -343,6 +385,10 @@ void m2m_bind_bytes(M2MContext *ctx, NSUInteger index, const void *data, NSUInte
 		[ctx.argumentTable setAddress:chunk.buffer.gpuAddress + offset atIndex:index];
 		return;
 	}
+	if (ctx.computeEncoder) {
+		[ctx.computeEncoder setBytes:data length:length atIndex:index];
+		return;
+	}
 	if (vertex) {
 		[ctx.renderEncoder setVertexBytes:data length:length atIndex:index];
 	}
@@ -356,6 +402,10 @@ void m2m_bind_texture(M2MContext *ctx, NSUInteger index, id<MTLTexture> texture,
 		[ctx.argumentTable setTexture:texture.gpuResourceID atIndex:index];
 		return;
 	}
+	if (ctx.computeEncoder) {
+		[ctx.computeEncoder setTexture:texture atIndex:index];
+		return;
+	}
 	if (vertex) {
 		[ctx.renderEncoder setVertexTexture:texture atIndex:index];
 	}
@@ -367,6 +417,10 @@ void m2m_bind_texture(M2MContext *ctx, NSUInteger index, id<MTLTexture> texture,
 void m2m_bind_sampler(M2MContext *ctx, NSUInteger index, id<MTLSamplerState> sampler, BOOL vertex, BOOL fragment) {
 	if (ctx.metal4) {
 		[ctx.argumentTable setSamplerState:sampler.gpuResourceID atIndex:index];
+		return;
+	}
+	if (ctx.computeEncoder) {
+		[ctx.computeEncoder setSamplerState:sampler atIndex:index];
 		return;
 	}
 	if (vertex) {

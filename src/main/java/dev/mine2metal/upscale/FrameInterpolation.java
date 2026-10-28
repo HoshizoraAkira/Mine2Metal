@@ -12,7 +12,8 @@ import java.util.Locale;
 import java.util.Objects;
 
 /**
- * MetalFX frame interpolation: a generated frame is shown between each pair the game renders.
+ * Frame generation: a generated frame is shown between each pair the game renders, by MetalFX frame interpolation or
+ * by AMD's FSR 3.1 frame generation (whichever the settings choose; one at a time).
  * <p>
  * The world is captured once it is drawn and upscaled, before the hand, screen effects and the GUI. The frame's
  * present then shows the frame MetalFX generates between the previous capture and this one, followed by this frame;
@@ -44,9 +45,17 @@ public final class FrameInterpolation {
 	private FrameInterpolation() {
 	}
 
-	/** Whether the next frames will be interpolated, after checking what this Mac supports. */
+	/** The engine that will generate frames next, after checking what this Mac supports. */
+	public static MetalSettings.FrameGeneration activeEngine() {
+		return switch (MetalSettings.get().frameGeneration) {
+			case OFF -> MetalSettings.FrameGeneration.OFF;
+			case METALFX -> MetalRenderer.supportsFrameInterpolation() ? MetalSettings.FrameGeneration.METALFX : MetalSettings.FrameGeneration.OFF;
+			case FSR3 -> MetalRenderer.supportsFsrFrameGeneration() ? MetalSettings.FrameGeneration.FSR3 : MetalSettings.FrameGeneration.OFF;
+		};
+	}
+
 	public static boolean enabled() {
-		return MetalSettings.get().frameInterpolation && MetalRenderer.supportsFrameInterpolation();
+		return activeEngine() != MetalSettings.FrameGeneration.OFF;
 	}
 
 	public static void beginFrame() {
@@ -97,10 +106,11 @@ public final class FrameInterpolation {
 		values[8] = motionScale[1];
 
 		GpuTexture color = Objects.requireNonNull(main.getColorTexture(), "color texture");
-		boolean done = MetalRenderer.captureForInterpolation(color, depth, motion.matrices, values, reset);
+		MetalSettings.FrameGeneration engine = activeEngine();
+		boolean done = MetalRenderer.captureForInterpolation(engine == MetalSettings.FrameGeneration.FSR3, color, depth, motion.matrices, values, reset);
 		if (!done && !warnedFailure) {
 			warnedFailure = true;
-			Mine2Metal.LOGGER.warn("MetalFX could not interpolate {}x{} frames with {}x{} depth; showing frames as rendered", color.getWidth(0),
+			Mine2Metal.LOGGER.warn("{} could not generate frames for {}x{} with {}x{} depth; showing frames as rendered", engine, color.getWidth(0),
 					color.getHeight(0), depth.getWidth(0), depth.getHeight(0));
 		}
 		active |= done;

@@ -139,7 +139,8 @@ int main(int argc, const char **argv) {
 
 		static uint8_t scratch[64];
 		FfxInterface backend;
-		check(ffxGetInterfaceMetal(&backend, device, ^NSString *(NSString *pass) {
+		FfxMetalCommandBufferHost *host = [FfxMetalCommandBufferHost new];
+		check(ffxGetInterfaceMetal(&backend, device, host, ^NSString *(NSString *pass, uint32_t) {
 			      return [NSString stringWithContentsOfFile:[shaderDirectory stringByAppendingFormat:@"/%@.metal", pass]
 			                                       encoding:NSUTF8StringEncoding
 			                                          error:nil];
@@ -199,8 +200,9 @@ int main(int argc, const char **argv) {
 			bool reset = frame == 0;
 
 			id<MTLCommandBuffer> first = [queue commandBuffer];
+			host.commandBuffer = first;
 			FfxFrameInterpolationPrepareDescription prepare = {};
-			prepare.commandList = ffxGetCommandListMetal(first);
+			prepare.commandList = ffxGetCommandListMetal(host);
 			prepare.renderSize = {renderWidth, renderHeight};
 			prepare.motionVectorScale = {1.0f, 1.0f};
 			prepare.frameTimeDelta = frameTime;
@@ -220,7 +222,7 @@ int main(int argc, const char **argv) {
 			check(ffxFrameInterpolationPrepare(&interpolation, &prepare), "ffxFrameInterpolationPrepare");
 
 			FfxOpticalflowDispatchDescription flow = {};
-			flow.commandList = ffxGetCommandListMetal(first);
+			flow.commandList = ffxGetCommandListMetal(host);
 			flow.color = current;
 			flow.opticalFlowVector = opticalFlowVector;
 			flow.opticalFlowSCD = opticalFlowSCD;
@@ -231,8 +233,9 @@ int main(int argc, const char **argv) {
 			[first commit];
 
 			id<MTLCommandBuffer> second = [queue commandBuffer];
+			host.commandBuffer = second;
 			FfxFrameInterpolationDispatchDescription dispatch = {};
-			dispatch.commandList = ffxGetCommandListMetal(second);
+			dispatch.commandList = ffxGetCommandListMetal(host);
 			dispatch.displaySize = {width, height};
 			dispatch.renderSize = {renderWidth, renderHeight};
 			dispatch.currentBackBuffer = current;

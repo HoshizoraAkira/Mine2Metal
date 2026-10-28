@@ -17,7 +17,7 @@ public final class SodiumOptionsPage implements ConfigEntryPoint {
 	private static final Identifier METAL_VERSION = Identifier.fromNamespaceAndPath("mine2metal", "metal_version");
 	private static final Identifier UPSCALING = Identifier.fromNamespaceAndPath("mine2metal", "upscaling");
 	private static final Identifier RENDER_SCALE = Identifier.fromNamespaceAndPath("mine2metal", "render_scale");
-	private static final Identifier FRAME_INTERPOLATION = Identifier.fromNamespaceAndPath("mine2metal", "frame_interpolation");
+	private static final Identifier FRAME_GENERATION = Identifier.fromNamespaceAndPath("mine2metal", "frame_generation");
 	private static final Identifier HDR = Identifier.fromNamespaceAndPath("mine2metal", "hdr");
 	private static final Identifier HDR_BRIGHTNESS = Identifier.fromNamespaceAndPath("mine2metal", "hdr_brightness");
 	private static final Identifier PERFORMANCE_HUD = Identifier.fromNamespaceAndPath("mine2metal", "performance_hud");
@@ -66,14 +66,16 @@ public final class SodiumOptionsPage implements ConfigEntryPoint {
 										.setBinding(value -> settings.renderScale = MetalSettings.clampScale(value), () -> settings.renderScale)))
 						.addOptionGroup(builder.createOptionGroup()
 								.setName(Component.translatable("mine2metal.options.group.frame_generation"))
-								.addOption(builder.createBooleanOption(FRAME_INTERPOLATION)
-										.setName(Component.translatable("mine2metal.options.frame_interpolation"))
-										.setTooltip(value -> MetalOptionTexts.frameInterpolationTooltip())
+								.addOption(builder.createEnumOption(FRAME_GENERATION, MetalSettings.FrameGeneration.class)
+										.setName(Component.translatable("mine2metal.options.frame_generation"))
+										.setTooltip(value -> MetalOptionTexts.frameGenerationTooltip())
+										.setElementNameProvider(MetalOptionTexts::frameGenerationName)
+										.setAllowedValues(MetalOptionTexts.frameGenerationModes())
 										.setImpact(OptionImpact.MEDIUM)
-										.setEnabled(MetalRenderer.supportsFrameInterpolation())
+										.setEnabled(MetalOptionTexts.frameGenerationAvailable())
 										.setStorageHandler(settings::save)
-										.setDefaultValue(false)
-										.setBinding(value -> settings.frameInterpolation = value, () -> settings.frameInterpolation)))
+										.setDefaultValue(MetalSettings.FrameGeneration.OFF)
+										.setBinding(value -> settings.frameGeneration = value, () -> settings.frameGeneration)))
 						.addOptionGroup(builder.createOptionGroup()
 								.setName(Component.translatable("mine2metal.options.group.hdr"))
 								.addOption(builder.createBooleanOption(HDR)

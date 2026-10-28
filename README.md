@@ -54,7 +54,7 @@ Tambahkan `-PnoSodium` untuk menguji renderer chunk vanilla. Untuk pembanding Op
 - Dengan Sodium: Options → Video Settings → di sidebar kiri "mine2metal" → "Metal".
 - Tanpa Sodium: Options → Video Settings → tombol "Metal Settings..." di bagian bawah.
 
-Isinya: **Versi Metal** (Otomatis / Metal 4 / Metal 3, berlaku setelah restart), **Upscaling** (Off / Spatial / Temporal), **Render Scale** 50–100%, dan **Interpolasi Frame** (MetalFX, macOS 26+: satu frame buatan di antara setiap pasang frame, hingga dua kali FPS di layar sampai batas refresh rate), dan **HDR** (EDR: bagian dunia yang paling terang dinaikkan di atas putih SDR di layar yang mendukung, dengan slider Kecerahan HDR; GUI tetap SDR). Perubahan langsung berlaku dan disimpan di `config/mine2metal.properties`.
+Isinya: **Versi Metal** (Otomatis / Metal 4 / Metal 3, berlaku setelah restart), **Upscaling** (Off / Spatial / Temporal), **Render Scale** 50–100%, dan **Pembuatan Frame** (Mati / MetalFX / FSR 3.1: satu frame buatan di antara setiap pasang frame, hingga dua kali FPS di layar sampai batas refresh rate; FSR 3.1 dari AMD FidelityFX, MIT, sekitar separuh biaya GPU MetalFX), dan **HDR** (EDR: bagian dunia yang paling terang dinaikkan di atas putih SDR di layar yang mendukung, dengan slider Kecerahan HDR; GUI tetap SDR). Perubahan langsung berlaku dan disimpan di `config/mine2metal.properties`.
 
 ### Mematikan Metal
 

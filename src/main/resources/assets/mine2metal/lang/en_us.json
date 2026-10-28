@@ -13,10 +13,7 @@
 	"mine2metal.options.render_scale": "Render Scale",
 	"mine2metal.options.render_scale.tooltip": "How much of the window's resolution the world is rendered at before upscaling. Lower is faster but softer.",
 	"mine2metal.options.render_scale.value": "%s%%",
-	"mine2metal.options.group.frame_generation": "MetalFX Frame Generation",
-	"mine2metal.options.frame_interpolation": "Frame Interpolation",
-	"mine2metal.options.frame_interpolation.tooltip": "Shows a frame MetalFX generates between each pair the game renders, for smoother motion: up to twice the frame rate on screen, capped at the display's refresh rate, so the game itself renders at most half of it. Input lags by about one rendered frame. The generator is heavy on the GPU and its cost grows with the window size: on smaller GPUs at Retina resolution it can cost more than it gains. Pair it with Temporal upscaling, and use it when the game runs below the refresh rate but the GPU has room to spare.",
-	"mine2metal.options.frame_interpolation.unsupported": "MetalFX frame interpolation needs macOS 26 or newer.",
+	"mine2metal.options.group.frame_generation": "Frame Generation",
 	"mine2metal.options.group.hdr": "HDR (EDR)",
 	"mine2metal.options.hdr": "HDR",
 	"mine2metal.options.hdr.tooltip": "Shows the world's brightest parts (sky, sun, lava, light sources, snow in daylight) brighter than white, using the display's extended dynamic range. Minecraft itself only draws standard range, so the rest of the picture, the hand and the GUI look as before. How much brighter depends on the display: with the brightness slider lower there is more room above white.",
@@ -33,5 +30,11 @@
 	"mine2metal.options.metal_version.metal_4": "Metal 4",
 	"mine2metal.options.metal_version.metal_3": "Metal 3",
 	"mine2metal.options.metal_version.tooltip": "Which version of Apple's Metal the game renders with. Takes effect after restarting the game.\n\nAutomatic: Metal 4 when this Mac supports it (macOS 26 or newer), otherwise Metal 3.\nMetal 4: newer command model with less CPU work per frame; falls back to Metal 3 where it is not available.\nMetal 3: works on macOS 14 and newer.\n\nOpenGL and Vulkan are under Video Settings > Graphics API.",
-	"mine2metal.options.metal_version.running": "Running now: Metal %s"
+	"mine2metal.options.metal_version.running": "Running now: Metal %s",
+	"mine2metal.options.frame_generation": "Frame Generation",
+	"mine2metal.options.frame_generation.off": "Off",
+	"mine2metal.options.frame_generation.metalfx": "MetalFX",
+	"mine2metal.options.frame_generation.fsr3": "FSR 3.1",
+	"mine2metal.options.frame_generation.tooltip": "Shows a generated frame between each pair the game renders, for smoother motion: up to twice the frame rate on screen, capped at the display's refresh rate, so the game itself renders at most half of it. Input lags by about one rendered frame.\n\nMetalFX: Apple's frame interpolation (macOS 26 or newer).\nFSR 3.1: AMD FidelityFX Super Resolution 3.1 frame generation (MIT), run through Metal; about half the GPU cost of MetalFX.\n\nBoth are heavy on the GPU at large window sizes. Pair them with Temporal upscaling, and use them when the game runs below the refresh rate but the GPU has room to spare.",
+	"mine2metal.options.frame_generation.metalfx_unsupported": "MetalFX frame interpolation needs macOS 26 or newer."
 }

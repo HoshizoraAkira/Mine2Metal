@@ -67,13 +67,20 @@ public final class MetalRenderer {
 		return current != null && current.frameInterpolationSupported;
 	}
 
-	/**
-	 * Captures this frame's world for frame interpolation; see {@code m2m_frame_interpolation_capture} for the
-	 * arguments. False if Metal is not active or MetalFX refused these textures.
-	 */
-	public static boolean captureForInterpolation(GpuTexture color, GpuTexture depth, float[] matrices, float[] camera, boolean reset) {
+	/** AMD FSR 3.1 frame generation through the Metal backend (Apple GPUs from the M1 on). */
+	public static boolean supportsFsrFrameGeneration() {
 		MetalDevice current = device;
-		return current != null && current.encoder().captureForInterpolation((MetalTexture) color, (MetalTexture) depth, matrices, camera, reset);
+		return current != null && current.fsrFrameGenerationSupported;
+	}
+
+	/**
+	 * Captures this frame's world for frame generation by MetalFX or FSR 3.1; see {@code m2m_frame_interpolation_capture}
+	 * for the arguments. False if Metal is not active or the engine refused these textures.
+	 */
+	public static boolean captureForInterpolation(boolean fsr, GpuTexture color, GpuTexture depth, float[] matrices, float[] camera, boolean reset) {
+		MetalDevice current = device;
+		return current != null
+				&& current.encoder().captureForInterpolation(fsr ? 2 : 1, (MetalTexture) color, (MetalTexture) depth, matrices, camera, reset);
 	}
 
 	/** Frees what frame interpolation holds, once it is switched off. */

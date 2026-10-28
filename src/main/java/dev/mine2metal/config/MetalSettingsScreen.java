@@ -36,13 +36,14 @@ public final class MetalSettingsScreen extends OptionsSubScreen {
 				});
 		upscaling.active = upscalingAvailable;
 
-		CycleButton<Boolean> interpolation = CycleButton.onOffBuilder(settings.frameInterpolation)
-				.withTooltip(value -> Tooltip.create(MetalOptionTexts.frameInterpolationTooltip()))
-				.create(Component.translatable("mine2metal.options.frame_interpolation"), (button, value) -> {
-					settings.frameInterpolation = value;
+		CycleButton<MetalSettings.FrameGeneration> interpolation = CycleButton.builder(MetalOptionTexts::frameGenerationName, settings.frameGeneration)
+				.withValues(MetalOptionTexts.frameGenerationModes())
+				.withTooltip(value -> Tooltip.create(MetalOptionTexts.frameGenerationTooltip()))
+				.create(Component.translatable("mine2metal.options.frame_generation"), (button, value) -> {
+					settings.frameGeneration = value;
 					settings.save();
 				});
-		interpolation.active = MetalRenderer.supportsFrameInterpolation();
+		interpolation.active = MetalOptionTexts.frameGenerationAvailable();
 
 		HdrBrightnessSlider hdrBrightness = new HdrBrightnessSlider(settings);
 		hdrBrightness.active = MetalRenderer.supportsHdr() && settings.hdr;

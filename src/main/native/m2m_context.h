@@ -51,6 +51,7 @@ static const NSUInteger M2M_PRESENT_SLOTS = 3;
       destinationLevel:(NSUInteger)destinationLevel
      destinationOrigin:(MTLOrigin)destinationOrigin;
 - (void)copyFromTexture:(id<MTLTexture>)sourceTexture toTexture:(id<MTLTexture>)destinationTexture;
+- (void)fillBuffer:(id<MTLBuffer>)buffer range:(NSRange)range value:(uint8_t)value;
 @end
 
 // Render commands with the same selectors on Metal 3 and Metal 4 render encoders. Bindings and indexed or indirect
@@ -90,6 +91,7 @@ static const NSUInteger M2M_PRESENT_SLOTS = 3;
 @property(nonatomic, strong) NSMutableArray<id<MTL4CommandAllocator>> *freePresentAllocators;
 @property(nonatomic, strong) id<MTL4RenderCommandEncoder> renderEncoder4;
 @property(nonatomic, strong) id<MTL4ComputeCommandEncoder> transferEncoder4;
+@property(nonatomic, strong) id<MTL4ComputeCommandEncoder> computeEncoder4;
 @property(nonatomic) BOOL transferEncoderUsed;
 @property(nonatomic, strong) id<MTL4ArgumentTable> argumentTable;
 @property(nonatomic, strong) id<MTL4ArgumentTable> presentArgumentTable;
@@ -113,6 +115,7 @@ static const NSUInteger M2M_PRESENT_SLOTS = 3;
 // Recording state; at most one encoder is open at a time.
 @property(nonatomic, strong) id<MTLCommandBuffer> commandBuffer;
 @property(nonatomic, strong) id<MTLBlitCommandEncoder> blitEncoder;
+@property(nonatomic, strong) id<MTLComputeCommandEncoder> computeEncoder;
 @property(nonatomic, strong) id<MTLRenderCommandEncoder> renderEncoder;
 @property(nonatomic, strong) MTLRenderPassDescriptor *pendingPass;
 // A pass that renderpearl closed but whose encoder is kept open, so a following pass on the same
@@ -215,8 +218,12 @@ id<M2MCopier> m2m_copier(M2MContext *ctx);
 // Ends what is open and starts a render encoder for pass, which becomes ctx's open render encoder.
 id<M2MRenderCommands> m2m_open_render_encoder(M2MContext *ctx, MTLRenderPassDescriptor *pass, NSString *label);
 id<M2MRenderCommands> m2m_render_encoder(M2MContext *ctx);
-// Bindings on the open render encoder. Metal 4 shares one argument table between the vertex and fragment stages,
-// so a slot holds one resource for both.
+// Compute work (FidelityFX, fsr.m): opens a compute encoder (or continues the open one) with pipeline; dispatches
+// in it run in order, each seeing what the previous one wrote.
+void m2m_compute_begin(M2MContext *ctx, id<MTLComputePipelineState> pipeline);
+void m2m_compute_dispatch(M2MContext *ctx, MTLSize threadgroups, MTLSize threadsPerThreadgroup);
+// Bindings on the open render or compute encoder. Metal 4 shares one argument table between the vertex and fragment
+// stages and compute, so a slot holds one resource for all of them.
 void m2m_bind_buffer(M2MContext *ctx, NSUInteger index, id<MTLBuffer> buffer, NSUInteger offset, BOOL vertex,
                      BOOL fragment);
 void m2m_bind_bytes(M2MContext *ctx, NSUInteger index, const void *data, NSUInteger length, BOOL vertex, BOOL fragment);
@@ -263,6 +270,33 @@ void m2m_frame_interpolation_presented(M2MContext *ctx, id<MTLTexture> generated
 // interpolation's history. Both NO if the shaders failed.
 BOOL m2m_hdr_compose(M2MContext *ctx, id<MTLTexture> source, id<MTLTexture> target);
 BOOL m2m_hdr_expand(M2MContext *ctx, id<MTLTexture> world, id<MTLTexture> target);
+// FSR 3.1 frame generation (fsr.m). A generator is made for one display size, render (depth and motion) size and color
+// format; encode records prepare, optical flow and interpolation into the open command buffer (NO if AMD's code
+// refused). The textures need only live for the call.
+typedef struct {
+	__unsafe_unretained id<MTLTexture> hudless;
+	__unsafe_unretained id<MTLTexture> backbuffer;
+	__unsafe_unretained id<MTLTexture> output;
+	__unsafe_unretained id<MTLTexture> depth;
+	__unsafe_unretained id<MTLTexture> motion;
+	float near_plane;
+	float far_plane;
+	// Vertical, in radians.
+	float field_of_view;
+	float jitter_x;
+	float jitter_y;
+	float frame_time_ms;
+	// Applied to the motion vectors, which are in pixels of depth.
+	float motion_scale_x;
+	float motion_scale_y;
+	// The brightest value in the colors: 1 for SDR, the EDR peak otherwise.
+	float max_luminance;
+	BOOL reset;
+} M2MFsrFrame;
+id m2m_fsr_framegen_create(M2MContext *ctx, NSUInteger displayWidth, NSUInteger displayHeight, NSUInteger renderWidth,
+                           NSUInteger renderHeight, MTLPixelFormat format, BOOL hdr);
+BOOL m2m_fsr_framegen_encode(M2MContext *ctx, id generator, const M2MFsrFrame *frame);
+void m2m_fsr_framegen_release(M2MContext *ctx, id generator);
 // Copies message into a caller-provided buffer as NUL-terminated UTF-8, truncating to capacity.
 void m2m_copy_string(char *out, int64_t capacity, NSString *message);
 

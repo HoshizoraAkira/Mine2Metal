@@ -1,15 +1,16 @@
 # Rancangan: FSR 3 frame generation di atas Metal
 
-Status: F0 (spike) selesai, 2026-10-28. Hasilnya di bagian "Hasil F0" di bawah.
+Status: FSR 3.1 frame generation ada di game (R1, 2026-10-28); lihat "Hasil R1" di bawah. F0 (spike) dan riset upscaler juga di bawah.
 
 ## Kenapa
 
 Interpolasi frame MetalFX berjalan, tapi interpolatornya sendiri mahal di GPU MacBook Air M3: ~10–40 ms per frame di 1080p dan ~50 ms di 2560×1600 (lihat roadmap M12). Di resolusi Retina, biaya itu saja sudah melebihi anggaran 30 FPS asli. Generator frame FSR 3 dari AMD terdiri dari compute shader biasa: optical flow dengan blok kasar, lalu interpolasi dan inpainting. Shader-shader itu dirancang untuk GPU konsol dan PC kelas menengah. Kalau biayanya di M3 jauh di bawah MetalFX, interpolasi jadi benar-benar berguna di Mac ini. **Itu yang harus dibuktikan dulu (fase F0).**
 
-## Sumber kode: FidelityFX SDK v1.1.4, bukan 2.x
+## Sumber kode: FidelityFX SDK v1.1.4 (MIT, dengan shader GLSL)
 
 - **v1.1.4 (Mei 2025): lisensi MIT.** Ada backend Vulkan lengkap dengan shader **GLSL**, kode host C++ untuk optical flow dan frame interpolation, serta antarmuka backend (`FfxInterface`) yang bisa kita implementasikan untuk Metal.
-- **v2.x (2.0–2.3, 2025–2026): tidak bisa dipakai.** Lisensinya hanya untuk distribusi biner dan melarang reverse engineering/dekompilasi, isinya hanya DX12/HLSL, dan sebagian besar komponennya DLL bertanda tangan. FSR 4 (berbasis ML, khusus RDNA 4) juga tidak bisa diport.
+- **v2.x (2.0–2.3, 2025–2026): kode FSR 3 juga MIT.** Ralat 2026-10-28: rancangan awal menyebut v2.x tidak bisa dipakai, karena paragraf pembuka `docs/license.md` di v2.3.0 berupa lisensi "hanya biner, dilarang reverse engineering". Paragraf itu ternyata hanya berlaku untuk file di luar daftar pengecualian. Daftar pengecualiannya berlisensi MIT dan memuat semua file FSR 3 (frame generation 77/77 file, upscaler 72/72, API dan backend), yang sudah dicek satu per satu. Yang memang tidak terbuka hanya DLL bertanda tangan di `signedbin/`, termasuk FSR 4 (berbasis ML, khusus RDNA 4, tanpa source).
+- v2.3.0 berisi versi lebih baru (frame interpolation **3.1.6** vs 1.1.3 di v1.1.4; upscaler 3.1.5 vs 3.1.4), tapi shadernya tinggal HLSL dan backend-nya hanya DX12. Untuk memakainya, terjemahan shader perlu `dxc` (HLSL → SPIR-V) sebagai ganti `glslangValidator`. Itu item roadmap R10. Selama itu belum dikerjakan, v1.1.4 tetap dipakai karena GLSL-nya sudah terbukti diterjemahkan otomatis.
 
 Yang diambil dari v1.1.4 (di-vendor apa adanya ke `third_party/fidelityfx-1.1.4/` beserta `LICENSE.txt`):
 
@@ -164,3 +165,34 @@ MetalFX 2–2,5× lebih murah untuk upscaling, sementara FSR 2–3× lebih murah
 - `MTLFXTemporalScaler.reactiveMaskTexture` (macOS 14.4+): masker untuk mengurangi jejak samar mob dan partikel di upscaling temporal.
 - `CAMetalDisplayLink` (macOS 14+): drawable diberikan tepat waktu, lengkap dengan `targetPresentationTimestamp` dan `preferredFrameLatency`. Pengganti `nextDrawable` di thread present, supaya frame buatan bisa diletakkan di tengah dua frame asli dan latensinya terukur.
 - `jitteredMotionVectorsEnabled` / `outputResolutionMotionVectors` untuk temporal scaler (macOS 27).
+
+## Hasil R1: FSR 3.1 frame generation di game (2026-10-28)
+
+Pilihan menu baru **Pembuatan Frame: Mati / MetalFX / FSR 3.1** (satu saja). `frameInterpolation=true` dari versi lama dibaca sebagai MetalFX.
+
+Cara kerjanya:
+- **Build.** `scripts/build-fsr-embedded.sh` (task Gradle `buildFsrShaders`) menerjemahkan pass optical flow dan frame interpolation (dua varian: motion vector resolusi render dan resolusi penuh), lalu menyematkan MSL-nya sebagai tabel C. `scripts/build-native.sh` mengompilasi Objective-C backend, `ffx_metal.mm`, `fsr_framegen.mm`, kode host AMD (C++, dengan `ffx_macos_compat.h`), dan tabel shader itu menjadi satu `libmine2metal.dylib`. MSL dikompilasi saat runtime (pertama kali ~3 detik, sesudahnya dari cache Metal).
+- **Backend.** `ffx_metal.mm` menyimpan resource dan pipeline; perekamannya lewat protokol `FfxMetalHost`.
+  - **Game:** `M2MFfxHost` merekam ke command buffer frame lewat helper baru di `gpu.m` (`m2m_compute_begin`/`m2m_compute_dispatch`, bind ke encoder compute). Di Metal 4 ada argument table bersama dan barrier dispatch → dispatch, karena pass FSR saling bergantung; resource masuk residency set dan dilepas lewat `m2m_retire`.
+  - **Alat benchmark:** `FfxMetalCommandBufferHost` (Metal 3 biasa).
+- **Input.** Sama dengan MetalFX:
+  - dunia tanpa HUD (tangkapan sebelum tangan dan GUI) sebagai `currentBackBuffer_HUDLess`;
+  - frame jadi sebagai `currentBackBuffer`;
+  - depth Depth32Float dan motion vector dari pass `m2m_encode_motion` (dalam piksel, `motionVectorScale` = 1: kode AMD sudah membagi dengan ukuran sendiri);
+  - near/far/FOV (radian), jitter, waktu antar frame (ms).
+  - Dengan HDR, warnanya extended linear (transfer scRGB, luminans maksimum = puncak EDR).
+- **Riwayat frame.** FSR menyimpan frame sebelumnya sendiri, jadi setiap frame yang ditangkap dikirim ke FSR. Setelah reset, frame buatannya tidak ditampilkan.
+- **Presentasi.** Tetap lewat thread present yang sama: frame buatan lalu frame asli.
+
+Hasil gametest (Apple M3, 854×480; uji yaw 0° → 4°, dibandingkan dengan frame asli di 2°):
+
+| Engine | Tanpa upscaling | Temporal 50% |
+|---|---|---|
+| MetalFX | 31,30 dB | 29,81 dB |
+| **FSR 3.1** (Metal 4) | **31,31 dB** | **29,78 dB** |
+| FSR 3.1 (Metal 3) | 31,31 dB | 29,81 dB |
+
+- Kalibrasi tanda motion vector: (+1, +1) yang benar (31,2 dB); tanda lain 22–25 dB. Bug pertama yang ketemu: motion vector dibagi ukuran dua kali (oleh kita dan oleh AMD) sehingga nyaris nol, dan FSR hanya memakai optical flow (24,3 dB).
+- HDR + FSR dan HDR + MetalFX: hotbar tetap 1,0× putih SDR, highlight dunia 1,72×. Lolos di Metal 4 dan Metal 3.
+- Gametest penuh lolos di bawah Metal API validation (Metal 4), tanpa error.
+- **Belum terukur di layar sungguhan:** FPS MetalFX vs FSR di game. Angka FPS gametest berubah-ubah menurut status jendela dan suhu (contoh di 2560×1600: MetalFX 29 lalu 53, FSR 30 lalu 48 dalam satu run). Perbandingan yang andal tetap waktu GPU di benchmark: FSR 2–3× lebih murah. Masuk uji manual nomor 28.

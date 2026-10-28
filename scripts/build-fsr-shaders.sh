@@ -4,7 +4,7 @@
 # is renamed to its file name. The MSL is compiled at run time with newLibraryWithSource, like the backend's other
 # shaders, so the build needs no Metal toolchain.
 #
-#   scripts/build-fsr-shaders.sh <output directory>
+#   [FSR_EFFECTS="frameinterpolation opticalflow"] scripts/build-fsr-shaders.sh <output directory>
 set -eu
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 FFX="$ROOT/third_party/fidelityfx-1.1.4/sdk"
@@ -39,8 +39,13 @@ FSR1="-DFFX_FSR1_OPTION_APPLY_RCAS=1 -DFFX_FSR1_OPTION_RCAS_PASSTHROUGH_ALPHA=0 
 	-I$FFX/include/FidelityFX/gpu/fsr1"
 
 failed=0
-for source in "$FFX"/src/backends/vk/shaders/frameinterpolation/*.glsl "$FFX"/src/backends/vk/shaders/opticalflow/*.glsl \
-	"$FFX"/src/backends/vk/shaders/fsr3upscaler/*.glsl "$FFX"/src/backends/vk/shaders/fsr1/*.glsl; do
+# FSR_EFFECTS limits the build to some effects, by directory name.
+SOURCES=""
+for effect in ${FSR_EFFECTS:-frameinterpolation opticalflow fsr3upscaler fsr1}; do
+	SOURCES="$SOURCES $FFX/src/backends/vk/shaders/$effect/*.glsl"
+done
+# shellcheck disable=SC2086
+for source in $SOURCES; do
 	name="$(basename "$source" .glsl)"
 	case "$name" in
 	ffx_frameinterpolation_*) defines="$FRAMEINTERPOLATION" ;;

@@ -41,6 +41,7 @@ final class MetalDevice implements GpuDeviceBackend {
 	final float temporalMinScale;
 	final float temporalMaxScale;
 	final boolean frameInterpolationSupported;
+	final boolean fsrFrameGenerationSupported;
 	/** The window's surface, once created; the settings screens reach it through {@link MetalRenderer}. */
 	@Nullable MetalSurface surface;
 
@@ -59,6 +60,7 @@ final class MetalDevice implements GpuDeviceBackend {
 		this.temporalMinScale = temporalRange[0];
 		this.temporalMaxScale = temporalRange[1];
 		this.frameInterpolationSupported = MetalNative.frameInterpolationSupported(ctx);
+		this.fsrFrameGenerationSupported = MetalNative.fsrFrameGenerationSupported(ctx);
 		this.info = new DeviceInfo(
 				name,
 				"Apple",

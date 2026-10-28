@@ -389,34 +389,51 @@ public class MetalWorldGameTest implements FabricClientGameTest {
 	 */
 	private static void checkFrameInterpolation(ClientGameTestContext context, TestSingleplayerContext singleplayer, Vec3 above) {
 		MetalSettings settings = MetalSettings.get();
-		if (!context.computeOnClient(client -> MetalRenderer.supportsFrameInterpolation())) {
-			LOGGER.info("Frame interpolation is not supported here; skipped");
+		boolean metalFx = context.computeOnClient(client -> MetalRenderer.supportsFrameInterpolation());
+		boolean fsr = context.computeOnClient(client -> MetalRenderer.supportsFsrFrameGeneration());
+		if (!metalFx && !fsr) {
+			LOGGER.info("Frame generation is not supported here; skipped");
 			return;
 		}
 		Path screenshots = FabricLoader.getInstance().getGameDir().resolve("screenshots");
 		context.runOnClient(client -> {
 			settings.upscaling = MetalSettings.Upscaling.OFF;
-			settings.frameInterpolation = false;
+			settings.frameGeneration = MetalSettings.FrameGeneration.OFF;
 		});
 		for (int yaw : new int[] {0, 2, 4}) {
 			hover(context, singleplayer, String.format(Locale.ROOT, "tp @a %.3f %.3f %.3f %d 50", above.x, above.y, above.z, yaw));
 			context.takeScreenshot("mine2metal-interpolation-native-yaw" + yaw);
 		}
 
-		String[][] cases = Boolean.getBoolean("mine2metal.test.motionScales")
-				? new String[][] {{"off", "1,1"}, {"off", "-1,-1"}, {"temporal", "1,1"}, {"temporal", "2,2"}}
-				: new String[][] {{"off", "1,1"}, {"temporal", "1,1"}};
+		// Engine, upscaling, motion vector scale. -Dmine2metal.test.motionScales tries the other signs and scales, to
+		// calibrate each engine's motion vector convention.
+		java.util.List<String[]> cases = new java.util.ArrayList<>();
+		boolean calibrate = Boolean.getBoolean("mine2metal.test.motionScales");
+		if (metalFx) {
+			cases.add(new String[] {"metalfx", "off", "1,1"});
+			cases.add(new String[] {"metalfx", "temporal", "1,1"});
+		}
+		if (fsr) {
+			cases.add(new String[] {"fsr3", "off", "1,1"});
+			cases.add(new String[] {"fsr3", "temporal", "1,1"});
+			if (calibrate) {
+				for (String scale : new String[] {"-1,-1", "1,-1", "-1,1"}) {
+					cases.add(new String[] {"fsr3", "off", scale});
+				}
+			}
+		}
 		for (String[] testCase : cases) {
-			MetalSettings.Upscaling upscaling = testCase[0].equals("off") ? MetalSettings.Upscaling.OFF : MetalSettings.Upscaling.TEMPORAL;
-			String name = testCase[0] + "-" + testCase[1].replace(",", "_").replace("-", "m");
-			System.setProperty("mine2metal.interpolation.motionScale", testCase[1]);
+			MetalSettings.FrameGeneration engine = testCase[0].equals("fsr3") ? MetalSettings.FrameGeneration.FSR3 : MetalSettings.FrameGeneration.METALFX;
+			MetalSettings.Upscaling upscaling = testCase[1].equals("off") ? MetalSettings.Upscaling.OFF : MetalSettings.Upscaling.TEMPORAL;
+			String name = testCase[0] + "-" + testCase[1] + "-" + testCase[2].replace(",", "_").replace("-", "m");
+			System.setProperty("mine2metal.interpolation.motionScale", testCase[2]);
 			context.runOnClient(client -> {
 				settings.upscaling = upscaling;
 				settings.renderScale = 50;
-				settings.frameInterpolation = true;
+				settings.frameGeneration = engine;
 			});
 			hover(context, singleplayer, String.format(Locale.ROOT, "tp @a %.3f %.3f %.3f 0 50", above.x, above.y, above.z));
-			LOGGER.info("Average FPS from above with frame interpolation ({}): {}", name, averageFps(context));
+			LOGGER.info("Average FPS from above with frame generation ({}): {}", name, averageFps(context));
 
 			AtomicBoolean finished = new AtomicBoolean();
 			AtomicBoolean written = new AtomicBoolean();
@@ -437,10 +454,11 @@ public class MetalWorldGameTest implements FabricClientGameTest {
 		System.clearProperty("mine2metal.interpolation.motionScale");
 		context.runOnClient(client -> {
 			settings.upscaling = MetalSettings.Upscaling.OFF;
-			settings.frameInterpolation = false;
+			settings.frameGeneration = MetalSettings.FrameGeneration.OFF;
 		});
 		context.waitTicks(10);
 	}
+
 
 	/**
 	 * EDR output: reads back the composed frame and checks that the world's highlights go above SDR white while the
@@ -456,13 +474,21 @@ public class MetalWorldGameTest implements FabricClientGameTest {
 		System.setProperty("mine2metal.hdr.ignoreDisplayHeadroom", "true");
 		String still = String.format(Locale.ROOT, "tp @a %.3f %.3f %.3f 0 50", above.x, above.y, above.z);
 		boolean interpolation = context.computeOnClient(client -> MetalRenderer.supportsFrameInterpolation());
-		String[] cases = interpolation ? new String[] {"plain", "temporal+interpolation"} : new String[] {"plain"};
+		boolean fsr = context.computeOnClient(client -> MetalRenderer.supportsFsrFrameGeneration());
+		java.util.List<String> cases = new java.util.ArrayList<>(java.util.List.of("plain"));
+		if (interpolation) {
+			cases.add("temporal+interpolation");
+		}
+		if (fsr) {
+			cases.add("temporal+fsr3");
+		}
 		for (String name : cases) {
 			boolean combined = !name.equals("plain");
 			context.runOnClient(client -> {
 				settings.upscaling = combined ? MetalSettings.Upscaling.TEMPORAL : MetalSettings.Upscaling.OFF;
 				settings.renderScale = 50;
-				settings.frameInterpolation = combined;
+				settings.frameGeneration = !combined ? MetalSettings.FrameGeneration.OFF
+						: name.contains("fsr") ? MetalSettings.FrameGeneration.FSR3 : MetalSettings.FrameGeneration.METALFX;
 				settings.hdr = true;
 				settings.hdrBrightness = 300;
 				MetalRenderer.setHdr(true, 300);
@@ -506,7 +532,7 @@ public class MetalWorldGameTest implements FabricClientGameTest {
 		System.clearProperty("mine2metal.hdr.ignoreDisplayHeadroom");
 		context.runOnClient(client -> {
 			settings.upscaling = MetalSettings.Upscaling.OFF;
-			settings.frameInterpolation = false;
+			settings.frameGeneration = MetalSettings.FrameGeneration.OFF;
 			settings.hdr = false;
 			MetalRenderer.setHdr(false, settings.hdrBrightness);
 		});
@@ -534,7 +560,8 @@ public class MetalWorldGameTest implements FabricClientGameTest {
 				.split(",");
 		for (String name : cases) {
 			context.runOnClient(client -> {
-				settings.frameInterpolation = name.contains("interpolation");
+				settings.frameGeneration = name.contains("fsr") ? MetalSettings.FrameGeneration.FSR3
+						: name.contains("interpolation") ? MetalSettings.FrameGeneration.METALFX : MetalSettings.FrameGeneration.OFF;
 				settings.upscaling = name.contains("spatial") ? MetalSettings.Upscaling.SPATIAL
 						: name.contains("temporal") ? MetalSettings.Upscaling.TEMPORAL : MetalSettings.Upscaling.OFF;
 				settings.renderScale = name.contains("50") ? 50 : 75;
@@ -550,7 +577,7 @@ public class MetalWorldGameTest implements FabricClientGameTest {
 			LOGGER.info("Average FPS, render distance 16, walking towards the trees, {}: {}", name, fps);
 		}
 		context.runOnClient(client -> {
-			settings.frameInterpolation = false;
+			settings.frameGeneration = MetalSettings.FrameGeneration.OFF;
 			settings.upscaling = MetalSettings.Upscaling.OFF;
 			settings.hdr = false;
 			MetalRenderer.setHdr(false, settings.hdrBrightness);

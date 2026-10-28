@@ -29,8 +29,11 @@ typedef struct {
 } M2MInterpolationCamera;
 
 @interface M2MFrameInterpolator : NSObject
-// An MTLFXFrameInterpolator, or an MTL4FXFrameInterpolator with Metal 4.
+@property(nonatomic) int32_t engine;
+// With MetalFX: an MTLFXFrameInterpolator, or an MTL4FXFrameInterpolator with Metal 4.
 @property(nonatomic, strong) id<MTLFXFrameInterpolatorBase> interpolator;
+// With FSR: the frame generator of fsr.m, which keeps the previous frame itself.
+@property(nonatomic, strong) id fsr;
 @property(nonatomic) NSUInteger inputWidth, inputHeight, outputWidth, outputHeight;
 @property(nonatomic) MTLPixelFormat colorFormat;
 @property(nonatomic, strong) id<MTLTexture> motion;
@@ -50,6 +53,11 @@ typedef struct {
 
 @implementation M2MFrameInterpolator
 @end
+
+int32_t m2m_fsr_framegen_supported(int64_t ctx) {
+	// Texture atomics (MSL 3.1, macOS 14) on Apple GPUs from the M1 on.
+	return [m2m_ctx(ctx).device supportsFamily:MTLGPUFamilyApple7] ? 1 : 0;
+}
 
 int32_t m2m_frame_interpolation_supported(int64_t ctx) {
 	M2MContext *context = m2m_ctx(ctx);
@@ -75,16 +83,55 @@ static void m2m_frame_interpolator_retire(M2MContext *ctx, M2MFrameInterpolator 
 		m2m_retire(ctx, texture);
 	}
 	m2m_retire(ctx, old.interpolator);
+	if (old.fsr) {
+		m2m_fsr_framegen_release(ctx, old.fsr);
+	}
 }
 
 // format is the color's, or RGBA16Float with EDR: then every color input and the output are extended linear, the
 // worlds expanded like the composed frame (hdr.m).
+static M2MFrameInterpolator *m2m_fsr_interpolator(M2MContext *ctx, id<MTLTexture> color, id<MTLTexture> sourceDepth,
+                                                  MTLPixelFormat format) {
+	M2MFrameInterpolator *created = [M2MFrameInterpolator new];
+	created.engine = M2M_FRAMEGEN_FSR;
+	created.fsr = m2m_fsr_framegen_create(ctx, color.width, color.height, sourceDepth.width, sourceDepth.height, format, ctx.hdr);
+	if (!created.fsr) {
+		return nil;
+	}
+	MTLTextureUsage read = MTLTextureUsageShaderRead;
+	created.motion = m2m_new_private_texture(ctx, MTLPixelFormatRG16Float, sourceDepth.width, sourceDepth.height, MTLTextureUsageRenderTarget | read);
+	created.depth = m2m_new_private_texture(ctx, MTLPixelFormatDepth32Float, sourceDepth.width, sourceDepth.height, MTLTextureUsageRenderTarget | read);
+	created.worlds = [NSMutableArray array];
+	created.outputs = [NSMutableArray array];
+	for (NSUInteger i = 0; i < M2M_INTERPOLATION_SLOTS; i++) {
+		[created.worlds addObject:m2m_new_private_texture(ctx, format, color.width, color.height, read | MTLTextureUsageRenderTarget)];
+	}
+	for (NSUInteger i = 0; i < M2M_PRESENT_SLOTS; i++) {
+		[created.outputs addObject:m2m_new_private_texture(ctx, format, color.width, color.height, read | MTLTextureUsageShaderWrite)];
+	}
+	return created;
+}
+
 static M2MFrameInterpolator *m2m_frame_interpolator(M2MContext *ctx, id<MTLTexture> color, id<MTLTexture> sourceDepth,
-                                                    MTLPixelFormat format) {
+                                                    MTLPixelFormat format, int32_t engine) {
 	M2MFrameInterpolator *current = ctx.frameInterpolator;
-	if (current && current.inputWidth == sourceDepth.width && current.inputHeight == sourceDepth.height &&
+	if (current && current.engine == engine && current.inputWidth == sourceDepth.width && current.inputHeight == sourceDepth.height &&
 	    current.outputWidth == color.width && current.outputHeight == color.height && current.colorFormat == format) {
 		return current;
+	}
+	if (engine == M2M_FRAMEGEN_FSR) {
+		M2MFrameInterpolator *created = m2m_fsr_interpolator(ctx, color, sourceDepth, format);
+		if (!created) {
+			return nil;
+		}
+		created.inputWidth = sourceDepth.width;
+		created.inputHeight = sourceDepth.height;
+		created.outputWidth = color.width;
+		created.outputHeight = color.height;
+		created.colorFormat = format;
+		m2m_frame_interpolator_retire(ctx, current);
+		ctx.frameInterpolator = created;
+		return created;
 	}
 
 	MTLFXFrameInterpolatorDescriptor *descriptor = [MTLFXFrameInterpolatorDescriptor new];
@@ -99,6 +146,7 @@ static M2MFrameInterpolator *m2m_frame_interpolator(M2MContext *ctx, id<MTLTextu
 	descriptor.outputHeight = color.height;
 
 	M2MFrameInterpolator *created = [M2MFrameInterpolator new];
+	created.engine = M2M_FRAMEGEN_METALFX;
 	if (ctx.metal4) {
 		created.interpolator = [descriptor newFrameInterpolatorWithDevice:ctx.device compiler:ctx.compiler];
 	} else {
@@ -134,15 +182,15 @@ static M2MFrameInterpolator *m2m_frame_interpolator(M2MContext *ctx, id<MTLTextu
 	return created;
 }
 
-int32_t m2m_frame_interpolation_capture(int64_t handle, int64_t color_handle, int64_t depth_handle, const float *matrices,
-                                        const float *camera, int32_t reset) {
+int32_t m2m_frame_interpolation_capture(int64_t handle, int32_t engine, int64_t color_handle, int64_t depth_handle,
+                                        const float *matrices, const float *camera, int32_t reset) {
 	@autoreleasepool {
 		M2MContext *ctx = m2m_ctx(handle);
 		id<MTLTexture> color = m2m_borrow(color_handle);
 		id<MTLTexture> sourceDepth = m2m_borrow(depth_handle);
 		M2MFrameInterpolator *previous = ctx.frameInterpolator;
 		MTLPixelFormat format = ctx.hdr ? MTLPixelFormatRGBA16Float : color.pixelFormat;
-		M2MFrameInterpolator *interpolator = m2m_frame_interpolator(ctx, color, sourceDepth, format);
+		M2MFrameInterpolator *interpolator = m2m_frame_interpolator(ctx, color, sourceDepth, format, engine);
 		if (!interpolator) {
 			return 0;
 		}
@@ -175,17 +223,45 @@ BOOL m2m_frame_interpolation_pending(M2MContext *ctx) {
 
 MTLTextureUsage m2m_frame_interpolation_ui_usage(M2MContext *ctx) {
 	M2MFrameInterpolator *interpolator = ctx.frameInterpolator;
+	if (interpolator.engine == M2M_FRAMEGEN_FSR) {
+		return MTLTextureUsageShaderRead;
+	}
 	return interpolator ? interpolator.interpolator.uiTextureUsage : 0;
 }
 
 id<MTLTexture> m2m_frame_interpolation_encode(M2MContext *ctx, id<MTLTexture> ui, NSUInteger slot) {
 	M2MFrameInterpolator *interpolator = ctx.frameInterpolator;
-	if (!interpolator || !interpolator.pending || !interpolator.previousValid || ui.width != interpolator.outputWidth ||
-	    ui.height != interpolator.outputHeight || ui.pixelFormat != interpolator.colorFormat) {
+	if (!interpolator || !interpolator.pending || ui.width != interpolator.outputWidth || ui.height != interpolator.outputHeight ||
+	    ui.pixelFormat != interpolator.colorFormat) {
 		return nil;
 	}
 	M2MInterpolationCamera camera = interpolator.camera;
 	id<MTLTexture> output = interpolator.outputs[slot % M2M_PRESENT_SLOTS];
+	if (interpolator.engine == M2M_FRAMEGEN_FSR) {
+		// FSR keeps the previous frame itself, so it sees every captured frame; after a reset its output is not
+		// shown, as there is nothing to interpolate from.
+		M2MFsrFrame frame = {0};
+		frame.hudless = interpolator.worlds[interpolator.latest];
+		frame.backbuffer = ui;
+		frame.output = output;
+		frame.depth = interpolator.depth;
+		frame.motion = interpolator.motion;
+		frame.near_plane = camera.near_plane;
+		frame.far_plane = camera.far_plane;
+		frame.field_of_view = camera.field_of_view * (float)M_PI / 180.0f;
+		frame.jitter_x = camera.jitter_x;
+		frame.jitter_y = camera.jitter_y;
+		frame.frame_time_ms = camera.delta_time * 1000.0f;
+		frame.motion_scale_x = camera.motion_scale_x;
+		frame.motion_scale_y = camera.motion_scale_y;
+		frame.max_luminance = ctx.hdr ? MAX(1.0f, ctx.hdrPeak) : 1.0f;
+		frame.reset = !interpolator.previousValid;
+		BOOL encoded = m2m_fsr_framegen_encode(ctx, interpolator.fsr, &frame);
+		return encoded && interpolator.previousValid ? output : nil;
+	}
+	if (!interpolator.previousValid) {
+		return nil;
+	}
 	id<MTLFXFrameInterpolatorBase> effect = interpolator.interpolator;
 	effect.colorTexture = interpolator.worlds[interpolator.latest];
 	effect.prevColorTexture = interpolator.worlds[(interpolator.latest + M2M_INTERPOLATION_SLOTS - 1) % M2M_INTERPOLATION_SLOTS];
