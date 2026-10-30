@@ -39,7 +39,8 @@ Deskripsi (bahasa Inggris, untuk halaman proyek):
 >
 > AMD FidelityFX SDK code is included under its MIT license.
 
-## Belum dilakukan (butuh tindakan pemilik)
+## Keadaan rilis (2026-10-31)
 
-- Membuat proyek di Modrinth/CurseForge dan mengunggah file. Butuh akun dan token pemilik.
-- Tautan halaman, sumber kode, dan laporan bug di `fabric.mod.json` sudah menunjuk https://github.com/HoshizoraAkira/Mine2Metal.
+- Repo publik: https://github.com/HoshizoraAkira/Mine2Metal. Tautan homepage, sumber, dan issues di `fabric.mod.json` menunjuk ke sana.
+- GitHub Release `v0.0.1` berisi `mine2metal-0.0.1.jar` dan `mine2metal-0.0.1.mrpack` beserta checksum SHA-256.
+- Halaman Modrinth sedang dibuat pemilik dengan teks di atas; CurseForge belum. Keduanya butuh akun pemilik.

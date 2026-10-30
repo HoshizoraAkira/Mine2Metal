@@ -6,7 +6,7 @@ A Fabric mod that renders Minecraft Java with **Apple Metal** on Macs with Apple
 
 Status: **0.0.1, ready for public testing**. All milestones (M1–M14) and the follow-up roadmap (R1–R9) are done; the automated tests pass under Metal API validation on Metal 4 and Metal 3. Still experimental: it has been tested on one Mac so far (see [Test results](#test-results)), and mods that call OpenGL directly will not draw.
 
-The detailed documentation under `docs/` is written in Indonesian; this README covers everything needed to use, build and contribute to the mod.
+[Versi bahasa Indonesia](README.id.md) · The documentation under `docs/` is available in Indonesian and in English (`docs/en/`).
 
 ## Contents
 
@@ -30,7 +30,7 @@ The detailed documentation under `docs/` is written in Indonesian; this README c
 - **Upscaling**: MetalFX Spatial, MetalFX Temporal (with motion vectors and a reactive mask), AMD FSR 1 and AMD FSR 3.1. The hand and the HUD stay at full resolution.
 - **Frame generation**: MetalFX frame interpolation (macOS 26+) or AMD FSR 3.1, paced to the display's refresh rate through `CAMetalDisplayLink`. A guard puts it on standby while the game reaches the refresh rate by itself, and switches it off when it costs more than it gives.
 - **HDR (EDR)**: the world's highlights go brighter than SDR white on displays that support it; the GUI stays SDR.
-- **Built-in world shaders** (presets Low / Medium / High / Ultra / Custom): a G-buffer filled by Sodium's terrain, two-level voxel DDA plus screen-space shadows, GTAO, volumetric clouds, an atmosphere, water with screen-space reflections, bloom, light shafts, ACES tone mapping. Details in [docs/metal-shaders.md](docs/metal-shaders.md).
+- **Built-in world shaders** (presets Low / Medium / High / Ultra / Custom): a G-buffer filled by Sodium's terrain, two-level voxel DDA plus screen-space shadows, GTAO, volumetric clouds, an atmosphere, water with screen-space reflections, bloom, light shafts, ACES tone mapping. Details in [docs/metal-shaders.md](docs/en/metal-shaders.md).
 - **A settings page** in Sodium's Video Settings (or a "Metal Settings..." button without Sodium), in English and Indonesian.
 - **A one-click `.mrpack`** for the Modrinth App and Prism Launcher.
 
@@ -73,7 +73,7 @@ Changes apply at once and are saved to `config/mine2metal.properties`. To turn M
 
 ## Test results
 
-Every number below was measured on **one machine**: a MacBook Air 15" M3 (Mac15,13, 16 GB, fanless, 60 Hz panel, desktop at 1920×1243 points), macOS 27.0.1, on AC power. Other chips (M1, M2, M4 and later) **have not been measured**; an estimate for the M1 is in [docs/roadmap.md](docs/roadmap.md#optimasi-shader-dunia-dan-jalur-cpu-2026-10-30). The MacBook Air heats up during benchmarks and GPU time per frame can double without any change in load, so the ranges are wide; the highest numbers were taken in the "nominal" thermal state. Methods and full tables are in [docs/roadmap.md](docs/roadmap.md).
+Every number below was measured on **one machine**: a MacBook Air 15" M3 (Mac15,13, 16 GB, fanless, 60 Hz panel, desktop at 1920×1243 points), macOS 27.0.1, on AC power. Other chips (M1, M2, M4 and later) **have not been measured**; an estimate for the M1 is in [docs/roadmap.md](docs/en/roadmap.md#world-shader-and-cpu-path-optimisation-2026-10-30). The MacBook Air heats up during benchmarks and GPU time per frame can double without any change in load, so the ranges are wide; the highest numbers were taken in the "nominal" thermal state. Methods and full tables are in [docs/roadmap.md](docs/en/roadmap.md).
 
 **Backend only, no shaders** (game test `./gradlew runClientGameTest`, 2026-10-27; vsync off, uncapped frame rate, 10-second average FPS):
 
@@ -100,7 +100,7 @@ GPU time per shader pass at 1920×1243 (lighting scale 75 %, synthetic scene in 
 
 **Upscaling and frame generation** (GPU cost at 1080p–1200p): MetalFX Temporal about 3 ms, FSR 3.1 upscaler about 1.1 ms, MetalFX Spatial about 0.8 ms, FSR 1 about 0.5 ms. In plain Minecraft without shaders that is more than the whole frame, so upscaling only pays on a GPU-bound Mac (for example with the Ultra shaders or a large window). Frame generation holds the game at half the refresh rate and only helps when the game is below it; its guard was tested with a 40 FPS cap → 59–60 FPS on screen (FSR 3 and MetalFX alike). Temporal quality: 30–35 dB PSNR against the native render, about 1 dB lower right after the camera turns.
 
-**Correctness**: the game tests pass under `MTL_DEBUG_LAYER=1` (Metal API validation) on Metal 4 and Metal 3, including the shaders, HDR, frame generation, the Nether and the End; Metal vs OpenGL screenshots differ in ≤ 0.21 % of pixels (> 8 levels). The manual checks still open are listed in [docs/uji-manual.md](docs/uji-manual.md).
+**Correctness**: the game tests pass under `MTL_DEBUG_LAYER=1` (Metal API validation) on Metal 4 and Metal 3, including the shaders, HDR, frame generation, the Nether and the End; Metal vs OpenGL screenshots differ in ≤ 0.21 % of pixels (> 8 levels). The manual checks still open are listed in [docs/uji-manual.md](docs/en/uji-manual.md).
 
 ## How it works and code layout
 
@@ -127,14 +127,14 @@ Minecraft 26.3 puts its rendering behind the `renderpearl` SPI (`GpuBackend`, `G
 
 ## Documentation
 
-All in Indonesian, under `docs/`:
+Under `docs/` in Indonesian, with English versions under `docs/en/`:
 
-- [roadmap.md](docs/roadmap.md): milestones M1–M14 and R1–R9, automated test results, the performance audit, the shader optimisation, bug notes and data-driven decisions.
-- [riset-awal.md](docs/riset-awal.md): research on the `renderpearl` SPI (verified with `javap` on `client.jar`), Sodium on top of renderpearl, Metal 3 vs Metal 4, prior art and the list of sources.
-- [metal-shaders.md](docs/metal-shaders.md): the design of the built-in world shaders (G-buffer architecture, lighting model, memory layout, quality presets).
-- [fsr-frame-gen.md](docs/fsr-frame-gen.md): porting AMD's FSR 3.1 frame generation and upscalers to Metal.
-- [uji-manual.md](docs/uji-manual.md): the checklist of things that can only be judged by playing.
-- [rilis.md](docs/rilis.md): how to build the release files and the Modrinth/CurseForge page text.
+- [roadmap.md](docs/en/roadmap.md): milestones M1–M14 and R1–R9, automated test results, the performance audit, the shader optimisation, bug notes and data-driven decisions.
+- [riset-awal.md](docs/en/riset-awal.md): research on the `renderpearl` SPI (verified with `javap` on `client.jar`), Sodium on top of renderpearl, Metal 3 vs Metal 4, prior art and the list of sources.
+- [metal-shaders.md](docs/en/metal-shaders.md): the design of the built-in world shaders (G-buffer architecture, lighting model, memory layout, quality presets).
+- [fsr-frame-gen.md](docs/en/fsr-frame-gen.md): porting AMD's FSR 3.1 frame generation and upscalers to Metal.
+- [uji-manual.md](docs/en/uji-manual.md): the checklist of things that can only be judged by playing.
+- [rilis.md](docs/en/rilis.md): how to build the release files and the Modrinth/CurseForge page text.
 
 ## Building, testing and debugging
 
@@ -186,7 +186,7 @@ Documentation and sources used during development:
 - **Sodium** ([CaffeineMC/sodium](https://github.com/CaffeineMC/sodium), Polyform Shield 1.0.0): its source was read to understand its `renderpearl` path, its config API and its render lists. Sodium is **not bundled**; players or launchers download it from Modrinth.
 - **Fabric** (Loader, Loom, the Fabric API client game test framework; Apache 2.0) and **Mixin**.
 - **LWJGL 3.4.3** (`lwjgl-sdl`, `lwjgl-spvc`): SDL for the window and **SPIRV-Cross** (Khronos, Apache 2.0) for SPIR-V → MSL. The FSR shaders are built with **glslang** and **spirv-cross** from Homebrew.
-- **Prior art** read as a comparison before writing this: [noahdunnagan/mcopt](https://github.com/noahdunnagan/mcopt) (Apache 2.0; a Metal backend through FFM, without Sodium), [Kausik-Velaga/minecraft-metal-renderer](https://github.com/Kausik-Velaga/minecraft-metal-renderer) (MIT), [GaelQuinta/minecraft-metal-shaders](https://github.com/GaelQuinta/minecraft-metal-shaders) (Apache 2.0). Thanks to their authors; the comparison notes are in [docs/riset-awal.md](docs/riset-awal.md#6-prior-art).
+- **Prior art** read as a comparison before writing this: [noahdunnagan/mcopt](https://github.com/noahdunnagan/mcopt) (Apache 2.0; a Metal backend through FFM, without Sodium), [Kausik-Velaga/minecraft-metal-renderer](https://github.com/Kausik-Velaga/minecraft-metal-renderer) (MIT), [GaelQuinta/minecraft-metal-shaders](https://github.com/GaelQuinta/minecraft-metal-shaders) (Apache 2.0). Thanks to their authors; the comparison notes are in [docs/riset-awal.md](docs/en/riset-awal.md#6-prior-art).
 - The **visual direction** of the built-in shaders is inspired by the look of *Complementary Reimagined* (EminGT); no shader pack code or assets are used.
 - The shader techniques are standard ones from the real-time graphics literature: GTAO, interleaved gradient noise, voxel DDA (Amanatides & Woo), screen-space reflections with a skyline table, dual Kawase bloom, the ACES tone mapping fit (Stephen Hill / Krzysztof Narkowicz), and FSR/MetalFX as above.
 
@@ -211,4 +211,4 @@ This project was developed with the help of Claude (Anthropic) as a programming 
 
 Bug reports and pull requests are welcome at [HoshizoraAkira/Mine2Metal](https://github.com/HoshizoraAkira/Mine2Metal). For a bug report, include: your Mac model and macOS version, the Minecraft/Fabric/Sodium versions, the F3 line in the right column (`Metal 3/4 (mine2metal)`), `logs/latest.log`, and if possible a screenshot or a frame from `-Dmine2metal.dumpFrame`. FPS numbers are most useful together with `-Dmine2metal.stats=true` and the window size and render distance.
 
-Before sending a PR: `./gradlew build` and `MTL_DEBUG_LAYER=1 ./gradlew runClientGameTest` must pass; shader changes should come with `tools/shaderbench` numbers and a per-pixel comparison as in [docs/roadmap.md](docs/roadmap.md).
+Before sending a PR: `./gradlew build` and `MTL_DEBUG_LAYER=1 ./gradlew runClientGameTest` must pass; shader changes should come with `tools/shaderbench` numbers and a per-pixel comparison as in [docs/roadmap.md](docs/en/roadmap.md).

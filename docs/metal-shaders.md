@@ -2,6 +2,9 @@
 
 Dokumen ini merinci arsitektur, model matematika, tata letak memori, strategi optimasi perangkat keras Apple Silicon (khususnya **MacBook Air M3 16GB RAM**), sistem konfigurasi kualitas bertingkat hingga **Ray Tracing**, serta tahapan implementasi dan pengujian untuk **Native Metal Shader Engine** bawaan `mine2metal`.
 
+
+> **Status (2026-10-31):** §2, §5, dan §6 menggambarkan apa yang terpasang di kode. §1, §3, dan §4 adalah rancangan awal; yang terpasang mengikuti semangatnya tetapi angkanya berbeda, dan angka yang benar dicatat di catatan "Yang terpasang" di tiap bagian itu. §7 dan §8 sudah diganti dengan kontrak C ABI dan tahapan yang sebenarnya.
+
 ---
 
 ## 1. Latar Belakang & Filosofi Desain
@@ -74,8 +77,8 @@ Setiap byte voxel menyimpan jenis opasitas sekaligus warna/intensitas emisi caha
 | `0x04..0x0F` | Kaca Berwarna / Es (`glass`, *stained glass*, `ice`) | Meneruskan sinar dengan filter warna RGB sesuai warna kaca (*colored stained-glass shadows*). |
 | `0x10..0xFF` | **Blok Emisif (Pemancar Cahaya)** | Bit `7..4` = Palet warna emisi (1: Oranye Api/Obor/Lava, 2: Kuning Hangat Glowstone/Lantern, 3: Biru Soul Fire/Soul Lantern, 4: Cyan Sea Lantern, 5: Ungu Amethyst/Crying Obsidian/End Rod, 6: Hijau/Kuning/Ungu Froglight, 7: Putih Cerah); Bit `3..0` = Intensitas cahaya (`1..15`). |
 
-### 3.3 Daftar Emissive Point Lights Aktif (`M2MLightSource`, Maks 256 Sumber Terdekat)
-Selain *voxel grid* untuk *ray marching*, `WorldShader.java` juga mengumpulkan hingga **256 sumber cahaya blok terdekat** dalam array ringkas (`float4 positionAndRadius`, `float4 colorAndIntensity`) di dalam buffer uniform frame. Dengan daftar ini:
+### 3.3 Daftar Emissive Point Lights Aktif (rancangan: 256 sumber; terpasang: 32 terdekat)
+Selain *voxel grid* untuk *ray marching*, `WorldShader.java` juga mengumpulkan sumber cahaya blok terdekat (rancangan **256**; yang terpasang **32**, `MAX_LIGHTS` di `WorldShader.java` dan `M2M_MAX_POINT_LIGHTS` di `shaders.m`) dalam array ringkas (`float4 positionAndRadius`, `float4 colorAndIntensity`) di dalam buffer uniform frame. Dengan daftar ini:
 - Pada preset **Low / Medium**, dinding di sekitar obor/lava langsung mendapatkan iluminasi dinamis yang mulus tanpa perlu menembakkan puluhan sinar *ray-tracing* per piksel.
 - Pada preset **High / Ultra (RT)**, sinar *ray tracing* menggunakan metode **Next-Event Estimation (NEE) / Importance Sampling** langsung mengarah ke sumber cahaya emisif terdekat dan memverifikasi visibilitasnya (apakah terhalang tembok atau tidak) melalui *3D DDA Voxel Traversal*! Hasilnya: **bayangan obor/lava yang akurat di balik tembok/pilar tanpa *noise* bintik-bintik!**
 
@@ -83,11 +86,13 @@ Selain *voxel grid* untuk *ray marching*, `WorldShader.java` juga mengumpulkan h
 
 ## 4. Spesifikasi Algoritma per Tahap Shader (MSL)
 
-Seluruh shader ditulis dalam **Metal Shading Language (MSL)** di `src/main/native/shaders.m` dengan pemisahan presisi:
+Seluruh shader ditulis dalam **Metal Shading Language (MSL)** di `src/main/native/world_shaders.metal` (dikompilasi saat runtime oleh `shaders.m`) dengan pemisahan presisi:
 - **Posisi 3D, kedalaman, dan proyeksi matriks:** `float` (`fp32`) agar bebas *jitter* dan *banding* jarak jauh.
 - **Vektor normal, arah cahaya, warna RGB, AO, dan koefisien BRDF:** `half` / `half3` / `half4` (`fp16`) untuk menggandakan kecepatan ALU di GPU Apple M3.
 
-### 4.1 Rekonstruksi Posisi 3D & Normal Permukaan Tajam (Pass 0)
+> **Yang terpasang (dari `world_shaders.metal`):** normal dan material tidak lagi direkonstruksi dari depth, melainkan dibaca dari G-buffer (§2). Jumlah langkah per kualitas: bayangan layar 24 / 36 / 48 / 64 (Low–Ultra) dengan lebar kerucut 0,006 / 0,012 / 0,02, DDA voxel 10 langkah (Low–Medium) atau 16 (High–Ultra) di atas grid kasar; AO 3 / 4 / 6 sampel dan hanya dalam jarak 96 blok; SSR air 12 / 18 / 26 langkah (Medium–Ultra) plus tabel skyline; light shafts 8 / 12 / 16 langkah; awan 6 / 8 / 11 langkah; refleksi dan AO voxel "RT" di Ultra memakai DDA voxel yang sama, bukan struktur akselerasi Metal. Bagian 4.1–4.6 di bawah adalah rancangan awalnya.
+
+### 4.1 Rekonstruksi Posisi 3D & Normal Permukaan Tajam (Pass 0, rancangan awal)
 Karena Sodium menggambar dunia secara langsung ke target warna dan kedalaman tanpa *G-Buffer normal attachment* tambahan, kita merekonstruksi posisi dunia 3D $\mathbf{P}$ dan vektor normal geometri $\mathbf{N}$ secara *on-the-fly* dari tekstur kedalaman `depth`:
 1. Untuk piksel pada koordinat UV $(u, v)$ dengan kedalaman $d \in [0, 1)$, posisi relatif terhadap kamera dihitung melalui:
    $$\mathbf{P}_{\text{clip}} = \begin{bmatrix} 2u - 1 \\ 2v - 1 \\ d \\ 1 \end{bmatrix}, \quad \mathbf{P}_{\text{world}} = \text{invViewProj} \cdot \mathbf{P}_{\text{clip}}$$
@@ -123,7 +128,7 @@ Karena Sodium menggambar dunia secara langsung ke target warna dan kedalaman tan
 1. **Low (*Sky & Sun Bounce Tint*):**
    - Pencahayaan hemisfer langit (biru sejuk di permukaan menghadap atas) + pantulan *bounce* tanah hangat pada permukaan yang membelakangi matahari.
 2. **Medium (`SSGI` + *Direct Emissive Lights*):**
-   - *1-Bounce Screen-Space Diffuse GI* + iluminasi langsung (*inverse-square falloff* yang dihaluskan) dari hingga 64 sumber cahaya blok emisif terdekat (`M2MLightSource`).
+   - *1-Bounce Screen-Space Diffuse GI* + iluminasi langsung (*inverse-square falloff* yang dihaluskan) dari sumber cahaya blok emisif terdekat (terpasang: hingga 32).
 3. **High (`RTGI` - *Voxel Ray-Traced GI & Shadowed Emissive Bounce*):**
    - Menguji visibilitas sinar (*shadow ray* via 3D Voxel DDA) dari piksel ke sumber cahaya emisif sekitar (lava, obor, lantern, glowstone) sehingga **cahaya obor tidak tembus dinding**, ditambah pantulan warna (*color bleeding*) dari blok sekitar yang terkena sinar matahari langsung.
 
@@ -227,53 +232,44 @@ shaderLightingScale=75
 
 ## 7. Kontrak C ABI (`mine2metal.h`) & Struktur Data Native
 
-### 7.1 Struktur Uniform `M2MShaderParams` (`float[]` dari Java → Native)
-Dikirim sekali per frame ke `m2m_shader_render`:
-- `matrices[0..51]` (`52 float`): `invViewProj`, `prevViewProj`, `cameraDelta (dx, dy, dz, valid)`, `invPrevViewProj` (menggunakan format [`CameraMotion`](file:///Volumes/Hoshizora_SSD/Learning/mine2metal/src/main/java/dev/mine2metal/frame/CameraMotion.java) yang sudah teruji!).
-- `environment[0..31]` (`32 float`):
-  - `[0..2]`: `cameraWorldPos (x, y, z)` (untuk pengalamatan *toroidal* Voxel Grid).
-  - `[3]`: `timeSeconds` (animasi gelombang air & awan).
-  - `[4..6]`: `sunDirection (x, y, z)` (vektor satuan menuju matahari/bulan).
-  - `[7]`: `daylightFactor` (`0.0` malam – `1.0` siang).
-  - `[8]`: `twilightFactor` (`0.0` biasa – `1.0` puncak *sunrise/sunset*).
-  - `[9]`: `rainStrength` (`0.0` cerah – `1.0` hujan deras).
-  - `[10]`: `thunderStrength` (`0.0` – `1.0`).
-  - `[11]`: `isUnderwater` (`0.0` atau `1.0`).
-  - `[12]`: `dimensionType` (`0` Overworld, `1` Nether, `2` End).
-  - `[13..15]`: `skyColor (r, g, b)`.
-  - `[16..18]`: `fogColor (r, g, b)`.
-  - `[19..20]`: `nearPlane`, `farPlane`.
-  - `[21]`: `hdrActive` (`0.0` SDR, `> 1.0` puncak EDR).
-  - `[22]`: `frameIndex` (untuk rotasi sampel *Blue Noise / Interleaved Gradient Noise* temporal).
-- `lights[0..(8 * lightCount - 1)]`: Array sumber cahaya emisif (`x, y, z, radius, r, g, b, intensity`) relatif terhadap posisi kamera.
+### 7.1 Data per frame dari Java ke native
+Dikirim lewat `m2m_shader_deferred`, `m2m_shader_water_end`, dan `m2m_shader_post` (`WorldShader.java` mengisinya di `prepare` dan `fillEnvironment`):
+- `quality[0..6]` (`int32`): shadows, AO, reflections, GI, volumetrics, bloom (ordinal enum, 0 = off), lighting scale %.
+- `matrices[0..51]` (`52 float`): `invViewProj` frame ini, `viewProj` frame sebelumnya, `cameraDelta (dx, dy, dz, valid)`, lalu `viewProj` frame ini (tata letak `CameraMotion`).
+- `environment[0..35]` (`36 float`): `[0..2]` posisi kamera dunia; `[3]` detik sejak shader mulai; `[4..6]` arah matahari/bulan; `[7]` faktor siang; `[8]` faktor twilight; `[9]` hujan; `[10]` petir; `[11]` mode fluida kamera; `[12]` dimensi (0 overworld, 1 Nether, 2 End); `[13]` puncak EDR (0 = SDR); `[14..15]` `m22`, `m32` proyeksi (depth → jarak); `[16..18]` warna langit; `[19]` penghitung frame (mod 1024); `[20..22]` warna fog; `[23]` elevasi matahari; `[24..27]` jarak fog environmental dan render distance; `[28]` gamma; `[29]` night vision; `[30]` `-Dmine2metal.shaderDebug`; `[31]` langit-langit voxel; `[32]` tinggi permukaan air saat terendam; `[33]` kamera di air; `[34]` versi grid voxel; `[35]` hujan di biome kamera.
+- `lights` (hingga 32 × 8 float): `x, y, z, radius, r, g, b, intensity` relatif terhadap kamera, dengan `light_count`.
 
-### 7.2 Fungsi Ekspor Baru di `mine2metal.h`
+### 7.2 Ekspor di `mine2metal.h`
 ```c
-// Mengunggah irisan atau seluruh isi 3D Voxel Grid (128x128x128, R8Uint) dari memori off-heap Java.
-M2M_EXPORT void m2m_shader_update_voxels(int64_t ctx, int32_t x, int32_t y, int32_t z,
-                                         int32_t width, int32_t height, int32_t depth,
-                                         int64_t data_address, int32_t bytes_per_row, int32_t bytes_per_image);
-
-// Menjalankan pipeline Native Metal Shader pada tekstur warna dan depth dunia.
-// Mengembalikan 1 jika berhasil dirender ke tekstur warna dunia, atau 0 jika dilewati.
-M2M_EXPORT int32_t m2m_shader_render(int64_t ctx, int64_t color_texture, int64_t depth_texture,
-                                     const int32_t *quality_levels, const float *matrices,
-                                     const float *environment, const float *lights, int32_t light_count);
-
-// Membebaskan tekstur history, bloom pyramid, dan voxel grid saat shader dimatikan.
-M2M_EXPORT void m2m_shader_release(int64_t ctx);
-
-// Irisan z grid voxel (0..127) yang ditulis CPU sejak panggilan terakhir; salinan GPU hanya menyalin irisan itu.
+// Alamat salinan master voxel grid (128^3 byte) yang ditulis Java; 0 kalau belum ada.
+M2M_EXPORT int64_t m2m_shader_voxel_buffer(int64_t ctx);
+// Irisan z (0..127) yang ditulis sejak panggilan terakhir; salinan GPU hanya menyalin irisan itu.
 M2M_EXPORT void m2m_shader_voxels_changed(int64_t ctx, int32_t z_min, int32_t z_max);
+// Memasang dua attachment G-buffer ke main pass yang akan dibuka.
+M2M_EXPORT int32_t m2m_shader_gbuffer_attach(int64_t ctx, int64_t color, int64_t depth);
+// Setelah terrain opaque: lighting di skala lighting, lalu resolve ke tekstur warna; main pass dibuka lagi.
+M2M_EXPORT int32_t m2m_shader_deferred(int64_t ctx, int64_t color, int64_t depth, const int32_t *quality,
+                                       const float *matrices, const float *environment, const float *lights, int32_t light_count);
+// Sebelum/sesudah terrain translucent: salinan scene, G-buffer air, lalu pass air.
+M2M_EXPORT int32_t m2m_shader_water_begin(int64_t ctx, int64_t color, int64_t depth);
+M2M_EXPORT int32_t m2m_shader_water_end(int64_t ctx, int64_t color, int64_t depth, const int32_t *quality,
+                                        const float *matrices, const float *environment);
+// Sebelum tangan: bloom, light shafts, fog bawah air.
+M2M_EXPORT int32_t m2m_shader_post(int64_t ctx, int64_t color, int64_t depth, const int32_t *quality,
+                                   const float *matrices, const float *environment);
+// Melepas semua tekstur dan buffer shader saat dimatikan.
+M2M_EXPORT void m2m_shader_release(int64_t ctx);
 ```
+Tanda tangan persisnya ada di `src/main/native/mine2metal.h`; binding Java-nya di `MetalNative.java`.
 
 ---
 
-## 8. Rencana Implementasi & Verifikasi Bertahap
+## 8. Tahapan yang dikerjakan
 
-| Tahap | File yang Dibuat / Diubah | Target Verifikasi |
+| Tahap | Isi | Hasil |
 | :--- | :--- | :--- |
-| **Tahap 1: Konfigurasi, Preset & UI ("Metal Shaders")** | [`MetalSettings.java`](file:///Volumes/Hoshizora_SSD/Learning/mine2metal/src/main/java/dev/mine2metal/config/MetalSettings.java), [`MetalOptionTexts.java`](file:///Volumes/Hoshizora_SSD/Learning/mine2metal/src/main/java/dev/mine2metal/config/MetalOptionTexts.java), [`SodiumOptionsPage.java`](file:///Volumes/Hoshizora_SSD/Learning/mine2metal/src/main/java/dev/mine2metal/config/SodiumOptionsPage.java), [`MetalSettingsScreen.java`](file:///Volumes/Hoshizora_SSD/Learning/mine2metal/src/main/java/dev/mine2metal/config/MetalSettingsScreen.java), [`en_us.json`](file:///Volumes/Hoshizora_SSD/Learning/mine2metal/src/main/resources/assets/mine2metal/lang/en_us.json), [`id_id.json`](file:///Volumes/Hoshizora_SSD/Learning/mine2metal/src/main/resources/assets/mine2metal/lang/id_id.json) | Tab **Metal Shaders** tampil di Sodium & layar Vanilla; pemilihan preset mengubah sub-opsi secara otomatis; perubahan sub-opsi menggeser preset ke `Custom`; tersimpan di `mine2metal.properties`. |
-| **Tahap 2: Native MSL Shader Engine (`shaders.m`)** | `src/main/native/shaders.m`, [`mine2metal.h`](file:///Volumes/Hoshizora_SSD/Learning/mine2metal/src/main/native/mine2metal.h), [`m2m_context.h`](file:///Volumes/Hoshizora_SSD/Learning/mine2metal/src/main/native/m2m_context.h), [`MetalNative.java`](file:///Volumes/Hoshizora_SSD/Learning/mine2metal/src/main/java/dev/mine2metal/metal/MetalNative.java), [`MetalRenderer.java`](file:///Volumes/Hoshizora_SSD/Learning/mine2metal/src/main/java/dev/mine2metal/metal/MetalRenderer.java) | Kompilasi bersih `-Wall -Wextra -Werror`; semua 4 pipeline MSL (`lighting`, `denoise`, `bloom_down/up`, `composite`) terkompilasi tanpa error di Metal 3 dan Metal 4. |
-| **Tahap 3: Pengumpul Voxel Dunia & Integrasi `WorldPass`** | `src/main/java/dev/mine2metal/frame/WorldShader.java`, [`WorldPass.java`](file:///Volumes/Hoshizora_SSD/Learning/mine2metal/src/main/java/dev/mine2metal/frame/WorldPass.java) | Pemindaian inkremental blok sekitar kamera (solid, air, daun, kaca, emisif lava/obor/lantern) + pengiriman matriks & atmosfer ke `m2m_shader_render` sebelum `upscaler.end(current)`. |
-| **Tahap 4: Build JAR, Uji Kompatibilitas & Deploy ke `mods/`** | `build/libs/mine2metal-0.0.1.jar` → `~/Library/Application Support/minecraft/mods/` | Kompilasi penuh berhasil, kompatibel dengan Upscaling, HDR (EDR), dan Frame Generation, serta siap diuji langsung di dalam game! |
+| 1. Konfigurasi, preset & UI | `MetalSettings`, halaman Sodium "Metal Shaders", layar vanilla, bahasa Inggris dan Indonesia; preset menggerakkan opsi turunannya dan opsi turunan menggeser preset ke Custom (di halaman Sodium lewat `ShaderPresetSync`, 2026-10-31) | Selesai, diuji gametest |
+| 2. Shader post-process pertama | Lighting dari depth dan warna jadi | Diganti (gambar keruh, fog dobel); lihat §2 |
+| 3. G-buffer dari terrain Sodium, entitas, item, partikel, air, bawah air, hujan, Nether/End | `GbufferShaderPatch`, `shaders.m` + `world_shaders.metal`, `WorldShader`, mixin | Selesai; gametest `-Dmine2metal.test.shadersOnly=true` lolos di bawah validation Metal 4 dan 3 |
+| 4. Optimasi tanpa mengubah hasil | 12 teknik di §5, diukur per piksel dengan `tools/shaderbench` | High 5,11 → ±3,7 ms di 1920×1243 (roadmap 2026-10-30) |
+| 5. Perbaikan dari install sungguhan | Arah pandang bebas view bobbing (`view_direction()`), mode gametest `walkOnly` | 2026-10-31 |

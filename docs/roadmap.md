@@ -220,7 +220,7 @@ Uji pertama di install sungguhan (MacBook Air M3, fullscreen Retina, Temporal 75
 - **Uji:**
   - `JAVA_TOOL_OPTIONS="-Dos.version=13.6 -Dmine2metal.test.fallbackOnly=true" ./gradlew runClientGameTest`: game memakai OpenGL dan toast "Not rendering with Metal" muncul dengan alasannya.
   - `./gradlew runProductionClient` menjalankan jar rilis dan Sodium di klien produksi Loom, tanpa classpath dev.
-- **Belum dilakukan:** membuat proyek dan mengunggah ke Modrinth/CurseForge (butuh akun pemilik), dan tautan repo di metadata. macOS 14–25 belum diuji di mesin sungguhan; jalur Metal 4 dan MetalFX baru dijaga `@available` dan weak linking.
+- **Keadaan 2026-10-31:** repo publik dan GitHub Release v0.0.1 sudah ada (tautan repo masuk metadata); halaman Modrinth sedang dibuat pemilik, CurseForge belum. macOS 14–25 belum diuji di mesin sungguhan; jalur Metal 4 dan MetalFX baru dijaga `@available` dan weak linking.
 
 ### R8: arsitektur frame dunia (2026-10-28)
 
