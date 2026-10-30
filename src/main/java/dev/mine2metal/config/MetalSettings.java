@@ -149,6 +149,11 @@ public final class MetalSettings {
 	private MetalSettings() {
 	}
 
+	/** Blank values for working out what a preset or a sync would do, apart from the loaded settings. */
+	static MetalSettings scratch() {
+		return new MetalSettings();
+	}
+
 	public static synchronized MetalSettings get() {
 		if (instance == null) {
 			instance = load();

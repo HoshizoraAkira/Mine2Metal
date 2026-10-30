@@ -222,6 +222,7 @@ public class MetalWorldGameTest implements FabricClientGameTest {
 			// Sodium draws its own sidebar, which game tests cannot click; the screenshot shows the "mine2metal" entry
 			// and its "Metal" page under Sodium's pages.
 			context.takeScreenshot("mine2metal-video-settings");
+			checkSodiumPresetSync(context);
 		} else {
 			String label = Component.translatable("mine2metal.options.button").getString();
 			boolean present = context.computeOnClient(client -> findWidget(client.gui.screen(), label) != null);
@@ -1171,6 +1172,106 @@ public class MetalWorldGameTest implements FabricClientGameTest {
 				+ client.gui.screen());
 		LOGGER.info("Frame limits during measurement: {}", limits);
 		return total / samples;
+	}
+
+	/**
+	 * On Sodium's shader page, cycling the preset must move the controls under it before Apply, and editing one of
+	 * them must move the preset to Custom (ShaderPresetSync). Sodium's config classes are reached reflectively since
+	 * Sodium is optional at runtime; the pending values are read the way the controls read them.
+	 */
+	private static void checkSodiumPresetSync(ClientGameTestContext context) {
+		try {
+			Class<?> manager = Class.forName("net.caffeinemc.mods.sodium.client.config.ConfigManager");
+			Object config = manager.getField("CONFIG").get(null);
+			Class<?> configClass = config.getClass();
+			Object modOptions = ((java.util.List<?>) configClass.getMethod("getModOptions").invoke(config)).stream()
+					.filter(mod -> {
+						try {
+							return "mine2metal".equals(mod.getClass().getMethod("configId").invoke(mod));
+						} catch (ReflectiveOperationException e) {
+							throw new IllegalStateException(e);
+						}
+					}).findFirst().orElseThrow(() -> new IllegalStateException("No mine2metal options registered with Sodium"));
+			java.util.List<?> pages = (java.util.List<?>) modOptions.getClass().getMethod("pages").invoke(modOptions);
+			Object shaderPage = pages.get(1);
+			Class<?> optionPage = Class.forName("net.caffeinemc.mods.sodium.client.config.structure.OptionPage");
+			Class<?> screenClass = Class.forName("net.caffeinemc.mods.sodium.client.gui.VideoSettingsScreen");
+			java.lang.reflect.Method createScreen = screenClass.getMethod("createScreen", net.minecraft.client.gui.screens.Screen.class, optionPage);
+			context.setScreen(() -> {
+				try {
+					return (net.minecraft.client.gui.screens.Screen) createScreen.invoke(null, new TitleScreen(), shaderPage);
+				} catch (ReflectiveOperationException e) {
+					throw new IllegalStateException(e);
+				}
+			});
+			context.waitTicks(5);
+			context.takeScreenshot("mine2metal-video-settings-shaders");
+
+			java.lang.reflect.Method getOption = configClass.getMethod("getOption", Identifier.class);
+			java.lang.reflect.Method readEnum = configClass.getMethod("readEnumOption", Identifier.class, Class.class, boolean.class);
+			java.lang.reflect.Method readInt = configClass.getMethod("readIntOption", Identifier.class, boolean.class);
+			java.util.function.BiConsumer<String, Object> modify = (name, value) -> context.runOnClient(client -> {
+				try {
+					Object option = getOption.invoke(config, Identifier.fromNamespaceAndPath("mine2metal", name));
+					option.getClass().getMethod("modifyValue", Object.class).invoke(option, value);
+				} catch (ReflectiveOperationException e) {
+					throw new IllegalStateException(e);
+				}
+			});
+			java.util.function.BiFunction<String, Class<?>, Object> pending = (name, type) -> context.computeOnClient(client -> {
+				try {
+					Identifier id = Identifier.fromNamespaceAndPath("mine2metal", name);
+					return type == Integer.class ? readInt.invoke(config, id, false) : readEnum.invoke(config, id, type, false);
+				} catch (ReflectiveOperationException e) {
+					throw new IllegalStateException(e);
+				}
+			});
+
+			modify.accept("shader_preset", MetalSettings.ShaderPreset.HIGH);
+			context.waitTicks(3);
+			check(pending.apply("shader_shadows", MetalSettings.ShadowQuality.class) == MetalSettings.ShadowQuality.HIGH,
+					"Shadows should follow the High preset before Apply");
+			check(pending.apply("shader_ao", MetalSettings.AoQuality.class) == MetalSettings.AoQuality.MEDIUM,
+					"AO should follow the High preset before Apply");
+			check(pending.apply("shader_lighting_scale", Integer.class).equals(75), "Lighting scale should follow the High preset");
+
+			modify.accept("shader_bloom", MetalSettings.BloomQuality.LOW);
+			context.waitTicks(3);
+			check(pending.apply("shader_preset", MetalSettings.ShaderPreset.class) == MetalSettings.ShaderPreset.CUSTOM,
+					"Editing bloom should move the preset to Custom before Apply");
+
+			modify.accept("shader_preset", MetalSettings.ShaderPreset.LOW);
+			context.waitTicks(3);
+			check(pending.apply("shader_bloom", MetalSettings.BloomQuality.class) == MetalSettings.BloomQuality.LOW
+					&& pending.apply("shader_lighting_scale", Integer.class).equals(50)
+					&& pending.apply("shader_reflections", MetalSettings.ReflectionQuality.class) == MetalSettings.ReflectionQuality.LOW,
+					"The Low preset should set every derived control");
+
+			// Apply the way the button does, then put everything back.
+			context.runOnClient(client -> {
+				try {
+					configClass.getMethod("applyAllOptions").invoke(config);
+				} catch (ReflectiveOperationException e) {
+					throw new IllegalStateException(e);
+				}
+			});
+			check(MetalSettings.get().shaderPreset == MetalSettings.ShaderPreset.LOW
+					&& MetalSettings.get().shaderShadows == MetalSettings.ShadowQuality.LOW
+					&& MetalSettings.get().shaderLightingScale == 50, "Apply should land the Low preset in the settings");
+			modify.accept("shader_preset", MetalSettings.ShaderPreset.OFF);
+			context.waitTicks(3);
+			context.runOnClient(client -> {
+				try {
+					configClass.getMethod("applyAllOptions").invoke(config);
+				} catch (ReflectiveOperationException e) {
+					throw new IllegalStateException(e);
+				}
+			});
+			check(!MetalSettings.get().shadersEnabled(), "Applying Off should turn every shader option off");
+			LOGGER.info("Sodium shader page: preset and derived options follow each other while editing");
+		} catch (ReflectiveOperationException e) {
+			throw new IllegalStateException("Could not drive Sodium's video settings", e);
+		}
 	}
 
 	/** Sodium is optional at runtime (-PnoSodium), so it is looked up reflectively. */
