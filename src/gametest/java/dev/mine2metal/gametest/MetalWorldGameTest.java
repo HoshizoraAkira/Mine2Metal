@@ -125,6 +125,10 @@ public class MetalWorldGameTest implements FabricClientGameTest {
 			context.takeScreenshot("mine2metal-world-above");
 			LOGGER.info("Average FPS from above (vsync off, uncapped): {}", averageFps(context));
 
+			if (Boolean.getBoolean("mine2metal.test.walkOnly")) {
+				checkWalking(context, singleplayer, above);
+				return;
+			}
 			if (Boolean.getBoolean("mine2metal.test.pacing")) {
 				measurePacing(context, false);
 				measurePacing(context, true);
@@ -1272,6 +1276,44 @@ public class MetalWorldGameTest implements FabricClientGameTest {
 		} catch (ReflectiveOperationException e) {
 			throw new IllegalStateException("Could not drive Sodium's video settings", e);
 		}
+	}
+
+	/**
+	 * Walking on the ground with the shaders on, looking at the sky: a screenshot every couple of ticks
+	 * (-Dmine2metal.test.walkOnly=true). View bobbing moves the camera inside the projection matrix, which once bent
+	 * the shader's sky directions and left the cloud history as hard-edged rectangles; still screenshots never showed it.
+	 */
+	private static void checkWalking(ClientGameTestContext context, TestSingleplayerContext singleplayer, Vec3 above) {
+		context.getInput().resizeWindow(1600, 900);
+		context.runOnClient(client -> client.options.renderDistance().set(12));
+		singleplayer.getServer().runCommand("weather clear");
+		context.runOnClient(client -> MetalSettings.get().applyShaderPreset(MetalSettings.ShaderPreset.HIGH));
+		int ground = context.computeOnClient(client -> client.level.getHeight(Heightmap.Types.MOTION_BLOCKING, (int) Math.floor(above.x),
+				(int) Math.floor(above.z)));
+		for (String time : new String[] {"noon", "sunset"}) {
+			singleplayer.getServer().runCommand("time set " + (time.equals("noon") ? "noon" : "12600"));
+			singleplayer.getServer().runCommand(String.format(Locale.ROOT, "tp @a %.3f %d %.3f 0 -15", above.x, ground + 1, above.z));
+			context.runOnClient(client -> {
+				client.player.getAbilities().flying = false;
+				client.player.onUpdateAbilities();
+			});
+			context.waitTicks(40);
+			context.getInput().lookAt(0.0F, -20.0F);
+			context.waitTicks(10);
+			context.takeScreenshot("mine2metal-walk-" + time + "-still");
+			context.getInput().holdKey(options -> options.keyUp);
+			for (int shot = 0; shot < 6; shot++) {
+				context.waitTicks(2);
+				context.takeScreenshot("mine2metal-walk-" + time + "-" + shot);
+			}
+			for (int shot = 0; shot < 4; shot++) {
+				context.getInput().lookAt(30.0F * (shot + 1), -20.0F);
+				context.waitTicks(2);
+				context.takeScreenshot("mine2metal-walk-" + time + "-turn" + shot);
+			}
+			context.getInput().releaseKey(options -> options.keyUp);
+		}
+		context.runOnClient(client -> MetalSettings.get().applyShaderPreset(MetalSettings.ShaderPreset.OFF));
 	}
 
 	/** Sodium is optional at runtime (-PnoSodium), so it is looked up reflectively. */

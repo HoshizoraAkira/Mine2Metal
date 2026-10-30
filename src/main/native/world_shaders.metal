@@ -151,6 +151,17 @@ static inline float3 unproject(float2 uv, float z, constant ShaderUniforms &u) {
     return p.xyz / p.w;
 }
 
+// The direction of a pixel's ray. Not the normalized near-plane point: view bobbing moves the camera inside the
+// projection matrix by up to a few hundredths of a block, and the near plane is only 0.05 away, so that point's
+// direction swings by tens of degrees with every step. Two points on the ray give its direction whatever the
+// translation.
+static inline float3 view_direction(float2 uv, constant ShaderUniforms &u) {
+    bool reversed = u.sceneInfo.z > -0.5;
+    float3 nearer = unproject(uv, reversed ? 0.5 : 0.25, u);
+    float3 farther = unproject(uv, reversed ? 0.25 : 0.5, u);
+    return normalize(farther - nearer);
+}
+
 // uv and device depth of a camera-relative position; z < 0 when it is behind the camera.
 static inline float3 project(float3 rel, float4x4 m) {
     float4 clip = m * float4(rel, 1.0);
@@ -562,7 +573,7 @@ fragment half4 m2m_clouds(float4 position [[position]],
         return half4(0.0h);
     }
     float2 uv = (float2(px) + 0.5) / fullSize;
-    float3 view = normalize(unproject(uv, 1.0, u));
+    float3 view = view_direction(uv, u);
     float frame = u.skyColor.w;
     float4 h = float4(0.0);
     bool reused = false;
@@ -1388,7 +1399,7 @@ static float3 sky_shafts(float2 pixel, float2 uv, depth2d<float> depth, sampler 
     if (quality <= 0 || sunScreen.z <= 0.0 || u.weather.w > 0.5 || !overworld(u)) {
         return float3(0.0);
     }
-    float facing = saturate(dot(normalize(unproject(uv, 1.0, u)), body));
+    float facing = saturate(dot(view_direction(uv, u), body));
     if (facing <= 0.0) {
         return float3(0.0);
     }
