@@ -56,7 +56,7 @@ void m2m_blit_texture_to_texture(int64_t ctx, int64_t src, int64_t dst, int32_t 
 	}
 }
 
-static MTLRenderPassDescriptor *m2m_pending_pass(M2MContext *ctx) {
+MTLRenderPassDescriptor *m2m_pending_pass(M2MContext *ctx) {
 	if (!ctx.pendingPass) {
 		ctx.pendingPass = [MTLRenderPassDescriptor renderPassDescriptor];
 	}
@@ -133,15 +133,20 @@ void m2m_pass_open(int64_t handle, const char *label) {
 			return;
 		}
 
-		id<MTLTexture> sizing = pass.colorAttachments[0].texture ?: pass.depthAttachment.texture;
-		ctx.passWidth = sizing.width;
-		ctx.passHeight = sizing.height;
-
-		id<M2MRenderCommands> encoder = m2m_open_render_encoder(ctx, pass, label ? @(label) : nil);
-		ctx.renderEncoderAttachments = attachments;
-		// renderpearl's front faces are counter-clockwise in GL window space; flipping vertex Y mirrors that.
-		[encoder setFrontFacingWinding:MTLWindingClockwise];
+		m2m_open_pass_encoder(ctx, pass, label ? @(label) : nil);
 	}
+}
+
+id<M2MRenderCommands> m2m_open_pass_encoder(M2MContext *ctx, MTLRenderPassDescriptor *pass, NSString *label) {
+	id<MTLTexture> sizing = pass.colorAttachments[0].texture ?: pass.depthAttachment.texture;
+	ctx.passWidth = sizing.width;
+	ctx.passHeight = sizing.height;
+
+	id<M2MRenderCommands> encoder = m2m_open_render_encoder(ctx, pass, label);
+	ctx.renderEncoderAttachments = m2m_attachment_textures(pass);
+	// renderpearl's front faces are counter-clockwise in GL window space; flipping vertex Y mirrors that.
+	[encoder setFrontFacingWinding:MTLWindingClockwise];
+	return encoder;
 }
 
 void m2m_pass_close(int64_t handle) {

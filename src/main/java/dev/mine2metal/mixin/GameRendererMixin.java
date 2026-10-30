@@ -35,7 +35,7 @@ abstract class GameRendererMixin {
 
 	@WrapMethod(method = "renderLevel")
 	private void mine2metal$renderWorldScaled(Operation<Void> original) {
-		WorldPass.begin(this.mainRenderTarget, this.gameRenderState.levelRenderState.cameraRenderState);
+		WorldPass.begin(this.mainRenderTarget, this.gameRenderState.levelRenderState);
 		try {
 			original.call();
 			WorldPass.upscale();

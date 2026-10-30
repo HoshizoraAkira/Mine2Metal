@@ -346,7 +346,6 @@ BOOL m2m_encode_motion(M2MContext *ctx, id<MTLTexture> sourceDepth, id<MTLTextur
 	memcpy(&params, matrices, sizeof(params));
 	m2m_bind_bytes(ctx, 0, &params, sizeof(params), NO, YES);
 	[encoder drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
-	m2m_end_encoding(ctx);
 	return YES;
 }
 
@@ -420,6 +419,7 @@ int32_t m2m_temporal_upscale(int64_t handle, int32_t engine, int64_t color_handl
 		scaler.motionVectorScaleY = 1.0f;
 		scaler.depthReversed = NO;
 		scaler.reset = reset != 0 || rebuilt;
+		m2m_end_encoding_for_external(ctx);
 		if (ctx.metal4) {
 			[(id<MTL4FXTemporalScaler>)scaler encodeToCommandBuffer:m2m_command_buffer4(ctx)];
 		} else {

@@ -67,6 +67,7 @@ class MetalBuffer extends BaseGpuBuffer {
 	 */
 	void rename(long ctx) {
 		long old = this.handle;
+		this.encoder.dropTexelViews(old);
 		Long spare = this.spares.poll();
 		this.handle = spare != null ? spare : MetalNative.bufferCreate(ctx, this.size());
 		this.address = MetalNative.bufferContents(this.handle);
@@ -90,8 +91,10 @@ class MetalBuffer extends BaseGpuBuffer {
 	public void close() {
 		if (!this.closed) {
 			this.closed = true;
+			this.encoder.dropTexelViews(this.handle);
 			this.encoder.releaseAfterGpu(this.handle);
 			for (long spare : this.spares) {
+				this.encoder.dropTexelViews(spare);
 				this.encoder.releaseAfterGpu(spare);
 			}
 			this.spares.clear();

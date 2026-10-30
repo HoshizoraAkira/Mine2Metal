@@ -407,17 +407,17 @@ final class MetalNative {
 		}
 	}
 
-	static void renderBuffer(long ctx, int index, long buffer, long offset) {
+	static void renderBuffer(long ctx, int index, long buffer, long offset, boolean vertex, boolean fragment) {
 		try {
-			Functions.RENDER_BUFFER.invokeExact(ctx, index, buffer, offset);
+			Functions.RENDER_BUFFER.invokeExact(ctx, index, buffer, offset, vertex ? 1 : 0, fragment ? 1 : 0);
 		} catch (Throwable t) {
 			throw rethrow(t);
 		}
 	}
 
-	static void renderTexture(long ctx, int index, long texture, long sampler) {
+	static void renderTexture(long ctx, int index, long texture, long sampler, boolean vertex, boolean fragment) {
 		try {
-			Functions.RENDER_TEXTURE.invokeExact(ctx, index, texture, sampler);
+			Functions.RENDER_TEXTURE.invokeExact(ctx, index, texture, sampler, vertex ? 1 : 0, fragment ? 1 : 0);
 		} catch (Throwable t) {
 			throw rethrow(t);
 		}
@@ -756,6 +756,81 @@ final class MetalNative {
 		}
 	}
 
+	static long shaderVoxelBuffer(long ctx) {
+		try {
+			return (long) Functions.SHADER_VOXEL_BUFFER.invokeExact(ctx);
+		} catch (Throwable t) {
+			throw rethrow(t);
+		}
+	}
+
+	static void shaderVoxelsChanged(long ctx, int zMin, int zMax) {
+		try {
+			Functions.SHADER_VOXELS_CHANGED.invokeExact(ctx, zMin, zMax);
+		} catch (Throwable t) {
+			throw rethrow(t);
+		}
+	}
+
+	static boolean shaderGbufferAttach(long ctx, long color) {
+		try {
+			return (int) Functions.SHADER_GBUFFER_ATTACH.invokeExact(ctx, color) != 0;
+		} catch (Throwable t) {
+			throw rethrow(t);
+		}
+	}
+
+	static boolean shaderDeferred(long ctx, long color, long depth, int[] quality, float[] matrices, float[] environment, float[] lights,
+			int lightCount) {
+		try (Arena arena = Arena.ofConfined()) {
+			MemorySegment qualitySeg = arena.allocateFrom(JAVA_INT, quality);
+			MemorySegment matricesSeg = arena.allocateFrom(JAVA_FLOAT, matrices);
+			MemorySegment envSeg = arena.allocateFrom(JAVA_FLOAT, environment);
+			MemorySegment lightsSeg = lightCount > 0 ? arena.allocateFrom(JAVA_FLOAT, lights) : MemorySegment.NULL;
+			return (int) Functions.SHADER_DEFERRED.invokeExact(ctx, color, depth, qualitySeg, matricesSeg, envSeg, lightsSeg, lightCount) != 0;
+		} catch (Throwable t) {
+			throw rethrow(t);
+		}
+	}
+
+	static boolean shaderWaterBegin(long ctx, long color, long depth) {
+		try {
+			return (int) Functions.SHADER_WATER_BEGIN.invokeExact(ctx, color, depth) != 0;
+		} catch (Throwable t) {
+			throw rethrow(t);
+		}
+	}
+
+	static boolean shaderWaterEnd(long ctx, long color, long depth, int[] quality, float[] matrices, float[] environment) {
+		try (Arena arena = Arena.ofConfined()) {
+			MemorySegment qualitySeg = arena.allocateFrom(JAVA_INT, quality);
+			MemorySegment matricesSeg = arena.allocateFrom(JAVA_FLOAT, matrices);
+			MemorySegment envSeg = arena.allocateFrom(JAVA_FLOAT, environment);
+			return (int) Functions.SHADER_WATER_END.invokeExact(ctx, color, depth, qualitySeg, matricesSeg, envSeg) != 0;
+		} catch (Throwable t) {
+			throw rethrow(t);
+		}
+	}
+
+	static boolean shaderPost(long ctx, long color, long depth, int[] quality, float[] matrices, float[] environment) {
+		try (Arena arena = Arena.ofConfined()) {
+			MemorySegment qualitySeg = arena.allocateFrom(JAVA_INT, quality);
+			MemorySegment matricesSeg = arena.allocateFrom(JAVA_FLOAT, matrices);
+			MemorySegment envSeg = arena.allocateFrom(JAVA_FLOAT, environment);
+			return (int) Functions.SHADER_POST.invokeExact(ctx, color, depth, qualitySeg, matricesSeg, envSeg) != 0;
+		} catch (Throwable t) {
+			throw rethrow(t);
+		}
+	}
+
+	static void shaderRelease(long ctx) {
+		try {
+			Functions.SHADER_RELEASE.invokeExact(ctx);
+		} catch (Throwable t) {
+			throw rethrow(t);
+		}
+	}
+
 	private static RuntimeException rethrow(Throwable t) {
 		if (t instanceof RuntimeException runtime) {
 			return runtime;
@@ -870,8 +945,10 @@ final class MetalNative {
 
 		static final MethodHandle RENDER_PIPELINE = function("m2m_render_pipeline", null,
 				JAVA_LONG, JAVA_LONG, JAVA_LONG, JAVA_INT, JAVA_INT, JAVA_FLOAT, JAVA_FLOAT);
-		static final MethodHandle RENDER_BUFFER = function("m2m_render_buffer", null, JAVA_LONG, JAVA_INT, JAVA_LONG, JAVA_LONG);
-		static final MethodHandle RENDER_TEXTURE = function("m2m_render_texture", null, JAVA_LONG, JAVA_INT, JAVA_LONG, JAVA_LONG);
+		static final MethodHandle RENDER_BUFFER = function("m2m_render_buffer", null,
+				JAVA_LONG, JAVA_INT, JAVA_LONG, JAVA_LONG, JAVA_INT, JAVA_INT);
+		static final MethodHandle RENDER_TEXTURE = function("m2m_render_texture", null,
+				JAVA_LONG, JAVA_INT, JAVA_LONG, JAVA_LONG, JAVA_INT, JAVA_INT);
 		static final MethodHandle RENDER_BYTES = function("m2m_render_bytes", null, JAVA_LONG, JAVA_INT, JAVA_LONG, JAVA_LONG);
 		static final MethodHandle RENDER_VERTEX_BUFFER = function("m2m_render_vertex_buffer", null, JAVA_LONG, JAVA_INT, JAVA_LONG, JAVA_LONG);
 		static final MethodHandle RENDER_SCISSOR = function("m2m_render_scissor", null, JAVA_LONG, JAVA_INT, JAVA_INT, JAVA_INT, JAVA_INT);
@@ -921,6 +998,17 @@ final class MetalNative {
 		static final MethodHandle HDR_LAST_FRAME = function("m2m_hdr_last_frame", JAVA_LONG, JAVA_LONG);
 		static final MethodHandle LAYER_DETACH = function("m2m_layer_detach", null, JAVA_LONG);
 		static final MethodHandle PRESENT = function("m2m_present", JAVA_INT, JAVA_LONG, JAVA_LONG, JAVA_LONG);
+		static final MethodHandle SHADER_VOXEL_BUFFER = function("m2m_shader_voxel_buffer", JAVA_LONG, JAVA_LONG);
+		static final MethodHandle SHADER_VOXELS_CHANGED = function("m2m_shader_voxels_changed", null, JAVA_LONG, JAVA_INT, JAVA_INT);
+		static final MethodHandle SHADER_GBUFFER_ATTACH = function("m2m_shader_gbuffer_attach", JAVA_INT, JAVA_LONG, JAVA_LONG);
+		static final MethodHandle SHADER_DEFERRED = function("m2m_shader_deferred", JAVA_INT,
+				JAVA_LONG, JAVA_LONG, JAVA_LONG, ADDRESS, ADDRESS, ADDRESS, ADDRESS, JAVA_INT);
+		static final MethodHandle SHADER_WATER_BEGIN = function("m2m_shader_water_begin", JAVA_INT, JAVA_LONG, JAVA_LONG, JAVA_LONG);
+		static final MethodHandle SHADER_WATER_END = function("m2m_shader_water_end", JAVA_INT,
+				JAVA_LONG, JAVA_LONG, JAVA_LONG, ADDRESS, ADDRESS, ADDRESS);
+		static final MethodHandle SHADER_POST = function("m2m_shader_post", JAVA_INT,
+				JAVA_LONG, JAVA_LONG, JAVA_LONG, ADDRESS, ADDRESS, ADDRESS);
+		static final MethodHandle SHADER_RELEASE = function("m2m_shader_release", null, JAVA_LONG);
 
 		private Functions() {
 		}

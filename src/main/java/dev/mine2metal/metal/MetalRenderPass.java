@@ -15,6 +15,7 @@ import com.mojang.renderpearl.util.TextureViewAndSampler;
 import dev.mine2metal.Mine2Metal;
 import org.jspecify.annotations.Nullable;
 import org.lwjgl.PointerBuffer;
+import org.lwjgl.system.MemoryStack;
 import org.lwjgl.system.MemoryUtil;
 
 import java.nio.ByteBuffer;
@@ -30,6 +31,7 @@ final class MetalRenderPass implements RenderPassBackend {
 	/** Sizes of MTLDraw(Indexed)PrimitivesIndirectArguments, which match GL's and Vulkan's indirect layouts. */
 	private static final int INDEXED_INDIRECT_STRIDE = 20;
 	private static final int INDIRECT_STRIDE = 16;
+	private static final int MAX_VERTEX_BUFFERS = 8;
 
 	private static boolean warnedIndexedFan;
 
@@ -39,18 +41,76 @@ final class MetalRenderPass implements RenderPassBackend {
 	private final int stencilFormat;
 	private final RenderPass.RenderArea renderArea;
 	private final @Nullable Object[] uniforms = new Object[MetalRenderPipeline.MAX_UNIFORMS];
-	private long dirtyUniforms;
+	private long dirtyVertexUniforms;
+	private long dirtyFragmentUniforms;
 	private @Nullable MetalRenderPipeline pipeline;
 	private @Nullable MetalBuffer indexBuffer;
 	private int indexSize;
+	/** Whether the world shader's G-buffer is attached right now (see {@link #resume}). */
+	private boolean gbuffer;
+	/** The main world pass's color and depth, which the world shader works on; 0 for any other pass. */
+	final long worldColor;
+	final long worldDepth;
 
-	MetalRenderPass(long ctx, MetalCommandEncoder encoder, int depthFormat, int stencilFormat, RenderPass.RenderArea renderArea) {
+	// What is bound on the encoder, to bind again when the world shader reopens it (see resume).
+	private int scissorX;
+	private int scissorY;
+	private int scissorWidth;
+	private int scissorHeight;
+	private final long[] vertexBuffers = new long[MAX_VERTEX_BUFFERS];
+	private final long[] vertexOffsets = new long[MAX_VERTEX_BUFFERS];
+	private byte @Nullable [] pushConstants;
+
+	MetalRenderPass(long ctx, MetalCommandEncoder encoder, int depthFormat, int stencilFormat, RenderPass.RenderArea renderArea, long worldColor,
+			long worldDepth) {
 		this.ctx = ctx;
 		this.encoder = encoder;
 		this.depthFormat = depthFormat;
 		this.stencilFormat = stencilFormat;
 		this.renderArea = renderArea;
+		this.gbuffer = worldColor != 0L;
+		this.worldColor = worldColor;
+		this.worldDepth = worldDepth;
 		this.disableScissor();
+	}
+
+	boolean hasGbuffer() {
+		return this.gbuffer;
+	}
+
+	boolean isWorldPass() {
+		return this.worldColor != 0L;
+	}
+
+	/**
+	 * The world shader ended the encoder this pass drew into and opened a new one on the same color and depth, with or
+	 * without the G-buffer: everything this pass had bound goes onto the new encoder.
+	 */
+	void resume(boolean gbuffer) {
+		this.gbuffer = gbuffer;
+		MetalRenderPipeline current = this.pipeline;
+		if (current != null && current.isUsable()) {
+			long state = current.state(this.depthFormat, this.stencilFormat, gbuffer);
+			if (state != 0L) {
+				MetalNative.renderPipeline(this.ctx, state, current.depthState, current.cull, current.wireframe, current.depthBias, current.depthBiasSlope);
+			}
+		}
+		MetalNative.renderScissor(this.ctx, this.scissorX, this.scissorY, this.scissorWidth, this.scissorHeight);
+		for (int slot = 0; slot < MAX_VERTEX_BUFFERS; slot++) {
+			if (this.vertexBuffers[slot] != 0L) {
+				MetalNative.renderVertexBuffer(this.ctx, MetalRenderPipeline.VERTEX_BUFFER_BASE_SLOT + slot, this.vertexBuffers[slot],
+						this.vertexOffsets[slot]);
+			}
+		}
+		byte[] constants = this.pushConstants;
+		if (constants != null) {
+			try (MemoryStack stack = MemoryStack.stackPush()) {
+				ByteBuffer data = stack.bytes(constants);
+				MetalNative.renderBytes(this.ctx, MetalRenderPipeline.PUSH_CONSTANTS_SLOT, MemoryUtil.memAddress(data), data.remaining());
+			}
+		}
+		this.dirtyVertexUniforms = -1L;
+		this.dirtyFragmentUniforms = -1L;
 	}
 
 	@Override
@@ -63,53 +123,67 @@ final class MetalRenderPass implements RenderPassBackend {
 
 	@Override
 	public void setPipeline(BackendRenderPipeline backendPipeline) {
+		MetalRenderPipeline previous = this.pipeline;
 		MetalRenderPipeline next = (MetalRenderPipeline) backendPipeline;
 		this.pipeline = next;
 		if (!next.isUsable()) {
 			return;
 		}
-		long state = next.state(this.depthFormat, this.stencilFormat);
+		long state = next.state(this.depthFormat, this.stencilFormat, this.gbuffer);
 		if (state == 0L) {
 			return;
 		}
 		MetalNative.renderPipeline(this.ctx, state, next.depthState, next.cull, next.wireframe, next.depthBias, next.depthBiasSlope);
-		// The new pipeline may read a slot as a different kind of resource.
-		for (int i = 0; i < this.uniforms.length; i++) {
-			if (this.uniforms[i] != null) {
-				this.dirtyUniforms |= 1L << i;
-			}
-		}
+		// A buffer slice binds to the buffer table for uniform buffers and the texture table for texel buffers;
+		// other slots stay bound across pipeline switches on the same encoder.
+		long texelDirty = (previous != null ? previous.texelBufferMask : 0L) | next.texelBufferMask;
+		this.dirtyVertexUniforms |= texelDirty;
+		this.dirtyFragmentUniforms |= texelDirty;
 	}
 
 	@Override
 	public void setUniform(int index, Object value) {
+		long bit = 1L << index;
 		this.uniforms[index] = value;
-		this.dirtyUniforms |= 1L << index;
+		this.dirtyVertexUniforms |= bit;
+		this.dirtyFragmentUniforms |= bit;
 	}
 
 	@Override
 	public void pushConstants(ByteBuffer data) {
+		byte[] copy = this.pushConstants;
+		if (copy == null || copy.length != data.remaining()) {
+			copy = new byte[data.remaining()];
+			this.pushConstants = copy;
+		}
+		data.duplicate().get(copy);
 		MetalNative.renderBytes(this.ctx, MetalRenderPipeline.PUSH_CONSTANTS_SLOT, MemoryUtil.memAddress(data), data.remaining());
 	}
 
 	@Override
 	public void enableScissor(int x, int y, int width, int height) {
+		this.scissorX = x;
+		this.scissorY = y;
+		this.scissorWidth = width;
+		this.scissorHeight = height;
 		MetalNative.renderScissor(this.ctx, x, y, width, height);
 	}
 
 	@Override
 	public void disableScissor() {
-		MetalNative.renderScissor(this.ctx, this.renderArea.x(), this.renderArea.y(), this.renderArea.width(), this.renderArea.height());
+		this.enableScissor(this.renderArea.x(), this.renderArea.y(), this.renderArea.width(), this.renderArea.height());
 	}
 
 	@Override
 	public void setVertexBuffer(int slot, @Nullable GpuBufferSlice slice) {
 		// A null slice unbinds the slot, as in Mojang's GL backend (the cloud renderer does this when it has no mesh).
-		if (slice == null) {
-			MetalNative.renderVertexBuffer(this.ctx, MetalRenderPipeline.VERTEX_BUFFER_BASE_SLOT + slot, 0L, 0L);
-			return;
+		long buffer = slice != null ? ((MetalBuffer) slice.buffer()).use() : 0L;
+		long offset = slice != null ? slice.offset() : 0L;
+		if (slot < MAX_VERTEX_BUFFERS) {
+			this.vertexBuffers[slot] = buffer;
+			this.vertexOffsets[slot] = offset;
 		}
-		MetalNative.renderVertexBuffer(this.ctx, MetalRenderPipeline.VERTEX_BUFFER_BASE_SLOT + slot, ((MetalBuffer) slice.buffer()).use(), slice.offset());
+		MetalNative.renderVertexBuffer(this.ctx, MetalRenderPipeline.VERTEX_BUFFER_BASE_SLOT + slot, buffer, offset);
 	}
 
 	@Override
@@ -238,7 +312,7 @@ final class MetalRenderPass implements RenderPassBackend {
 			return;
 		}
 		MetalBuffer source = this.indexBuffer;
-		if (!source.isReadableOnCpu(MetalNative.contextCompleted(this.ctx))) {
+		if (!this.encoder.isBufferReadableOnCpu(source)) {
 			warnIndexedFan("from an index buffer the GPU is still writing");
 			return;
 		}
@@ -269,37 +343,40 @@ final class MetalRenderPass implements RenderPassBackend {
 	/** Binds what changed since the last draw; false when the current pipeline cannot draw. */
 	private boolean prepareDraw() {
 		MetalRenderPipeline current = this.pipeline;
-		if (current == null || !current.isUsable() || current.state(this.depthFormat, this.stencilFormat) == 0L) {
+		if (current == null || !current.isUsable() || current.state(this.depthFormat, this.stencilFormat, this.gbuffer) == 0L) {
 			return false;
 		}
 
-		long dirty = this.dirtyUniforms;
+		long dirtyVertex = this.dirtyVertexUniforms & current.vertexUniformMask;
+		long dirtyFragment = this.dirtyFragmentUniforms & current.fragmentUniformMask;
+		this.dirtyVertexUniforms &= ~dirtyVertex;
+		this.dirtyFragmentUniforms &= ~dirtyFragment;
+		long dirty = dirtyVertex | dirtyFragment;
 		while (dirty != 0L) {
 			int index = Long.numberOfTrailingZeros(dirty);
-			dirty &= dirty - 1;
+			long bit = 1L << index;
+			dirty &= ~bit;
 			Object value = this.uniforms[index];
 			if (value != null) {
-				this.bindUniform(current, index, value);
+				this.bindUniform(current, index, value, (dirtyVertex & bit) != 0L, (dirtyFragment & bit) != 0L);
 			}
 		}
-		this.dirtyUniforms = 0L;
 		return true;
 	}
 
-	private void bindUniform(MetalRenderPipeline current, int index, Object value) {
+	private void bindUniform(MetalRenderPipeline current, int index, Object value, boolean vertex, boolean fragment) {
 		if (value instanceof TextureViewAndSampler textureAndSampler) {
-			MetalNative.renderTexture(this.ctx, index, ((MetalTextureView) textureAndSampler.view()).handle, ((MetalSampler) textureAndSampler.sampler()).handle);
+			MetalNative.renderTexture(this.ctx, index, ((MetalTextureView) textureAndSampler.view()).handle,
+					((MetalSampler) textureAndSampler.sampler()).handle, vertex, fragment);
 		} else if (value instanceof GpuBufferSlice slice) {
 			MetalBuffer buffer = (MetalBuffer) slice.buffer();
 			if (current.uniformType(index) == UniformType.TEXEL_BUFFER) {
 				BindGroupLayout.UniformDescription description = current.uniforms.get(index);
 				GpuFormat format = description.gpuFormat();
-				long texture = MetalNative.bufferTextureCreate(buffer.use(), slice.offset(), slice.length(), MetalFormats.pixelFormat(format),
-						format.blockSize());
-				MetalNative.renderTexture(this.ctx, index, texture, 0L);
-				this.encoder.releaseAfterGpu(texture);
+				long texture = this.encoder.texelView(buffer.use(), slice.offset(), slice.length(), MetalFormats.pixelFormat(format), format.blockSize());
+				MetalNative.renderTexture(this.ctx, index, texture, 0L, vertex, fragment);
 			} else {
-				MetalNative.renderBuffer(this.ctx, index, buffer.use(), slice.offset());
+				MetalNative.renderBuffer(this.ctx, index, buffer.use(), slice.offset(), vertex, fragment);
 			}
 		} else {
 			throw new IllegalArgumentException("Unsupported uniform value " + value.getClass().getName() + " at slot " + index);

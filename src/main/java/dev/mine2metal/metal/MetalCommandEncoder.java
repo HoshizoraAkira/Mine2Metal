@@ -42,6 +42,8 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
 	private final ArrayDeque<Deferred> deferred = new ArrayDeque<>();
 	/** Index the commands being recorded will get when committed. */
 	private long recordingIndex = 1L;
+	/** Last value seen from {@link MetalNative#contextCompleted}, refreshed only when a buffer appears busy. */
+	private long cachedCompleted;
 	/**
 	 * The last submit of each frame still allowed in flight, oldest first. A frame may commit several times (frame
 	 * generation's own command buffers, the stage times), so the limit counts frames, not submits: counting submits
@@ -56,6 +58,10 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
 	/** The stage of the frame being recorded, for the stage times. */
 	private String stage = FIRST_STAGE;
 	private @Nullable HdrRead hdrRead;
+	/** The next render pass is the main world pass, which gets the world shader's G-buffer. */
+	private boolean gbufferArmed;
+	/** The render pass renderpearl has open, if any. */
+	private @Nullable MetalRenderPass openPass;
 	/** Names render encoders after their renderpearl pass, for Xcode captures and Instruments traces. */
 	private final boolean labels;
 	private long gpuErrorsSeen;
@@ -63,6 +69,13 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
 	private final List<String> gpuErrors = new ArrayList<>();
 	private boolean warnedPartialClear;
 	private final Map<MetalTexture, PendingClear> pendingClears = new IdentityHashMap<>();
+	/**
+	 * Texture views of buffer memory for texel-buffer uniforms, by buffer memory, offset, length and format, so a view
+	 * bound every frame (Sodium binds one per chunk region) is not created and released every frame. Least recently
+	 * bound first; views of memory that moves or goes away are dropped by {@link #dropTexelViews}.
+	 */
+	private final java.util.LinkedHashMap<TexelView, Long> texelViews = new java.util.LinkedHashMap<>(256, 0.75F, true);
+	private static final int MAX_TEXEL_VIEWS = 512;
 
 	MetalCommandEncoder(long ctx, boolean labels) {
 		this.ctx = ctx;
@@ -155,9 +168,26 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
 
 	private void runCompleted() {
 		long completed = MetalNative.contextCompleted(this.ctx);
+		this.cachedCompleted = completed;
 		while (!this.deferred.isEmpty() && this.deferred.peek().index() <= completed) {
 			this.deferred.poll().action().run();
 		}
+	}
+
+	boolean isBufferIdle(MetalBuffer buffer) {
+		if (buffer.isIdle(this.cachedCompleted)) {
+			return true;
+		}
+		this.cachedCompleted = MetalNative.contextCompleted(this.ctx);
+		return buffer.isIdle(this.cachedCompleted);
+	}
+
+	boolean isBufferReadableOnCpu(MetalBuffer buffer) {
+		if (buffer.isReadableOnCpu(this.cachedCompleted)) {
+			return true;
+		}
+		this.cachedCompleted = MetalNative.contextCompleted(this.ctx);
+		return buffer.isReadableOnCpu(this.cachedCompleted);
 	}
 
 	void close() {
@@ -213,16 +243,30 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
 			stencilFormat = format.hasStencilAspect() ? depthFormat : 0;
 		}
 
+		long worldColor = 0L;
+		long worldDepth = 0L;
+		if (this.gbufferArmed) {
+			this.gbufferArmed = false;
+			long color = colors.size() == 1 ? ((MetalTextureView) colors.getFirst().textureView()).handle : 0L;
+			if (color != 0L && depth != null && MetalNative.shaderGbufferAttach(this.ctx, color)) {
+				worldColor = color;
+				worldDepth = ((MetalTextureView) depth.textureView()).handle;
+			}
+		}
+
 		if (this.labels) {
 			MetalNative.passOpen(this.ctx, descriptor.label().get());
 		} else {
 			MetalNative.passOpen(this.ctx);
 		}
-		return new MetalRenderPass(this.ctx, this, depthFormat, stencilFormat, descriptor.renderArea());
+		MetalRenderPass pass = new MetalRenderPass(this.ctx, this, depthFormat, stencilFormat, descriptor.renderArea(), worldColor, worldDepth);
+		this.openPass = pass;
+		return pass;
 	}
 
 	@Override
 	public void submitRenderPass() {
+		this.openPass = null;
 		MetalNative.passClose(this.ctx);
 		if (this.timedPassLabel != null) {
 			this.recordingIndex = MetalNative.contextCommit(this.ctx, this.timedPassLabel) + 1;
@@ -318,7 +362,7 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
 		// Shared memory: a buffer no GPU work can still touch is written in place, which saves a blit encoder. A busy
 		// buffer whose contents are replaced entirely moves to fresh memory first, which is just as cheap.
 		boolean replacesAll = destination.offset() == 0L && data.remaining() == target.size();
-		boolean idle = target.isIdle(MetalNative.contextCompleted(this.ctx));
+		boolean idle = this.isBufferIdle(target);
 		if (!idle && replacesAll && target.canRename()) {
 			target.rename(this.ctx);
 			idle = true;
@@ -343,8 +387,7 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
 	public void copyToBuffer(GpuBufferSlice source, GpuBufferSlice target) {
 		MetalBuffer from = (MetalBuffer) source.buffer();
 		MetalBuffer to = (MetalBuffer) target.buffer();
-		long completed = MetalNative.contextCompleted(this.ctx);
-		if (from.isIdle(completed) && to.isIdle(completed)) {
+		if (this.isBufferIdle(from) && this.isBufferIdle(to)) {
 			MemoryUtil.memCopy(from.address + source.offset(), to.address + target.offset(), source.length());
 			if (this.stats != null) {
 				this.stats.addBufferCopy(to, source.length(), false);
@@ -402,6 +445,41 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
 		this.flushPendingClears();
 		MetalNative.blitTextureToTexture(this.ctx, ((MetalTexture) source).handle, ((MetalTexture) destination).handle, mipLevel, destX, destY, sourceX,
 				sourceY, width, height);
+	}
+
+	/** The texture view of the buffer memory for a texel-buffer uniform, cached (see {@link #texelViews}). */
+	long texelView(long buffer, long offset, long length, int pixelFormat, int bytesPerPixel) {
+		TexelView key = new TexelView(buffer, offset, length, pixelFormat);
+		Long cached = this.texelViews.get(key);
+		if (cached != null) {
+			return cached;
+		}
+		long texture = MetalNative.bufferTextureCreate(buffer, offset, length, pixelFormat, bytesPerPixel);
+		this.texelViews.put(key, texture);
+		if (this.texelViews.size() > MAX_TEXEL_VIEWS) {
+			java.util.Iterator<Long> oldest = this.texelViews.values().iterator();
+			this.releaseAfterGpu(oldest.next());
+			oldest.remove();
+		}
+		return texture;
+	}
+
+	/** The buffer memory at handle is being replaced or released: its views go (once the GPU is done with them). */
+	void dropTexelViews(long handle) {
+		if (this.texelViews.isEmpty()) {
+			return;
+		}
+		java.util.Iterator<Map.Entry<TexelView, Long>> entries = this.texelViews.entrySet().iterator();
+		while (entries.hasNext()) {
+			Map.Entry<TexelView, Long> entry = entries.next();
+			if (entry.getKey().buffer() == handle) {
+				this.releaseAfterGpu(entry.getValue());
+				entries.remove();
+			}
+		}
+	}
+
+	private record TexelView(long buffer, long offset, long length, int pixelFormat) {
 	}
 
 	@Override
@@ -488,6 +566,66 @@ final class MetalCommandEncoder implements CommandEncoderBackend {
 	boolean upscaleFsr1(MetalTexture input, MetalTexture output, float sharpness) {
 		this.flushPendingClears();
 		return MetalNative.fsr1Upscale(this.ctx, input.handle, output.handle, sharpness);
+	}
+
+	long shaderVoxelBuffer() {
+		return MetalNative.shaderVoxelBuffer(this.ctx);
+	}
+
+	void shaderVoxelsChanged(int zMin, int zMax) {
+		MetalNative.shaderVoxelsChanged(this.ctx, zMin, zMax);
+	}
+
+	void armWorldGbuffer(boolean armed) {
+		this.gbufferArmed = armed;
+	}
+
+	/** Lights the opaque terrain of the open main world pass from its G-buffer; false if that pass has none. */
+	boolean deferredWorldShader(int[] quality, float[] matrices, float[] environment, float[] lights, int lightCount) {
+		MetalRenderPass pass = this.openPass;
+		if (pass == null || !pass.hasGbuffer()) {
+			return false;
+		}
+		boolean done = MetalNative.shaderDeferred(this.ctx, pass.worldColor, pass.worldDepth, quality, matrices, environment, lights, lightCount);
+		if (done) {
+			pass.resume(false);
+		}
+		return done;
+	}
+
+	/** Before the translucent terrain of the main world pass: keeps the scene for the water and attaches the G-buffer. */
+	boolean beginWater() {
+		MetalRenderPass pass = this.openPass;
+		if (pass == null || !pass.isWorldPass() || pass.hasGbuffer()) {
+			return false;
+		}
+		boolean done = MetalNative.shaderWaterBegin(this.ctx, pass.worldColor, pass.worldDepth);
+		if (done) {
+			pass.resume(true);
+		}
+		return done;
+	}
+
+	/** After the translucent terrain: redraws the water from the G-buffer; false if {@link #beginWater} did not run. */
+	boolean endWater(int[] quality, float[] matrices, float[] environment) {
+		MetalRenderPass pass = this.openPass;
+		if (pass == null || !pass.isWorldPass() || !pass.hasGbuffer()) {
+			return false;
+		}
+		boolean done = MetalNative.shaderWaterEnd(this.ctx, pass.worldColor, pass.worldDepth, quality, matrices, environment);
+		if (done) {
+			pass.resume(false);
+		}
+		return done;
+	}
+
+	boolean postWorldShader(MetalTexture color, MetalTexture depth, int[] quality, float[] matrices, float[] environment) {
+		this.flushPendingClears();
+		return MetalNative.shaderPost(this.ctx, color.handle, depth.handle, quality, matrices, environment);
+	}
+
+	void releaseWorldShader() {
+		MetalNative.shaderRelease(this.ctx);
 	}
 
 	/** Schedules the frame's present; it happens when the frame is committed in {@link #submit}. */

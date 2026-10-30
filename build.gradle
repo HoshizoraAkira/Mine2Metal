@@ -66,7 +66,7 @@ tasks.register('buildFsrShaders', Exec) {
 // The native side is a single dylib built with the system clang and shipped inside the jar: the Objective-C backend,
 // the FidelityFX backend and AMD's FidelityFX host code (see scripts/build-native.sh).
 tasks.register('buildNative', Exec) {
-	def sources = fileTree('src/main/native') { include '**/*.m', '**/*.mm', '**/*.h' }
+	def sources = fileTree('src/main/native') { include '**/*.m', '**/*.mm', '**/*.h', '**/*.metal' }
 	def output = layout.buildDirectory.file('native/libmine2metal.dylib')
 	def shaders = layout.buildDirectory.file('fsr-shaders/fsr_shaders.c')
 	def minVersion = project.macos_min_version

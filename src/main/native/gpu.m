@@ -202,17 +202,14 @@ static const MTLStages M2M_COPY_STAGES = MTLStageBlit | MTLStageDispatch;
 void m2m_end_encoding(M2MContext *ctx) {
 	if (ctx.metal4) {
 		if (ctx.computeEncoder4) {
-			m2m_barrier_at_end(ctx.computeEncoder4, MTLStageDispatch);
 			[ctx.computeEncoder4 endEncoding];
 			ctx.computeEncoder4 = nil;
 		}
 		if (ctx.transferEncoder4) {
-			m2m_barrier_at_end(ctx.transferEncoder4, M2M_COPY_STAGES);
 			[ctx.transferEncoder4 endEncoding];
 			ctx.transferEncoder4 = nil;
 		}
 		if (ctx.renderEncoder4) {
-			m2m_barrier_at_end(ctx.renderEncoder4, M2M_RENDER_STAGES);
 			[ctx.renderEncoder4 endEncoding];
 			ctx.renderEncoder4 = nil;
 			ctx.renderEncoderReusable = NO;
@@ -234,6 +231,21 @@ void m2m_end_encoding(M2MContext *ctx) {
 		ctx.renderEncoderReusable = NO;
 		ctx.renderEncoderAttachments = nil;
 	}
+}
+
+void m2m_end_encoding_for_external(M2MContext *ctx) {
+	if (ctx.metal4) {
+		if (ctx.computeEncoder4) {
+			m2m_barrier_at_end(ctx.computeEncoder4, MTLStageDispatch);
+		}
+		if (ctx.transferEncoder4) {
+			m2m_barrier_at_end(ctx.transferEncoder4, M2M_COPY_STAGES);
+		}
+		if (ctx.renderEncoder4) {
+			m2m_barrier_at_end(ctx.renderEncoder4, M2M_RENDER_STAGES);
+		}
+	}
+	m2m_end_encoding(ctx);
 }
 
 void m2m_compute_begin(M2MContext *ctx, id<MTLComputePipelineState> pipeline) {

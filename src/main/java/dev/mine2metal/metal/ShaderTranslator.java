@@ -23,7 +23,7 @@ final class ShaderTranslator {
 	private ShaderTranslator() {
 	}
 
-	record Translated(String source, String entryPoint) {
+	record Translated(String source, String entryPoint, long usedUniformMask) {
 	}
 
 	static Translated translate(SpvModule module, String entryPoint, int uniformCount) {
@@ -61,7 +61,13 @@ final class ShaderTranslator {
 
 				check(context, spvc_compiler_compile(compiler, out), "compile");
 				String source = MemoryUtil.memUTF8(out.get(0));
-				return new Translated(source, spvc_compiler_get_cleansed_entry_point_name(compiler, entryPoint, model));
+				long usedUniformMask = 0L;
+				for (int i = 0; i < uniformCount; i++) {
+					if (spvc_compiler_msl_is_resource_used(compiler, model, 0, i)) {
+						usedUniformMask |= 1L << i;
+					}
+				}
+				return new Translated(source, spvc_compiler_get_cleansed_entry_point_name(compiler, entryPoint, model), usedUniformMask);
 			} finally {
 				spvc_context_destroy(context);
 			}

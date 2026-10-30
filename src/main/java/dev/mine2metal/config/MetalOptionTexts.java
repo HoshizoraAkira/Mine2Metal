@@ -119,4 +119,39 @@ final class MetalOptionTexts {
 	static Component percent(int value) {
 		return Component.translatable("mine2metal.options.render_scale.value", value);
 	}
+
+	static Component shaderPresetName(MetalSettings.ShaderPreset value) {
+		return Component.translatable("mine2metal.options.shader_preset." + value.name().toLowerCase(Locale.ROOT));
+	}
+
+	static Component shadowQualityName(MetalSettings.ShadowQuality value) {
+		return Component.translatable("mine2metal.options.shader_shadows." + value.name().toLowerCase(Locale.ROOT));
+	}
+
+	static Component aoQualityName(MetalSettings.AoQuality value) {
+		return Component.translatable("mine2metal.options.shader_ao." + value.name().toLowerCase(Locale.ROOT));
+	}
+
+	static Component reflectionQualityName(MetalSettings.ReflectionQuality value) {
+		return Component.translatable("mine2metal.options.shader_reflections." + value.name().toLowerCase(Locale.ROOT));
+	}
+
+	static Component giQualityName(MetalSettings.GiQuality value) {
+		return Component.translatable("mine2metal.options.shader_gi." + value.name().toLowerCase(Locale.ROOT));
+	}
+
+	static Component volumetricQualityName(MetalSettings.VolumetricQuality value) {
+		return Component.translatable("mine2metal.options.shader_volumetrics." + value.name().toLowerCase(Locale.ROOT));
+	}
+
+	static Component bloomQualityName(MetalSettings.BloomQuality value) {
+		return Component.translatable("mine2metal.options.shader_bloom." + value.name().toLowerCase(Locale.ROOT));
+	}
+
+	static Component shaderTooltip(String key) {
+		if (!MetalRenderer.isActive()) {
+			return metalInactive();
+		}
+		return Component.translatable(key);
+	}
 }

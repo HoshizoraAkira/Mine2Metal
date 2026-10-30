@@ -33,6 +33,7 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.resources.Identifier;
 import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
+import net.minecraft.world.level.levelgen.Heightmap;
 import net.minecraft.world.phys.Vec3;
 import org.slf4j.LoggerFactory;
 
@@ -158,6 +159,10 @@ public class MetalWorldGameTest implements FabricClientGameTest {
 			}
 			if (Boolean.getBoolean("mine2metal.test.hdrOnly")) {
 				checkHdr(context, singleplayer, above);
+				return;
+			}
+			if (Boolean.getBoolean("mine2metal.test.shadersOnly")) {
+				checkShaders(context, singleplayer, above);
 				return;
 			}
 			if (backend.equals("Metal")) {
@@ -950,6 +955,197 @@ public class MetalWorldGameTest implements FabricClientGameTest {
 		}
 		context.getInput().releaseKey(options -> options.keyUp);
 		LOGGER.info("Pacing segment end (vsync {})", vsync);
+	}
+
+	/**
+	 * The built-in shaders at a few times of day, from the ground and from above, with their frame rate against shaders
+	 * off. The terrain must be lit from the G-buffer (Sodium's patched shader) rather than left as vanilla drew it.
+	 */
+	private static void checkShaders(ClientGameTestContext context, TestSingleplayerContext singleplayer, Vec3 above) {
+		context.getInput().resizeWindow(1600, 900);
+		context.runOnClient(client -> client.options.renderDistance().set(12));
+		singleplayer.getServer().runCommand("time set noon");
+		singleplayer.getServer().runCommand("weather clear");
+		LOGGER.info("Average FPS from above, shaders off: {}", averageFps(context));
+
+		for (MetalSettings.ShaderPreset preset : new MetalSettings.ShaderPreset[] {MetalSettings.ShaderPreset.HIGH, MetalSettings.ShaderPreset.ULTRA}) {
+			String name = preset.name().toLowerCase(Locale.ROOT);
+			context.runOnClient(client -> MetalSettings.get().applyShaderPreset(preset));
+			singleplayer.getServer().runCommand(String.format(Locale.ROOT, "tp @a %.3f %.3f %.3f", above.x, above.y, above.z));
+			keepFlying(context);
+			context.getInput().lookAt(0.0F, 50.0F);
+			context.waitTicks(40);
+			check(context.computeOnClient(client -> WorldPass.lastFrameShaderLit()), "The " + name + " shaders should light the terrain from the G-buffer");
+			context.takeScreenshot("mine2metal-shaders-" + name + "-above");
+			LOGGER.info("Average FPS from above, shaders {}: {}", name, averageFps(context));
+
+			// Standing a little above the ground, looking along it: shadows, foliage and the sky together.
+			int ground = context.computeOnClient(client -> client.level.getHeight(Heightmap.Types.MOTION_BLOCKING, (int) Math.floor(above.x),
+					(int) Math.floor(above.z)));
+			singleplayer.getServer().runCommand(String.format(Locale.ROOT, "tp @a %.3f %d %.3f", above.x, ground + 3, above.z));
+			keepFlying(context);
+			// A known shadow caster in front of the camera: a stone roof on a pillar, and a free-standing pillar.
+			int bx = (int) Math.floor(above.x);
+			int bz = (int) Math.floor(above.z);
+			singleplayer.getServer().runCommand(String.format(Locale.ROOT, "fill %d %d %d %d %d %d stone", bx - 3, ground + 5, bz + 6, bx + 1, ground + 5, bz + 10));
+			singleplayer.getServer().runCommand(String.format(Locale.ROOT, "fill %d %d %d %d %d %d stone", bx + 1, ground, bz + 10, bx + 1, ground + 4, bz + 10));
+			singleplayer.getServer().runCommand(String.format(Locale.ROOT, "fill %d %d %d %d %d %d oak_log", bx + 4, ground, bz + 8, bx + 4, ground + 6, bz + 8));
+			// A pool three blocks deep with a stone block in it, for the water.
+			singleplayer.getServer().runCommand(String.format(Locale.ROOT, "fill %d %d %d %d %d %d air", bx - 3, ground, bz + 2, bx + 3, ground + 1, bz + 5));
+			singleplayer.getServer().runCommand(String.format(Locale.ROOT, "fill %d %d %d %d %d %d water", bx - 3, ground - 3, bz + 2, bx + 3, ground - 1, bz + 5));
+			singleplayer.getServer().runCommand(String.format(Locale.ROOT, "setblock %d %d %d stone", bx + 1, ground - 3, bz + 3));
+			// Entities and a block entity next to the pool, standing still.
+			singleplayer.getServer().runCommand(String.format(Locale.ROOT, "summon cow %d %d %d {NoAI:1b,Rotation:[150f,0f]}", bx - 2, ground, bz + 8));
+			singleplayer.getServer().runCommand(String.format(Locale.ROOT, "summon villager %d %d %d {NoAI:1b,Rotation:[180f,0f]}", bx, ground, bz + 9));
+			singleplayer.getServer().runCommand(String.format(Locale.ROOT, "summon creeper %d %d %d {NoAI:1b,Rotation:[200f,0f]}", bx + 2, ground, bz + 8));
+			singleplayer.getServer().runCommand(String.format(Locale.ROOT, "setblock %d %d %d chest", bx + 3, ground, bz + 7));
+			for (String item : new String[] {"diamond_sword", "grass_block", "oak_log"}) {
+				singleplayer.getServer().runCommand(String.format(Locale.ROOT,
+						"summon item %d %d %d {Item:{id:\"minecraft:%s\",count:1},PickupDelay:32767,Age:-32768}", bx - 1, ground, bz + 6, item));
+			}
+			// A lake eight blocks deep further on, to look around from under water.
+			singleplayer.getServer().runCommand(String.format(Locale.ROOT, "fill %d %d %d %d %d %d air", bx - 8, ground, bz + 12, bx + 8, ground + 3, bz + 28));
+			singleplayer.getServer().runCommand(String.format(Locale.ROOT, "fill %d %d %d %d %d %d water", bx - 8, ground - 8, bz + 12, bx + 8, ground - 1, bz + 28));
+			singleplayer.getServer().runCommand(String.format(Locale.ROOT, "fill %d %d %d %d %d %d stone", bx - 1, ground - 8, bz + 20, bx + 1, ground - 5, bz + 22));
+			context.getInput().lookAt(0.0F, 25.0F);
+			context.waitTicks(40);
+			context.takeScreenshot("mine2metal-shaders-" + name + "-noon");
+			context.getInput().lookAt(0.0F, 12.0F);
+			context.waitTicks(10);
+			singleplayer.getServer().runCommand(String.format(Locale.ROOT,
+					"particle minecraft:block{block_state:\"minecraft:redstone_block\"} %d %d %d 0.6 0.6 0.6 0 300 force", bx + 1, ground + 1, bz + 6));
+			context.waitTicks(3);
+			context.takeScreenshot("mine2metal-shaders-" + name + "-entities");
+			if (preset == MetalSettings.ShaderPreset.HIGH) {
+				checkShadersWithOtherFeatures(context);
+				// Savanna never rains: plains around the camera (within the command's 32768 block limit), then rain until it
+				// is at full strength.
+				singleplayer.getServer().runCommand(String.format(Locale.ROOT, "fillbiome %d %d %d %d %d %d minecraft:plains",
+						bx - 20, ground - 4, bz - 8, bx + 20, ground + 12, bz + 32));
+				singleplayer.getServer().runCommand("weather rain");
+				context.waitTicks(240);
+				context.getInput().lookAt(0.0F, 30.0F);
+				context.waitTicks(10);
+				context.takeScreenshot("mine2metal-shaders-rain");
+				context.getInput().lookAt(0.0F, 45.0F);
+				context.waitTicks(10);
+				context.takeScreenshot("mine2metal-shaders-rain-water");
+				singleplayer.getServer().runCommand("weather clear");
+				context.waitTicks(240);
+				context.getInput().lookAt(0.0F, 12.0F);
+			}
+			context.getInput().lookAt(0.0F, 40.0F);
+			context.waitTicks(20);
+			context.takeScreenshot("mine2metal-shaders-" + name + "-water");
+			context.getInput().lookAt(0.0F, 25.0F);
+			if (Boolean.getBoolean("mine2metal.test.shaderDebugViews")) {
+				for (int view = 1; view <= 4; view++) {
+					System.setProperty("mine2metal.shaderDebug", Integer.toString(view));
+					context.waitTicks(10);
+					context.takeScreenshot("mine2metal-shaders-" + name + "-debug" + view);
+				}
+				System.clearProperty("mine2metal.shaderDebug");
+			}
+			context.getInput().lookAt(90.0F, 4.0F);
+			singleplayer.getServer().runCommand("time set 12600");
+			context.waitTicks(40);
+			context.takeScreenshot("mine2metal-shaders-" + name + "-sunset");
+			context.getInput().lookAt(30.0F, 30.0F);
+			context.waitTicks(20);
+			context.takeScreenshot("mine2metal-shaders-" + name + "-water-sunset");
+			context.getInput().lookAt(90.0F, 4.0F);
+			singleplayer.getServer().runCommand("time set 18000");
+			context.waitTicks(40);
+			context.takeScreenshot("mine2metal-shaders-" + name + "-night");
+
+			singleplayer.getServer().runCommand("time set noon");
+			singleplayer.getServer().runCommand(String.format(Locale.ROOT, "tp @a %.3f %d %.3f", above.x, ground - 5, above.z + 16.0));
+			keepFlying(context);
+			context.getInput().lookAt(0.0F, 10.0F);
+			context.waitTicks(40);
+			context.takeScreenshot("mine2metal-shaders-" + name + "-underwater");
+			context.getInput().lookAt(0.0F, -60.0F);
+			context.waitTicks(20);
+			context.takeScreenshot("mine2metal-shaders-" + name + "-underwater-up");
+			singleplayer.getServer().runCommand("time set 12600");
+			context.getInput().lookAt(90.0F, -20.0F);
+			context.waitTicks(30);
+			context.takeScreenshot("mine2metal-shaders-" + name + "-underwater-sunset");
+			singleplayer.getServer().runCommand("time set noon");
+		}
+		checkShadedDimensions(context, singleplayer);
+		context.runOnClient(client -> MetalSettings.get().applyShaderPreset(MetalSettings.ShaderPreset.OFF));
+	}
+
+	/**
+	 * The shaders together with the rest of the mod: upscaling (the world, and so the G-buffer, at render scale; temporal
+	 * scaling jitters the projection), frame generation and EDR output. Each must still light the world from the G-buffer.
+	 */
+	private static void checkShadersWithOtherFeatures(ClientGameTestContext context) {
+		record Combination(String name, MetalSettings.Upscaling upscaling, MetalSettings.FrameGeneration frameGeneration, boolean hdr) {
+		}
+		Combination[] combinations = {
+				new Combination("temporal", MetalSettings.Upscaling.TEMPORAL, MetalSettings.FrameGeneration.OFF, false),
+				new Combination("spatial", MetalSettings.Upscaling.SPATIAL, MetalSettings.FrameGeneration.OFF, false),
+				new Combination("fsr3", MetalSettings.Upscaling.FSR3, MetalSettings.FrameGeneration.OFF, false),
+				new Combination("framegen", MetalSettings.Upscaling.OFF, MetalSettings.FrameGeneration.METALFX, false),
+				new Combination("hdr", MetalSettings.Upscaling.OFF, MetalSettings.FrameGeneration.OFF, true),
+		};
+		for (Combination combination : combinations) {
+			context.runOnClient(client -> {
+				MetalSettings settings = MetalSettings.get();
+				settings.upscaling = combination.upscaling();
+				settings.renderScale = 67;
+				settings.frameGeneration = combination.frameGeneration();
+				settings.hdr = combination.hdr();
+			});
+			context.waitTicks(40);
+			check(context.computeOnClient(client -> WorldPass.lastFrameShaderLit()),
+					"The shaders should light the world from the G-buffer with " + combination.name());
+			context.takeScreenshot("mine2metal-shaders-with-" + combination.name());
+			if (combination.upscaling() == MetalSettings.Upscaling.TEMPORAL) {
+				LOGGER.info("Average FPS on the ground, shaders high, temporal upscaling at 67%: {}", averageFps(context));
+			}
+		}
+		context.runOnClient(client -> {
+			MetalSettings settings = MetalSettings.get();
+			settings.upscaling = MetalSettings.Upscaling.OFF;
+			settings.frameGeneration = MetalSettings.FrameGeneration.OFF;
+			settings.hdr = false;
+		});
+		LOGGER.info("Average FPS on the ground, shaders high, no upscaling: {}", averageFps(context));
+	}
+
+	/** The Nether (lava, glowstone and their light, in its fog) and the End (its island and sky), with the High shaders. */
+	private static void checkShadedDimensions(ClientGameTestContext context, TestSingleplayerContext singleplayer) {
+		context.runOnClient(client -> MetalSettings.get().applyShaderPreset(MetalSettings.ShaderPreset.HIGH));
+		// Teleported first: commands only reach loaded chunks, and waitForChunksRender does not settle right after a
+		// change of dimension.
+		String nether = "execute in minecraft:the_nether run ";
+		singleplayer.getServer().runCommand(nether + "tp @a 0 62 -6 0 15");
+		context.waitTicks(100);
+		keepFlying(context);
+		singleplayer.getServer().runCommand(nether + "fill -9 59 -9 9 74 9 netherrack");
+		singleplayer.getServer().runCommand(nether + "fill -8 61 -8 8 73 8 air");
+		singleplayer.getServer().runCommand(nether + "fill 1 60 1 5 60 5 lava");
+		singleplayer.getServer().runCommand(nether + "setblock -4 64 4 glowstone");
+		singleplayer.getServer().runCommand(nether + "fill -2 61 6 -2 66 6 nether_bricks");
+		singleplayer.getServer().runCommand(nether + "tp @a 0 62 -6 0 15");
+		context.waitTicks(80);
+		check(context.computeOnClient(client -> WorldPass.lastFrameShaderLit()), "The shaders should light the Nether from the G-buffer");
+		context.takeScreenshot("mine2metal-shaders-nether");
+
+		singleplayer.getServer().runCommand("execute in minecraft:the_end run tp @a 0 80 40 180 20");
+		context.waitTicks(140);
+		keepFlying(context);
+		context.takeScreenshot("mine2metal-shaders-end");
+	}
+
+	private static void keepFlying(ClientGameTestContext context) {
+		context.runOnClient(client -> {
+			client.player.getAbilities().flying = true;
+			client.player.onUpdateAbilities();
+		});
 	}
 
 	/** Uncaps the frame rate and averages Minecraft's per-second FPS counter over a few seconds. */

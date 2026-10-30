@@ -29,6 +29,11 @@ int64_t m2m_texture_create(int64_t ctx, int32_t pixel_format, int32_t width, int
 		descriptor.usage = MTLTextureUsageShaderRead;
 		if (flags & M2M_TEXTURE_RENDER_TARGET) {
 			descriptor.usage |= MTLTextureUsageRenderTarget;
+			// Upscalers (MetalFX and FSR) write the main color target from compute shaders; giving 2D color targets
+			// ShaderWrite avoids a full-screen staging texture and copy on every upscaled frame.
+			if (pixel_format < (int32_t)MTLPixelFormatDepth16Unorm && !(flags & M2M_TEXTURE_CUBE) && layers <= 1) {
+				descriptor.usage |= MTLTextureUsageShaderWrite;
+			}
 		}
 
 		if ((flags & M2M_TEXTURE_CUBE) && layers == 6) {

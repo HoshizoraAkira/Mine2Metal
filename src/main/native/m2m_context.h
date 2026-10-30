@@ -191,6 +191,8 @@ static const NSUInteger M2M_PRESENT_SLOTS = 3;
 @property(nonatomic, strong) id spatialUpscaler;
 // FSR 1 in place of the spatial scaler (fsr_upscale.mm).
 @property(nonatomic, strong) id fsrSpatialUpscaler;
+// Native Metal world shader state (shaders.m).
+@property(nonatomic, strong) id worldShader;
 
 // Committed command buffers not yet known to be finished, oldest first.
 @property(nonatomic, strong) NSMutableArray<id<MTLCommandBuffer>> *inFlight;
@@ -233,11 +235,18 @@ static inline M2MContext *m2m_ctx(int64_t handle) {
 id<MTLCommandBuffer> m2m_command_buffer(M2MContext *ctx);
 id<MTL4CommandBuffer> m2m_command_buffer4(M2MContext *ctx);
 void m2m_end_encoding(M2MContext *ctx);
+// Ends the open encoder with a producer barrier for an external encoder (MetalFX) that does not emit its own consumer barrier.
+void m2m_end_encoding_for_external(M2MContext *ctx);
 // An encoder for copies, continuing the open one if it is one.
 id<M2MCopier> m2m_copier(M2MContext *ctx);
 // Ends what is open and starts a render encoder for pass, which becomes ctx's open render encoder.
 id<M2MRenderCommands> m2m_open_render_encoder(M2MContext *ctx, MTLRenderPassDescriptor *pass, NSString *label);
 id<M2MRenderCommands> m2m_render_encoder(M2MContext *ctx);
+// The pass renderpearl is about to open (commands.m), for attachments the backend adds to it.
+MTLRenderPassDescriptor *m2m_pending_pass(M2MContext *ctx);
+// Opens a render encoder for pass the way m2m_pass_open does, so passes renderpearl opens next on the same
+// attachments continue in it.
+id<M2MRenderCommands> m2m_open_pass_encoder(M2MContext *ctx, MTLRenderPassDescriptor *pass, NSString *label);
 // Compute work (FidelityFX, fsr.m): opens a compute encoder (or continues the open one) with pipeline; dispatches
 // in it run in order, each seeing what the previous one wrote.
 void m2m_compute_begin(M2MContext *ctx, id<MTLComputePipelineState> pipeline);

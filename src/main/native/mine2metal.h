@@ -127,8 +127,10 @@ M2M_EXPORT int64_t m2m_depth_state_create(int64_t ctx, int32_t compare, int32_t 
 
 M2M_EXPORT void m2m_render_pipeline(int64_t ctx, int64_t pipeline, int64_t depth_state, int32_t cull, int32_t wireframe,
                                     float depth_bias, float depth_bias_slope);
-M2M_EXPORT void m2m_render_buffer(int64_t ctx, int32_t index, int64_t buffer, int64_t offset);
-M2M_EXPORT void m2m_render_texture(int64_t ctx, int32_t index, int64_t texture, int64_t sampler);
+M2M_EXPORT void m2m_render_buffer(int64_t ctx, int32_t index, int64_t buffer, int64_t offset, int32_t vertex,
+                                  int32_t fragment);
+M2M_EXPORT void m2m_render_texture(int64_t ctx, int32_t index, int64_t texture, int64_t sampler, int32_t vertex,
+                                   int32_t fragment);
 M2M_EXPORT void m2m_render_bytes(int64_t ctx, int32_t index, int64_t data_address, int64_t length);
 M2M_EXPORT void m2m_render_vertex_buffer(int64_t ctx, int32_t index, int64_t buffer, int64_t offset);
 // In framebuffer rows from the start of memory, which with flipped vertex Y is GL's bottom-left origin.
@@ -266,5 +268,35 @@ M2M_EXPORT void m2m_layer_detach(int64_t ctx);
 // Hands the finished frame to the present thread: 1 when published, 2 when skipped (with vsync off while the
 // previous frame's copy is still in flight, or when the present thread stopped taking frames).
 M2M_EXPORT int32_t m2m_present(int64_t ctx, int64_t layer, int64_t texture);
+
+// World shaders (shaders.m, world_shaders.metal). quality: shadows, AO, reflections, GI, volumetrics, bloom, lighting
+// scale (%); matrices as m2m_metalfx_temporal_upscale takes them, with this frame's view-projection at 36..51;
+// environment: 36 floats (see ShaderUniforms); lights: 8 floats each (camera-relative position, radius, color, power).
+// voxel_buffer: the 128^3 voxel grid around the camera, written by the CPU (one byte per block, toroidally addressed).
+M2M_EXPORT int64_t m2m_shader_voxel_buffer(int64_t ctx);
+// The CPU changed the voxel grid's z slices z_min .. z_max (grid coordinates, 0..127) since the last call: the GPU
+// copies are refreshed from those slices only. Without any call since a copy was last refreshed, it is refreshed whole.
+M2M_EXPORT void m2m_shader_voxels_changed(int64_t ctx, int32_t z_min, int32_t z_max);
+// Adds the G-buffer (albedo and material; normal, block and sky light) as color attachments 1 and 2 of the pass about
+// to open, sized like color and cleared. 1 if added.
+M2M_EXPORT int32_t m2m_shader_gbuffer_attach(int64_t ctx, int64_t color);
+// With the main pass open after its opaque terrain was drawn with the G-buffer: ends it, lights the terrain and draws
+// the sky into color, then opens the main pass again on color and depth. 0 (and the pass left as it was) if it could
+// not run.
+M2M_EXPORT int32_t m2m_shader_deferred(int64_t ctx, int64_t color, int64_t depth, const int32_t *quality,
+                                       const float *matrices, const float *environment, const float *lights,
+                                       int32_t light_count);
+// With the main pass open just before the translucent terrain: ends it, copies color and depth (the scene the water
+// refracts), and opens it again with the G-buffer cleared for the translucent terrain to write. 0 (and the pass left
+// as it was) if it could not run.
+M2M_EXPORT int32_t m2m_shader_water_begin(int64_t ctx, int64_t color, int64_t depth);
+// After the translucent terrain: ends the pass, redraws the water from the G-buffer, and opens the main pass again
+// without the G-buffer.
+M2M_EXPORT int32_t m2m_shader_water_end(int64_t ctx, int64_t color, int64_t depth, const int32_t *quality,
+                                        const float *matrices, const float *environment);
+// Bloom from the last deferred pass and light shafts over the finished world. 1 if anything was drawn.
+M2M_EXPORT int32_t m2m_shader_post(int64_t ctx, int64_t color, int64_t depth, const int32_t *quality,
+                                   const float *matrices, const float *environment);
+M2M_EXPORT void m2m_shader_release(int64_t ctx);
 
 #endif

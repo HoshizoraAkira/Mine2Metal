@@ -21,6 +21,14 @@ public final class SodiumOptionsPage implements ConfigEntryPoint {
 	private static final Identifier HDR = Identifier.fromNamespaceAndPath("mine2metal", "hdr");
 	private static final Identifier HDR_BRIGHTNESS = Identifier.fromNamespaceAndPath("mine2metal", "hdr_brightness");
 	private static final Identifier PERFORMANCE_HUD = Identifier.fromNamespaceAndPath("mine2metal", "performance_hud");
+	private static final Identifier SHADER_PRESET = Identifier.fromNamespaceAndPath("mine2metal", "shader_preset");
+	private static final Identifier SHADER_LIGHTING_SCALE = Identifier.fromNamespaceAndPath("mine2metal", "shader_lighting_scale");
+	private static final Identifier SHADER_SHADOWS = Identifier.fromNamespaceAndPath("mine2metal", "shader_shadows");
+	private static final Identifier SHADER_AO = Identifier.fromNamespaceAndPath("mine2metal", "shader_ao");
+	private static final Identifier SHADER_REFLECTIONS = Identifier.fromNamespaceAndPath("mine2metal", "shader_reflections");
+	private static final Identifier SHADER_GI = Identifier.fromNamespaceAndPath("mine2metal", "shader_gi");
+	private static final Identifier SHADER_VOLUMETRICS = Identifier.fromNamespaceAndPath("mine2metal", "shader_volumetrics");
+	private static final Identifier SHADER_BLOOM = Identifier.fromNamespaceAndPath("mine2metal", "shader_bloom");
 
 	@Override
 	public void registerConfigLate(ConfigBuilder builder) {
@@ -113,6 +121,109 @@ public final class SodiumOptionsPage implements ConfigEntryPoint {
 										.setBinding(value -> {
 											settings.performanceHud = value;
 											MetalRenderer.setPerformanceHud(value);
-										}, () -> settings.performanceHud))));
+										}, () -> settings.performanceHud))))
+				.addPage(builder.createOptionPage()
+						.setName(Component.translatable("mine2metal.options.shaders_page"))
+						.addOptionGroup(builder.createOptionGroup()
+								.setName(Component.translatable("mine2metal.options.group.shader_general"))
+								.addOption(builder.createEnumOption(SHADER_PRESET, MetalSettings.ShaderPreset.class)
+										.setName(Component.translatable("mine2metal.options.shader_preset"))
+										.setTooltip(value -> MetalOptionTexts.shaderTooltip("mine2metal.options.shader_preset.tooltip"))
+										.setElementNameProvider(MetalOptionTexts::shaderPresetName)
+										.setImpact(OptionImpact.HIGH)
+										.setEnabled(MetalRenderer.isActive())
+										.setStorageHandler(settings::save)
+										.setDefaultValue(MetalSettings.ShaderPreset.OFF)
+										.setBinding(settings::applyShaderPreset, () -> settings.shaderPreset))
+								.addOption(builder.createIntegerOption(SHADER_LIGHTING_SCALE)
+										.setName(Component.translatable("mine2metal.options.shader_lighting_scale"))
+										.setTooltip(value -> MetalOptionTexts.shaderTooltip("mine2metal.options.shader_lighting_scale.tooltip"))
+										.setRange(MetalSettings.MIN_SHADER_LIGHTING_SCALE, MetalSettings.MAX_SHADER_LIGHTING_SCALE,
+												MetalSettings.SHADER_LIGHTING_SCALE_STEP)
+										.setValueFormatter(MetalOptionTexts::percent)
+										.setImpact(OptionImpact.HIGH)
+										.setEnabled(MetalRenderer.isActive())
+										.setStorageHandler(settings::save)
+										.setDefaultValue(75)
+										.setBinding(value -> {
+											settings.shaderLightingScale = MetalSettings.clampShaderLightingScale(value);
+											settings.syncShaderPreset();
+										}, () -> settings.shaderLightingScale)))
+						.addOptionGroup(builder.createOptionGroup()
+								.setName(Component.translatable("mine2metal.options.group.shader_lighting"))
+								.addOption(builder.createEnumOption(SHADER_SHADOWS, MetalSettings.ShadowQuality.class)
+										.setName(Component.translatable("mine2metal.options.shader_shadows"))
+										.setTooltip(value -> MetalOptionTexts.shaderTooltip("mine2metal.options.shader_shadows.tooltip"))
+										.setElementNameProvider(MetalOptionTexts::shadowQualityName)
+										.setImpact(OptionImpact.HIGH)
+										.setEnabled(MetalRenderer.isActive())
+										.setStorageHandler(settings::save)
+										.setDefaultValue(MetalSettings.ShadowQuality.OFF)
+										.setBinding(value -> {
+											settings.shaderShadows = value;
+											settings.syncShaderPreset();
+										}, () -> settings.shaderShadows))
+								.addOption(builder.createEnumOption(SHADER_GI, MetalSettings.GiQuality.class)
+										.setName(Component.translatable("mine2metal.options.shader_gi"))
+										.setTooltip(value -> MetalOptionTexts.shaderTooltip("mine2metal.options.shader_gi.tooltip"))
+										.setElementNameProvider(MetalOptionTexts::giQualityName)
+										.setImpact(OptionImpact.HIGH)
+										.setEnabled(MetalRenderer.isActive())
+										.setStorageHandler(settings::save)
+										.setDefaultValue(MetalSettings.GiQuality.OFF)
+										.setBinding(value -> {
+											settings.shaderGi = value;
+											settings.syncShaderPreset();
+										}, () -> settings.shaderGi))
+								.addOption(builder.createEnumOption(SHADER_AO, MetalSettings.AoQuality.class)
+										.setName(Component.translatable("mine2metal.options.shader_ao"))
+										.setTooltip(value -> MetalOptionTexts.shaderTooltip("mine2metal.options.shader_ao.tooltip"))
+										.setElementNameProvider(MetalOptionTexts::aoQualityName)
+										.setImpact(OptionImpact.MEDIUM)
+										.setEnabled(MetalRenderer.isActive())
+										.setStorageHandler(settings::save)
+										.setDefaultValue(MetalSettings.AoQuality.OFF)
+										.setBinding(value -> {
+											settings.shaderAo = value;
+											settings.syncShaderPreset();
+										}, () -> settings.shaderAo)))
+						.addOptionGroup(builder.createOptionGroup()
+								.setName(Component.translatable("mine2metal.options.group.shader_atmosphere"))
+								.addOption(builder.createEnumOption(SHADER_REFLECTIONS, MetalSettings.ReflectionQuality.class)
+										.setName(Component.translatable("mine2metal.options.shader_reflections"))
+										.setTooltip(value -> MetalOptionTexts.shaderTooltip("mine2metal.options.shader_reflections.tooltip"))
+										.setElementNameProvider(MetalOptionTexts::reflectionQualityName)
+										.setImpact(OptionImpact.HIGH)
+										.setEnabled(MetalRenderer.isActive())
+										.setStorageHandler(settings::save)
+										.setDefaultValue(MetalSettings.ReflectionQuality.OFF)
+										.setBinding(value -> {
+											settings.shaderReflections = value;
+											settings.syncShaderPreset();
+										}, () -> settings.shaderReflections))
+								.addOption(builder.createEnumOption(SHADER_VOLUMETRICS, MetalSettings.VolumetricQuality.class)
+										.setName(Component.translatable("mine2metal.options.shader_volumetrics"))
+										.setTooltip(value -> MetalOptionTexts.shaderTooltip("mine2metal.options.shader_volumetrics.tooltip"))
+										.setElementNameProvider(MetalOptionTexts::volumetricQualityName)
+										.setImpact(OptionImpact.MEDIUM)
+										.setEnabled(MetalRenderer.isActive())
+										.setStorageHandler(settings::save)
+										.setDefaultValue(MetalSettings.VolumetricQuality.OFF)
+										.setBinding(value -> {
+											settings.shaderVolumetrics = value;
+											settings.syncShaderPreset();
+										}, () -> settings.shaderVolumetrics))
+								.addOption(builder.createEnumOption(SHADER_BLOOM, MetalSettings.BloomQuality.class)
+										.setName(Component.translatable("mine2metal.options.shader_bloom"))
+										.setTooltip(value -> MetalOptionTexts.shaderTooltip("mine2metal.options.shader_bloom.tooltip"))
+										.setElementNameProvider(MetalOptionTexts::bloomQualityName)
+										.setImpact(OptionImpact.LOW)
+										.setEnabled(MetalRenderer.isActive())
+										.setStorageHandler(settings::save)
+										.setDefaultValue(MetalSettings.BloomQuality.OFF)
+										.setBinding(value -> {
+											settings.shaderBloom = value;
+											settings.syncShaderPreset();
+										}, () -> settings.shaderBloom))));
 	}
 }

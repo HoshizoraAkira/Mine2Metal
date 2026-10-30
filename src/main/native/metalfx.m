@@ -79,7 +79,7 @@ int32_t m2m_metalfx_spatial_upscale(int64_t handle, int64_t input_handle, int64_
 			return 0;
 		}
 
-		m2m_end_encoding(ctx);
+		m2m_end_encoding_for_external(ctx);
 		upscaler.scaler.inputContentWidth = input.width;
 		upscaler.scaler.inputContentHeight = input.height;
 		upscaler.scaler.colorTexture = input;

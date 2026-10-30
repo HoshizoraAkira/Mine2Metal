@@ -17,15 +17,18 @@ void m2m_render_pipeline(int64_t ctx, int64_t pipeline, int64_t depth_state, int
 	[encoder setDepthBias:depth_bias slopeScale:depth_bias_slope clamp:0.0f];
 }
 
-void m2m_render_buffer(int64_t ctx, int32_t index, int64_t buffer, int64_t offset) {
-	m2m_bind_buffer(m2m_ctx(ctx), (NSUInteger)index, m2m_borrow(buffer), (NSUInteger)offset, YES, YES);
+void m2m_render_buffer(int64_t ctx, int32_t index, int64_t buffer, int64_t offset, int32_t vertex, int32_t fragment) {
+	m2m_bind_buffer(m2m_ctx(ctx), (NSUInteger)index, m2m_borrow(buffer), (NSUInteger)offset, vertex != 0, fragment != 0);
 }
 
-void m2m_render_texture(int64_t handle, int32_t index, int64_t texture, int64_t sampler) {
+void m2m_render_texture(int64_t handle, int32_t index, int64_t texture, int64_t sampler, int32_t vertex,
+                        int32_t fragment) {
 	M2MContext *ctx = m2m_ctx(handle);
-	m2m_bind_texture(ctx, (NSUInteger)index, m2m_borrow(texture), YES, YES);
+	BOOL bind_vertex = vertex != 0;
+	BOOL bind_fragment = fragment != 0;
+	m2m_bind_texture(ctx, (NSUInteger)index, m2m_borrow(texture), bind_vertex, bind_fragment);
 	if (sampler != 0) {
-		m2m_bind_sampler(ctx, (NSUInteger)index, m2m_borrow(sampler), YES, YES);
+		m2m_bind_sampler(ctx, (NSUInteger)index, m2m_borrow(sampler), bind_vertex, bind_fragment);
 	}
 }
 
@@ -50,6 +53,10 @@ void m2m_render_scissor(int64_t handle, int32_t x, int32_t y, int32_t width, int
 
 void m2m_render_draw(int64_t ctx, int32_t primitive, int32_t first_vertex, int32_t vertex_count, int32_t instance_count,
                      int32_t first_instance) {
+	// GL ignores an empty draw (the weather renderer issues one before any rain has fallen); Metal rejects it.
+	if (vertex_count <= 0 || instance_count <= 0) {
+		return;
+	}
 	[m2m_render_encoder(m2m_ctx(ctx)) drawPrimitives:(MTLPrimitiveType)primitive
 	                                     vertexStart:(NSUInteger)first_vertex
 	                                     vertexCount:(NSUInteger)vertex_count
@@ -61,6 +68,9 @@ void m2m_render_draw(int64_t ctx, int32_t primitive, int32_t first_vertex, int32
 static void m2m_draw_indexed(M2MContext *ctx, MTLPrimitiveType primitive, MTLIndexType type, id<MTLBuffer> indices,
                              NSUInteger offset, NSUInteger count, NSUInteger instances, NSInteger base_vertex,
                              NSUInteger first_instance) {
+	if (count == 0 || instances == 0) {
+		return;
+	}
 	if (ctx.metal4) {
 		[ctx.renderEncoder4 drawIndexedPrimitives:primitive
 		                               indexCount:count
@@ -111,7 +121,9 @@ void m2m_render_multi_draw(int64_t ctx, int32_t primitive, int64_t first_vertice
 	const int32_t *firsts = (const int32_t *)(intptr_t)first_vertices_address;
 	const int32_t *counts = (const int32_t *)(intptr_t)vertex_counts_address;
 	for (int32_t i = 0; i < draw_count; i++) {
-		[encoder drawPrimitives:(MTLPrimitiveType)primitive vertexStart:(NSUInteger)firsts[i] vertexCount:(NSUInteger)counts[i]];
+		if (counts[i] > 0) {
+			[encoder drawPrimitives:(MTLPrimitiveType)primitive vertexStart:(NSUInteger)firsts[i] vertexCount:(NSUInteger)counts[i]];
+		}
 	}
 }
 

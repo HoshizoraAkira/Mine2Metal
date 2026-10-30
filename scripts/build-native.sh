@@ -16,9 +16,10 @@ COMMON="-arch arm64 -mmacosx-version-min=$MIN_VERSION -O2 -fvisibility=hidden"
 FFX_INCLUDES="-isystem $FFX/include -isystem $FFX/include/FidelityFX/host -isystem $FFX/src/shared -I$ROOT/src/main/native/fsr"
 STRICT="-Wall -Wextra -Werror"
 
+# src/main/native is on the include path for the world shaders shaders.m embeds with .incbin.
 for source in "$ROOT"/src/main/native/*.m; do
 	# shellcheck disable=SC2086
-	xcrun clang $COMMON -fobjc-arc $STRICT $FFX_INCLUDES -c "$source" -o "$OBJ/$(basename "$source" .m).o"
+	xcrun clang $COMMON -fobjc-arc $STRICT $FFX_INCLUDES -I"$ROOT/src/main/native" -c "$source" -o "$OBJ/$(basename "$source" .m).o"
 done
 for source in "$ROOT"/src/main/native/fsr/*.mm; do
 	# shellcheck disable=SC2086

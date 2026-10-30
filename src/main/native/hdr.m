@@ -55,14 +55,23 @@ static NSString *const M2M_HDR_SHADER =
      "    float3 bare = world.read(pixel).rgb;\n"
      "    float3 difference = abs(encoded - bare);\n"
      "    float covered = smoothstep(1.5 / 255.0, 6.0 / 255.0, max(difference.r, max(difference.g, difference.b)));\n"
-     "    float gain = m2m_gain(m2m_level(position, bare, levels, linear, params), params);\n"
-     "    return float4(linear_color + m2m_decode(bare) * (gain - 1.0) * (1.0 - covered), 1.0);\n"
+     "    if (covered < 1.0) {\n"
+     "        float level = m2m_level(position, bare, levels, linear, params);\n"
+     "        if (level > params.knee) {\n"
+     "            float gain = m2m_gain(level, params);\n"
+     "            float3 bare_linear = covered > 0.0 ? m2m_decode(bare) : linear_color;\n"
+     "            linear_color += bare_linear * ((gain - 1.0) * (1.0 - covered));\n"
+     "        }\n"
+     "    }\n"
+     "    return float4(linear_color, 1.0);\n"
      "}\n"
      "fragment float4 m2m_hdr_expand(float4 position [[position]], texture2d<float, access::read> world [[texture(1)]],\n"
      "                               texture2d<float> levels [[texture(2)]], sampler linear [[sampler(0)]],\n"
      "                               constant HdrParams &params [[buffer(0)]]) {\n"
      "    float3 bare = world.read(uint2(position.xy)).rgb;\n"
-     "    return float4(m2m_decode(bare) * m2m_gain(m2m_level(position, bare, levels, linear, params), params), 1.0);\n"
+     "    float level = m2m_level(position, bare, levels, linear, params);\n"
+     "    float gain = level > params.knee ? m2m_gain(level, params) : 1.0;\n"
+     "    return float4(m2m_decode(bare) * gain, 1.0);\n"
      "}\n"
      // The mean brightness of each block of the world.
      "fragment float m2m_hdr_levels(float4 position [[position]], texture2d<float, access::read> world [[texture(1)]]) {\n"
@@ -235,7 +244,6 @@ void m2m_hdr_capture(int64_t handle, int64_t color_handle) {
 			ctx.hdrWorld = world;
 		}
 		[m2m_copier(ctx) copyFromTexture:color toTexture:world];
-		m2m_end_encoding(ctx);
 		m2m_hdr_update_peak(ctx);
 		if (m2m_hdr_pipelines(ctx)) {
 			id<MTLTexture> levels = m2m_hdr_levels_for(ctx, world);

@@ -137,6 +137,49 @@ Diukur di MacBook Air M3 dengan Sodium dan render distance 16, berjalan ke arah 
   - Game lambat (cap 40 FPS): frame gen masuk sendiri, 30 render + 30 buatan = 59–60 tampil (naik dari 40), untuk FSR 3 maupun MetalFX.
 - Gametest penuh lolos di bawah API validation, Metal 4 dan Metal 3.
 
+### Optimasi shader dunia dan jalur CPU (2026-10-30)
+
+Tujuan: preset shader apa pun tetap lancar dari MacBook Air M1 sampai yang terbaru di ukuran framebuffer Retina (1920×1243 point), tanpa menurunkan kualitas. Karena gametest membuka jendela Minecraft, pengukurannya memakai alat baru `tools/shaderbench` (`tools/shaderbench/build.sh <dir>`, lalu `shaderbench src/main/native/world_shaders.metal 1920 1243 75 3 60 [dump.png]`): dunia sintetis (bukit, hutan, danau, kamera 4 blok di atas tanah menghadap horizon) digambar sekali ke depth + G-buffer + voxel grid, lalu setiap pass shader dijalankan persis seperti `shaders.m` membindingnya, masing-masing di command buffer sendiri yang ditunggu selesai (command buffer yang di-commit bersamaan melaporkan satu `GPUStartTime` yang sama, jadi angkanya salah). Dump `.raw`-nya dibandingkan per piksel antar versi, sehingga "identik" di bawah ini berarti terukur, bukan perkiraan.
+
+**Hasil di Apple M3, 1920×1243, lighting scale 75 % (median ms GPU per frame, hanya pass milik shader):**
+
+| Pass | Sebelum (High) | Sesudah (High) | Catatan |
+|---|---|---|---|
+| Awan (½ lighting) | 0,57 | 0,19 | noise dari tekstur 3D |
+| Lighting (1390×900) | 0,90 | 0,78 | DDA voxel dua tingkat |
+| Light tiles (baru) | — | 0,12 | kernel compute per tile 32×32 |
+| Resolve (penuh) | 0,94 | 0,54 | loop point light hanya di piksel ber-block-light, dan hanya cahaya di tile-nya |
+| Salinan air + skyline | 0,18 | 0,27 | tabel skyline (2 kernel, 0,09) |
+| Air | 2,02 | 1,40 | SSR berhenti begitu hanya bisa membaca langit; depth linear dari clip w |
+| Bloom / shafts / post / LUT langit | 0,23 / 0,09 / 0,18 / — | 0,23 / 0,09 / 0,17 / 0,02 | |
+| **Total** | **5,11** | **3,81** | −25 % |
+
+Preset lain: Ultra 5,47 → 3,98 ms (−27 %), Medium 4,56 → 3,58 (−21 %), Low 50 % 2,90 → 2,48 (−14 %). Di dunia sintetis ini air menutupi ±35 % layar; di pemandangan tanpa air, resolve dan awan yang paling terasa, dan di gua yang penuh obor penghematan loop cahaya jauh lebih besar lagi (dulu 24 cahaya × tiap piksel).
+
+**Yang diubah di shader (`world_shaders.metal`), semuanya dengan hasil yang sama:**
+- **Skyline untuk SSR air.** Dua kernel compute membuat tabel: baris tertinggi yang bukan langit per pita 16 kolom (reduksi SIMD per threadgroup 16×64 + atomic max), lalu tabel sparse (baris k = maksimum 2^k pita) sehingga range-max atas rentang pita mana pun hanya 2 pembacaan. Lintasan ray di layar adalah garis, jadi sekali per ray dihitung kolom masuk dan keluar, dan `sky_from` memberi jarak `t` mulai dari mana setiap sampel pasti langit; ray berhenti di sana, hasilnya tetap "tidak kena" yang sama. Per piksel beda ≤ 1 level di 0,004 % piksel (pembulatan depth linear = `clip.w`, bukan `m32/(z+m22)`).
+- **Light tiles.** Kernel compute per tile 32×32: min/max depth linear tile, lalu tiap lane menguji bola satu cahaya terhadap 4 bidang frustum tile dan rentang depth; hasilnya bitmask per tile. Resolve hanya mengiterasi bit yang menyala, dan hanya kalau `blockLight > 0` (tanpa block light, tint cahaya tidak terpakai). Dibandingkan dengan loop penuh: 0 piksel berbeda.
+- **DDA voxel dua tingkat.** Kernel `m2m_voxel_coarse` membuat grid 32³ (satu byte per blok 4×4×4, dibangun ulang hanya saat salinan voxel GPU diperbarui). Saat ray berada di blok kasar yang kosong, ia melompat ke titik keluar blok itu dan melanjutkan DDA halus dari voxel yang dimasuki. 8 piksel dari 2,4 juta berbeda ≤ 2 level (epsilon di sudut blok).
+- **Noise dari tekstur.** `noise3` (value noise dengan interpolasi smoothstep, dulu 8 hash + 7 mix per sampel, dipanggil 3–4× per langkah awan) kini satu `sample` trilinear dari tekstur 3D R16Unorm 128³ yang diisi CPU sekali: hash periodik 32 unit, 4 texel per unit. Pola acak awan, gelombang, dan genangan berubah (nilai hash-nya periodik), karakternya sama.
+- **LUT langit.** `atmosphere()` dihitung ke tekstur lat-long 512×256 RGBA16F sekali per frame (0,02 ms) dan di-sample di resolve, air, dan awan; dulu dievaluasi 2–3× per piksel. Beda ≤ 2 level di 2 % piksel.
+- **Marching di clip space.** SSR dan sampel AO memproyeksikan sekali, lalu tiap langkah hanya multiply-add (clip linear terhadap posisi).
+
+**Yang diukur dan tidak membantu (tidak dipakai):** membaca 4 sampel sekaligus di DDA/SSR/bayangan layar (biayanya bukan latensi), kualitas sebagai konstanta kompilasi (−2–4 %), grid voxel sebagai tekstur 3D (lebih lambat, 0,89 → 0,93), membaca depth dari buffer (sama), tile 16 px (sama), konversi sRGB lewat view tekstur (batas atasnya hanya 0,09 ms). Biaya SSR air per langkah ternyata ALU + divergensi SIMD (lane yang memantulkan langit berjalan penuh), itulah sebabnya skyline yang menolong.
+
+**Jalur CPU:**
+- **Cache view texel buffer.** Shader terrain Sodium memakai `isamplerBuffer` (`u_SectionTimeInfo`), dan backend membuat objek `MTLTexture` baru per bind region tiap frame, lalu melepasnya. Kini view dicache per (memori buffer, offset, panjang, format), maksimal 512 entri, dan dibuang saat buffernya di-rename atau ditutup (penting untuk residency Metal 4).
+- **Salinan voxel per irisan.** Pemindaian grid voxel kini per baris grid (97 kolom dengan z dunia yang sama per frame, bukan 96 kolom tersebar), dan Java melaporkan irisan z yang berubah (`m2m_shader_voxels_changed`); tiap salinan GPU menyalin hanya irisan tertunda miliknya (16 KB per irisan) alih-alih 2 MB setiap kali versinya berubah.
+
+**Uji:** gametest shader (`-Dmine2metal.test.shadersOnly=true`) lolos di bawah Metal API validation, Metal 4 dan Metal 3 (`-Dmine2metal.metal=3`), dengan terrain tetap tercahayai dari G-buffer. FPS gametest-nya (dari atas, High 318–380, Ultra 211–274; di tanah High 255–294) berada di rentang noise thermal run-run sebelumnya, karena dunia gametest kecil dan hampir tanpa air; angka per pass di atas yang menjadi ukurannya. Yang ditemukan validation Metal 3 di sepanjang jalan: `drawIndexedPrimitives` dengan `indexCount` 0 saat hujan mulai (renderer cuaca vanilla menggambar sebelum ada tetesan; GL mengabaikannya, Metal 4 mentoleransinya). `render.m` kini melewati draw dengan jumlah vertex, index, atau instance nol.
+
+**Putaran kedua (hari yang sama), diukur dengan cara yang sama:**
+- **Kernel light tiles 0,12 → 0,07 ms:** threadgroup 16×16 yang masing-masing membaca blok 2×2, dan bitmask lewat `simd_ballot` alih-alih atomic threadgroup. 0 piksel berbeda.
+- **Tahap air dilewati tanpa terrain translucent di layar** (`SodiumTerrain`): sebelum salinan scene, render list Sodium diperiksa seperti `DefaultChunkRenderer` memeriksanya (storage pass TRANSLUCENT per region, lalu slice mask tiap section yang terlihat). Tanpa section translucent, salinan warna+depth, skyline, dan pass air tidak dijalankan (±0,3 ms per frame di gua, gurun, dalam ruangan). Tanpa Sodium, atau kalau internal Sodium berubah, jawabannya selalu "mungkin ada" dan jalurnya seperti sebelumnya.
+- **Konversi sRGB oleh hardware:** resolve, air, dan post menggambar ke view sRGB dari tekstur warna game dan membaca salinan scene lewat view sRGB, jadi `pow` untuk decode/encode hilang. Pilihannya function constant Metal (`linearIo`, varian pipeline per format): dengan flag uniform biasa compiler tetap menghitung kedua cabang `select` dan untungnya nol. Format tanpa varian sRGB memakai varian pipeline dengan konversi eksplisit. Resolve 0,54 → 0,50, post 0,18 → 0,16, air 1,41 → 1,35 ms. Refraksi air kini memfilter di ruang linear, jadi 0,02 % piksel di tepi beda > 8 level (lebih benar, bukan identik).
+- **Dicoba dan dibatalkan karena terukur lebih lambat:** skyline untuk bayangan layar jauh (lighting 0,79 → 0,82 ms plus 0,10 ms membangun tabel di tahap lighting), dan **SSR Hi-Z** (piramida min/max depth linear 5 level, traversal di ruang layar dengan 1/w linear, skip saat ray di depan atau di belakang seluruh isi sel). Rata-rata hit butuh 11,5 iterasi, tapi 12 % ray kehabisan 48 iterasi dan grup SIMD menunggu lane terlambat: pass air 2,1–2,9 ms vs 1,42 ms march linear + skyline, dengan varian level awal dan koarsening yang tidak menolong. Kodenya tidak disimpan.
+
+**Perkiraan per chip (bukan pengukuran; GPU M1 ±55–60 % throughput M3 di beban seperti ini):** High di Retina ±7 ms shader + ±1,5 ms Minecraft di M1 (dulu ±9,5 + 1,5), jadi GPU-bound sekitar 115 FPS, dari ±90. MetalFX temporal tetap ±3 ms (milik Apple); FSR 3.1 1,1 ms adalah pilihan yang lebih ringan di Mac yang GPU-bound.
+
 ### Frame gen 2 FPS di install sungguhan (2026-10-28)
 
 Temporal + FSR 3 frame gen di fullscreen Retina sempat jatuh ke ±4 FPS. Log mencatat frame gen 156 ms GPU per frame dan jarak antar frame 250 ms. Dengan Mac dan setelan yang sama, sesi pukul 19:09 hanya 24 ms. Benchmark dengan build yang sama langsung sesudahnya (jendela 1440×900, temporal 75% + FSR) mencatat 5–7 ms. Jadi kodenya tidak melambat. Yang paling mungkin adalah kondisi Mac saat itu: panas setelah beberapa gametest berat beruntun, dan swap terpakai 3,8 GB. Hal itu tidak bisa dipastikan dari log.

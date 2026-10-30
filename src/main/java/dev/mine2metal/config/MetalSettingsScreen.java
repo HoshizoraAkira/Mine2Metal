@@ -76,6 +76,8 @@ public final class MetalSettingsScreen extends OptionsSubScreen {
 
 		this.list.addHeader(Component.translatable("mine2metal.options.group.api"));
 		this.list.addSmall(metalVersion, null);
+		this.list.addHeader(Component.translatable("mine2metal.options.shaders_page"));
+		this.addShaderOptions(settings);
 		this.list.addHeader(Component.translatable("mine2metal.options.group.upscaling"));
 		this.list.addSmall(upscaling, scale);
 		this.list.addHeader(Component.translatable("mine2metal.options.group.frame_generation"));
@@ -84,6 +86,119 @@ public final class MetalSettingsScreen extends OptionsSubScreen {
 		this.list.addSmall(hdr, hdrBrightness);
 		this.list.addHeader(Component.translatable("mine2metal.options.group.diagnostics"));
 		this.list.addSmall(performanceHud, null);
+	}
+
+	private void addShaderOptions(MetalSettings settings) {
+		boolean active = MetalRenderer.isActive();
+		@SuppressWarnings("unchecked")
+		CycleButton<MetalSettings.ShaderPreset>[] presetRef = new CycleButton[1];
+
+		ShaderLightingScaleSlider lightingScale = new ShaderLightingScaleSlider(settings, () -> {
+			if (presetRef[0] != null) {
+				presetRef[0].setValue(settings.shaderPreset);
+			}
+		});
+		lightingScale.active = active;
+
+		CycleButton<MetalSettings.ShadowQuality> shadows = CycleButton.builder(MetalOptionTexts::shadowQualityName, settings.shaderShadows)
+				.withValues(MetalSettings.ShadowQuality.values())
+				.withTooltip(value -> Tooltip.create(MetalOptionTexts.shaderTooltip("mine2metal.options.shader_shadows.tooltip")))
+				.create(Component.translatable("mine2metal.options.shader_shadows"), (button, value) -> {
+					settings.shaderShadows = value;
+					settings.syncShaderPreset();
+					settings.save();
+					if (presetRef[0] != null) {
+						presetRef[0].setValue(settings.shaderPreset);
+					}
+				});
+		shadows.active = active;
+
+		CycleButton<MetalSettings.GiQuality> gi = CycleButton.builder(MetalOptionTexts::giQualityName, settings.shaderGi)
+				.withValues(MetalSettings.GiQuality.values())
+				.withTooltip(value -> Tooltip.create(MetalOptionTexts.shaderTooltip("mine2metal.options.shader_gi.tooltip")))
+				.create(Component.translatable("mine2metal.options.shader_gi"), (button, value) -> {
+					settings.shaderGi = value;
+					settings.syncShaderPreset();
+					settings.save();
+					if (presetRef[0] != null) {
+						presetRef[0].setValue(settings.shaderPreset);
+					}
+				});
+		gi.active = active;
+
+		CycleButton<MetalSettings.AoQuality> ao = CycleButton.builder(MetalOptionTexts::aoQualityName, settings.shaderAo)
+				.withValues(MetalSettings.AoQuality.values())
+				.withTooltip(value -> Tooltip.create(MetalOptionTexts.shaderTooltip("mine2metal.options.shader_ao.tooltip")))
+				.create(Component.translatable("mine2metal.options.shader_ao"), (button, value) -> {
+					settings.shaderAo = value;
+					settings.syncShaderPreset();
+					settings.save();
+					if (presetRef[0] != null) {
+						presetRef[0].setValue(settings.shaderPreset);
+					}
+				});
+		ao.active = active;
+
+		CycleButton<MetalSettings.ReflectionQuality> reflections = CycleButton.builder(MetalOptionTexts::reflectionQualityName, settings.shaderReflections)
+				.withValues(MetalSettings.ReflectionQuality.values())
+				.withTooltip(value -> Tooltip.create(MetalOptionTexts.shaderTooltip("mine2metal.options.shader_reflections.tooltip")))
+				.create(Component.translatable("mine2metal.options.shader_reflections"), (button, value) -> {
+					settings.shaderReflections = value;
+					settings.syncShaderPreset();
+					settings.save();
+					if (presetRef[0] != null) {
+						presetRef[0].setValue(settings.shaderPreset);
+					}
+				});
+		reflections.active = active;
+
+		CycleButton<MetalSettings.VolumetricQuality> volumetrics = CycleButton.builder(MetalOptionTexts::volumetricQualityName, settings.shaderVolumetrics)
+				.withValues(MetalSettings.VolumetricQuality.values())
+				.withTooltip(value -> Tooltip.create(MetalOptionTexts.shaderTooltip("mine2metal.options.shader_volumetrics.tooltip")))
+				.create(Component.translatable("mine2metal.options.shader_volumetrics"), (button, value) -> {
+					settings.shaderVolumetrics = value;
+					settings.syncShaderPreset();
+					settings.save();
+					if (presetRef[0] != null) {
+						presetRef[0].setValue(settings.shaderPreset);
+					}
+				});
+		volumetrics.active = active;
+
+		CycleButton<MetalSettings.BloomQuality> bloom = CycleButton.builder(MetalOptionTexts::bloomQualityName, settings.shaderBloom)
+				.withValues(MetalSettings.BloomQuality.values())
+				.withTooltip(value -> Tooltip.create(MetalOptionTexts.shaderTooltip("mine2metal.options.shader_bloom.tooltip")))
+				.create(Component.translatable("mine2metal.options.shader_bloom"), (button, value) -> {
+					settings.shaderBloom = value;
+					settings.syncShaderPreset();
+					settings.save();
+					if (presetRef[0] != null) {
+						presetRef[0].setValue(settings.shaderPreset);
+					}
+				});
+		bloom.active = active;
+
+		CycleButton<MetalSettings.ShaderPreset> preset = CycleButton.builder(MetalOptionTexts::shaderPresetName, settings.shaderPreset)
+				.withValues(MetalSettings.ShaderPreset.values())
+				.withTooltip(value -> Tooltip.create(MetalOptionTexts.shaderTooltip("mine2metal.options.shader_preset.tooltip")))
+				.create(Component.translatable("mine2metal.options.shader_preset"), (button, value) -> {
+					settings.applyShaderPreset(value);
+					settings.save();
+					shadows.setValue(settings.shaderShadows);
+					gi.setValue(settings.shaderGi);
+					ao.setValue(settings.shaderAo);
+					reflections.setValue(settings.shaderReflections);
+					volumetrics.setValue(settings.shaderVolumetrics);
+					bloom.setValue(settings.shaderBloom);
+					lightingScale.syncFromSettings();
+				});
+		preset.active = active;
+		presetRef[0] = preset;
+
+		this.list.addSmall(preset, lightingScale);
+		this.list.addSmall(shadows, gi);
+		this.list.addSmall(ao, reflections);
+		this.list.addSmall(volumetrics, bloom);
 	}
 
 	private static final class HdrBrightnessSlider extends AbstractSliderButton {
@@ -148,6 +263,49 @@ public final class MetalSettingsScreen extends OptionsSubScreen {
 		protected void applyValue() {
 			this.settings.renderScale = this.percent();
 			this.settings.save();
+		}
+	}
+
+	private static final class ShaderLightingScaleSlider extends AbstractSliderButton {
+		private final MetalSettings settings;
+		private final Runnable onChanged;
+
+		ShaderLightingScaleSlider(MetalSettings settings, Runnable onChanged) {
+			super(0, 0, WIDGET_WIDTH, WIDGET_HEIGHT, Component.empty(), toSlider(settings.shaderLightingScale));
+			this.settings = settings;
+			this.onChanged = onChanged;
+			this.setTooltip(Tooltip.create(MetalOptionTexts.shaderTooltip("mine2metal.options.shader_lighting_scale.tooltip")));
+			this.updateMessage();
+		}
+
+		private static double toSlider(int percent) {
+			return (percent - MetalSettings.MIN_SHADER_LIGHTING_SCALE)
+					/ (double) (MetalSettings.MAX_SHADER_LIGHTING_SCALE - MetalSettings.MIN_SHADER_LIGHTING_SCALE);
+		}
+
+		private int percent() {
+			return MetalSettings.clampShaderLightingScale((int) Math.round(
+					MetalSettings.MIN_SHADER_LIGHTING_SCALE
+							+ this.value * (MetalSettings.MAX_SHADER_LIGHTING_SCALE - MetalSettings.MIN_SHADER_LIGHTING_SCALE)));
+		}
+
+		void syncFromSettings() {
+			this.value = toSlider(this.settings.shaderLightingScale);
+			this.updateMessage();
+		}
+
+		@Override
+		protected void updateMessage() {
+			this.setMessage(Component.translatable("options.generic_value", Component.translatable("mine2metal.options.shader_lighting_scale"),
+					MetalOptionTexts.percent(this.percent())));
+		}
+
+		@Override
+		protected void applyValue() {
+			this.settings.shaderLightingScale = this.percent();
+			this.settings.syncShaderPreset();
+			this.settings.save();
+			this.onChanged.run();
 		}
 	}
 }

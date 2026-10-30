@@ -46,6 +46,77 @@ public final class MetalSettings {
 		METAL_3
 	}
 
+	public enum ShaderPreset {
+		OFF,
+		LOW,
+		MEDIUM,
+		HIGH,
+		ULTRA,
+		CUSTOM
+	}
+
+	public enum ShadowQuality {
+		OFF,
+		/** Fast screen-space contact shadows. */
+		LOW,
+		/** Soft screen-space sun/moon shadows with penumbra filtering. */
+		MEDIUM,
+		/** Hybrid 3D voxel + screen-space directional shadows. */
+		HIGH,
+		/** Ray-traced soft shadows (PCSS) + colored translucent glass/foliage transmission. */
+		ULTRA
+	}
+
+	public enum AoQuality {
+		OFF,
+		/** Fast hemisphere SSAO. */
+		LOW,
+		/** Ground-Truth Ambient Occlusion (GTAO). */
+		MEDIUM,
+		/** Ray-Traced Ambient Occlusion (RTAO) in the 3D voxel volume. */
+		HIGH
+	}
+
+	public enum ReflectionQuality {
+		OFF,
+		/** Fresnel water waves and atmospheric sky/sun specular. */
+		LOW,
+		/** Screen-Space Reflections (SSR) on water and smooth blocks. */
+		MEDIUM,
+		/** Multi-octave water waves, underwater absorption, and high-step SSR. */
+		HIGH,
+		/** Hybrid SSR + 3D Voxel Ray-Traced Reflections for off-screen geometry and lights. */
+		ULTRA
+	}
+
+	public enum GiQuality {
+		OFF,
+		/** Directional sky hemisphere and warm sun bounce tint. */
+		LOW,
+		/** Screen-space diffuse bounce + direct emissive point light illumination. */
+		MEDIUM,
+		/** Voxel Ray-Traced Global Illumination (RTGI) + shadowed emissive block lights. */
+		HIGH
+	}
+
+	public enum VolumetricQuality {
+		OFF,
+		LOW,
+		MEDIUM,
+		HIGH
+	}
+
+	public enum BloomQuality {
+		OFF,
+		LOW,
+		MEDIUM,
+		HIGH
+	}
+
+	public static final int MIN_SHADER_LIGHTING_SCALE = 50;
+	public static final int MAX_SHADER_LIGHTING_SCALE = 100;
+	public static final int SHADER_LIGHTING_SCALE_STEP = 25;
+
 	public boolean enabled = true;
 	/** Read once at startup, when the backend is created. */
 	public MetalVersion metalVersion = MetalVersion.AUTO;
@@ -64,6 +135,16 @@ public final class MetalSettings {
 	public int hdrBrightness = 200;
 	/** Apple's Metal Performance HUD over the game window. */
 	public boolean performanceHud;
+
+	/** Built-in Native Metal Shader (Natural Cinematic) settings. */
+	public ShaderPreset shaderPreset = ShaderPreset.OFF;
+	public ShadowQuality shaderShadows = ShadowQuality.OFF;
+	public AoQuality shaderAo = AoQuality.OFF;
+	public ReflectionQuality shaderReflections = ReflectionQuality.OFF;
+	public GiQuality shaderGi = GiQuality.OFF;
+	public VolumetricQuality shaderVolumetrics = VolumetricQuality.OFF;
+	public BloomQuality shaderBloom = BloomQuality.OFF;
+	public int shaderLightingScale = 75;
 
 	private MetalSettings() {
 	}
@@ -109,6 +190,17 @@ public final class MetalSettings {
 		settings.hdr = Boolean.parseBoolean(values.getProperty("hdr", "false"));
 		settings.hdrBrightness = clampHdrBrightness(parseInt(values.getProperty("hdrBrightness"), settings.hdrBrightness));
 		settings.performanceHud = Boolean.parseBoolean(values.getProperty("performanceHud", "false"));
+		settings.shaderPreset = parseEnum(ShaderPreset.class, values.getProperty("shaderPreset"), ShaderPreset.OFF);
+		settings.shaderShadows = parseEnum(ShadowQuality.class, values.getProperty("shaderShadows"), ShadowQuality.OFF);
+		settings.shaderAo = parseEnum(AoQuality.class, values.getProperty("shaderAo"), AoQuality.OFF);
+		settings.shaderReflections = parseEnum(ReflectionQuality.class, values.getProperty("shaderReflections"), ReflectionQuality.OFF);
+		settings.shaderGi = parseEnum(GiQuality.class, values.getProperty("shaderGi"), GiQuality.OFF);
+		settings.shaderVolumetrics = parseEnum(VolumetricQuality.class, values.getProperty("shaderVolumetrics"), VolumetricQuality.OFF);
+		settings.shaderBloom = parseEnum(BloomQuality.class, values.getProperty("shaderBloom"), BloomQuality.OFF);
+		settings.shaderLightingScale = clampShaderLightingScale(parseInt(values.getProperty("shaderLightingScale"), settings.shaderLightingScale));
+		if (settings.shaderPreset != ShaderPreset.CUSTOM) {
+			settings.applyShaderPreset(settings.shaderPreset);
+		}
 		return settings;
 	}
 
@@ -154,8 +246,34 @@ public final class MetalSettings {
 				#
 				# Apple's Metal Performance HUD (frame rate, frame times, GPU time, memory) over the game window.
 				performanceHud=%s
-				""".formatted(this.enabled, metalVersionName(this.metalVersion), this.upscaling.name().toLowerCase(Locale.ROOT), this.renderScale, this.frameGeneration.name().toLowerCase(Locale.ROOT),
-						this.hdr, this.hdrBrightness, this.performanceHud);
+				#
+				# Native Metal Shaders (Natural Cinematic):
+				# shaderPreset: off | low | medium | high | ultra | custom
+				shaderPreset=%s
+				shaderShadows=%s
+				shaderAo=%s
+				shaderReflections=%s
+				shaderGi=%s
+				shaderVolumetrics=%s
+				shaderBloom=%s
+				shaderLightingScale=%d
+				""".formatted(
+						this.enabled,
+						metalVersionName(this.metalVersion),
+						this.upscaling.name().toLowerCase(Locale.ROOT),
+						this.renderScale,
+						this.frameGeneration.name().toLowerCase(Locale.ROOT),
+						this.hdr,
+						this.hdrBrightness,
+						this.performanceHud,
+						this.shaderPreset.name().toLowerCase(Locale.ROOT),
+						this.shaderShadows.name().toLowerCase(Locale.ROOT),
+						this.shaderAo.name().toLowerCase(Locale.ROOT),
+						this.shaderReflections.name().toLowerCase(Locale.ROOT),
+						this.shaderGi.name().toLowerCase(Locale.ROOT),
+						this.shaderVolumetrics.name().toLowerCase(Locale.ROOT),
+						this.shaderBloom.name().toLowerCase(Locale.ROOT),
+						this.shaderLightingScale);
 		Path file = file();
 		try {
 			Files.createDirectories(file.getParent());
@@ -163,6 +281,112 @@ public final class MetalSettings {
 		} catch (IOException e) {
 			Mine2Metal.LOGGER.warn("Could not write {}", file, e);
 		}
+	}
+
+	public boolean shadersEnabled() {
+		return this.shaderPreset != ShaderPreset.OFF && (this.shaderShadows != ShadowQuality.OFF
+				|| this.shaderAo != AoQuality.OFF
+				|| this.shaderReflections != ReflectionQuality.OFF
+				|| this.shaderGi != GiQuality.OFF
+				|| this.shaderVolumetrics != VolumetricQuality.OFF
+				|| this.shaderBloom != BloomQuality.OFF);
+	}
+
+	public void applyShaderPreset(ShaderPreset preset) {
+		this.shaderPreset = preset;
+		switch (preset) {
+			case OFF -> {
+				this.shaderShadows = ShadowQuality.OFF;
+				this.shaderAo = AoQuality.OFF;
+				this.shaderReflections = ReflectionQuality.OFF;
+				this.shaderGi = GiQuality.OFF;
+				this.shaderVolumetrics = VolumetricQuality.OFF;
+				this.shaderBloom = BloomQuality.OFF;
+				this.shaderLightingScale = 75;
+			}
+			case LOW -> {
+				this.shaderShadows = ShadowQuality.LOW;
+				this.shaderAo = AoQuality.LOW;
+				this.shaderReflections = ReflectionQuality.LOW;
+				this.shaderGi = GiQuality.LOW;
+				this.shaderVolumetrics = VolumetricQuality.LOW;
+				this.shaderBloom = BloomQuality.LOW;
+				this.shaderLightingScale = 50;
+			}
+			case MEDIUM -> {
+				this.shaderShadows = ShadowQuality.MEDIUM;
+				this.shaderAo = AoQuality.MEDIUM;
+				this.shaderReflections = ReflectionQuality.MEDIUM;
+				this.shaderGi = GiQuality.MEDIUM;
+				this.shaderVolumetrics = VolumetricQuality.MEDIUM;
+				this.shaderBloom = BloomQuality.MEDIUM;
+				this.shaderLightingScale = 75;
+			}
+			case HIGH -> {
+				this.shaderShadows = ShadowQuality.HIGH;
+				this.shaderAo = AoQuality.MEDIUM;
+				this.shaderReflections = ReflectionQuality.HIGH;
+				this.shaderGi = GiQuality.HIGH;
+				this.shaderVolumetrics = VolumetricQuality.HIGH;
+				this.shaderBloom = BloomQuality.HIGH;
+				this.shaderLightingScale = 75;
+			}
+			case ULTRA -> {
+				this.shaderShadows = ShadowQuality.ULTRA;
+				this.shaderAo = AoQuality.HIGH;
+				this.shaderReflections = ReflectionQuality.ULTRA;
+				this.shaderGi = GiQuality.HIGH;
+				this.shaderVolumetrics = VolumetricQuality.HIGH;
+				this.shaderBloom = BloomQuality.HIGH;
+				this.shaderLightingScale = 75;
+			}
+			case CUSTOM -> {
+				if (!this.shadersEnabled()) {
+					this.shaderShadows = ShadowQuality.MEDIUM;
+					this.shaderAo = AoQuality.MEDIUM;
+					this.shaderReflections = ReflectionQuality.MEDIUM;
+					this.shaderGi = GiQuality.MEDIUM;
+					this.shaderVolumetrics = VolumetricQuality.MEDIUM;
+					this.shaderBloom = BloomQuality.MEDIUM;
+					this.shaderLightingScale = 75;
+				}
+			}
+		}
+	}
+
+	public void syncShaderPreset() {
+		if (this.shaderShadows == ShadowQuality.OFF && this.shaderAo == AoQuality.OFF
+				&& this.shaderReflections == ReflectionQuality.OFF && this.shaderGi == GiQuality.OFF
+				&& this.shaderVolumetrics == VolumetricQuality.OFF && this.shaderBloom == BloomQuality.OFF) {
+			this.shaderPreset = ShaderPreset.OFF;
+		} else if (this.shaderShadows == ShadowQuality.LOW && this.shaderAo == AoQuality.LOW
+				&& this.shaderReflections == ReflectionQuality.LOW && this.shaderGi == GiQuality.LOW
+				&& this.shaderVolumetrics == VolumetricQuality.LOW && this.shaderBloom == BloomQuality.LOW
+				&& this.shaderLightingScale == 50) {
+			this.shaderPreset = ShaderPreset.LOW;
+		} else if (this.shaderShadows == ShadowQuality.MEDIUM && this.shaderAo == AoQuality.MEDIUM
+				&& this.shaderReflections == ReflectionQuality.MEDIUM && this.shaderGi == GiQuality.MEDIUM
+				&& this.shaderVolumetrics == VolumetricQuality.MEDIUM && this.shaderBloom == BloomQuality.MEDIUM
+				&& this.shaderLightingScale == 75) {
+			this.shaderPreset = ShaderPreset.MEDIUM;
+		} else if (this.shaderShadows == ShadowQuality.HIGH && this.shaderAo == AoQuality.MEDIUM
+				&& this.shaderReflections == ReflectionQuality.HIGH && this.shaderGi == GiQuality.HIGH
+				&& this.shaderVolumetrics == VolumetricQuality.HIGH && this.shaderBloom == BloomQuality.HIGH
+				&& this.shaderLightingScale == 75) {
+			this.shaderPreset = ShaderPreset.HIGH;
+		} else if (this.shaderShadows == ShadowQuality.ULTRA && this.shaderAo == AoQuality.HIGH
+				&& this.shaderReflections == ReflectionQuality.ULTRA && this.shaderGi == GiQuality.HIGH
+				&& this.shaderVolumetrics == VolumetricQuality.HIGH && this.shaderBloom == BloomQuality.HIGH
+				&& this.shaderLightingScale == 75) {
+			this.shaderPreset = ShaderPreset.ULTRA;
+		} else {
+			this.shaderPreset = ShaderPreset.CUSTOM;
+		}
+	}
+
+	public static int clampShaderLightingScale(int percent) {
+		int stepped = Math.round(percent / (float) SHADER_LIGHTING_SCALE_STEP) * SHADER_LIGHTING_SCALE_STEP;
+		return Math.clamp(stepped, MIN_SHADER_LIGHTING_SCALE, MAX_SHADER_LIGHTING_SCALE);
 	}
 
 	public static int clampScale(int percent) {
@@ -204,6 +428,17 @@ public final class MetalSettings {
 			return Upscaling.valueOf(value.trim().toUpperCase(Locale.ROOT));
 		} catch (IllegalArgumentException e) {
 			return Upscaling.OFF;
+		}
+	}
+
+	private static <E extends Enum<E>> E parseEnum(Class<E> type, String value, E fallback) {
+		if (value == null) {
+			return fallback;
+		}
+		try {
+			return Enum.valueOf(type, value.trim().toUpperCase(Locale.ROOT));
+		} catch (IllegalArgumentException e) {
+			return fallback;
 		}
 	}
 

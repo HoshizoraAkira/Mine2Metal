@@ -5,6 +5,7 @@ import com.mojang.blaze3d.pipeline.TextureTarget;
 import com.mojang.renderpearl.api.textures.GpuTexture;
 import dev.mine2metal.config.MetalSettings;
 import net.minecraft.client.renderer.state.level.CameraRenderState;
+import net.minecraft.client.renderer.state.level.SkyRenderState;
 import org.joml.Matrix4f;
 import org.jspecify.annotations.Nullable;
 
@@ -18,6 +19,7 @@ import java.util.Objects;
 final class WorldFrame {
 	final RenderTarget main;
 	final CameraRenderState camera;
+	final @Nullable SkyRenderState sky;
 	/** The upscaling this world pass began with. */
 	final MetalSettings.Upscaling upscaling;
 
@@ -43,12 +45,22 @@ final class WorldFrame {
 	final Matrix4f projection = new Matrix4f();
 	boolean projectionCaptured;
 
+	/** Whether the world shader's per-frame data is gathered, and whether it lit the terrain from the G-buffer. */
+	boolean shaderPrepared;
+	boolean shaderLit;
+	/** The camera is under water and the world shader draws the water fog, in place of vanilla's. */
+	boolean underwater;
+	/** Between the world shader's two water calls, while the translucent terrain draws with the G-buffer. */
+	boolean waterOpen;
+	/** Whether the world shader's post pass and the upscaler have run on this frame's world yet; at most once a frame. */
+	boolean shaded;
 	/** Whether frame generation and EDR output have taken the world yet; at most once a frame. */
 	boolean captured;
 
-	WorldFrame(RenderTarget main, CameraRenderState camera, MetalSettings.Upscaling upscaling) {
+	WorldFrame(RenderTarget main, CameraRenderState camera, @Nullable SkyRenderState sky, MetalSettings.Upscaling upscaling) {
 		this.main = main;
 		this.camera = camera;
+		this.sky = sky;
 		this.upscaling = upscaling;
 	}
 

@@ -201,4 +201,61 @@ public final class MetalRenderer {
 		MetalDevice current = device;
 		return current != null && current.encoder().upscaleFsr1((MetalTexture) input, (MetalTexture) output, sharpness);
 	}
+
+	/** Direct CPU address of the 128x128x128 shared voxel buffer (2 MB), or 0 when Metal is not active. */
+	public static long shaderVoxelBuffer() {
+		MetalDevice current = device;
+		return current != null ? current.encoder().shaderVoxelBuffer() : 0L;
+	}
+
+	/** The CPU changed z slices zMin..zMax (0..127) of the voxel grid; the GPU copies take those slices. */
+	public static void shaderVoxelsChanged(int zMin, int zMax) {
+		MetalDevice current = device;
+		if (current != null) {
+			current.encoder().shaderVoxelsChanged(zMin, zMax);
+		}
+	}
+
+	/** Makes the next render pass the main world pass, which gets the world shader's G-buffer; false disarms it. */
+	public static void armWorldGbuffer(boolean armed) {
+		MetalDevice current = device;
+		if (current != null) {
+			current.encoder().armWorldGbuffer(armed);
+		}
+	}
+
+	/**
+	 * Lights the opaque terrain just drawn into the main world pass from its G-buffer and draws the sky; the pass then
+	 * goes on without the G-buffer. False if the pass has no G-buffer (shaders off, or Sodium's shader not patched).
+	 */
+	public static boolean deferredWorldShader(int[] quality, float[] matrices, float[] environment, float[] lights, int lightCount) {
+		MetalDevice current = device;
+		return current != null && current.encoder().deferredWorldShader(quality, matrices, environment, lights, lightCount);
+	}
+
+	/** The translucent terrain is next: keeps the scene behind it and gives it the G-buffer, for the water. */
+	public static boolean beginWater() {
+		MetalDevice current = device;
+		return current != null && current.encoder().beginWater();
+	}
+
+	/** The translucent terrain is drawn: redraws its water from the G-buffer. */
+	public static boolean endWater(int[] quality, float[] matrices, float[] environment) {
+		MetalDevice current = device;
+		return current != null && current.encoder().endWater(quality, matrices, environment);
+	}
+
+	/** Bloom and light shafts over the finished world. */
+	public static boolean postWorldShader(GpuTexture color, GpuTexture depth, int[] quality, float[] matrices, float[] environment) {
+		MetalDevice current = device;
+		return current != null && current.encoder().postWorldShader((MetalTexture) color, (MetalTexture) depth, quality, matrices, environment);
+	}
+
+	/** Releases the world shader textures and voxel buffer when shaders are turned off. */
+	public static void releaseWorldShader() {
+		MetalDevice current = device;
+		if (current != null) {
+			current.encoder().releaseWorldShader();
+		}
+	}
 }

@@ -3,8 +3,12 @@
 	"package": "dev.mine2metal.mixin",
 	"compatibilityLevel": "JAVA_25",
 	"client": [
+		"ClientLevelMixin",
 		"DebugEntryFpsMixin",
+		"FogRendererMixin",
 		"GameRendererMixin",
+		"GlslCompilerMixin",
+		"LevelRendererMixin",
 		"PreferredGraphicsApiMixin",
 		"RenderTargetAccessor",
 		"TitleScreenMixin",
