@@ -1,144 +1,144 @@
 # mine2metal
 
-Mod Fabric yang merender Minecraft Java dengan **Apple Metal** di Mac Apple silicon, lewat lapisan GPU `renderpearl` milik Minecraft sendiri, dan dirancang agar tetap berjalan bersama Sodium. Di atasnya ada upscaling MetalFX dan AMD FSR, frame generation MetalFX dan FSR 3.1, keluaran HDR (EDR), dan shader dunia bawaan (*Natural Cinematic*) yang ditulis langsung dalam Metal Shading Language.
+A Fabric mod that renders Minecraft Java with **Apple Metal** on Macs with Apple silicon, through Minecraft's own `renderpearl` graphics layer, and is built to run alongside Sodium. On top of the backend it adds MetalFX and AMD FSR upscaling, MetalFX and FSR 3.1 frame generation, HDR (EDR) output, and a built-in set of world shaders ("Natural Cinematic") written directly in Metal Shading Language.
 
-> **In English:** mine2metal renders Minecraft with Apple's Metal on Macs with Apple silicon instead of OpenGL, which macOS has long stopped improving. It plugs into Minecraft's own graphics layer and works alongside Sodium, then adds MetalFX/FSR upscaling, MetalFX/FSR 3.1 frame generation, HDR (EDR) output and a built-in deferred shader pack written in MSL. Requirements: a Mac with Apple silicon (M1 or later), macOS 14 or later, Minecraft 26.3 and Fabric Loader 0.20.1 or later. On any other computer the mod steps aside and the game uses its usual graphics API. The documentation under `docs/` is in Indonesian; the Modrinth/CurseForge description in English is in [docs/rilis.md](docs/rilis.md).
+![Minecraft 26.3 with Sodium, rendered with Metal](docs/screenshots/m6-world-sodium.png)
 
-![Dunia Minecraft 26.3 dengan Sodium, dirender dengan Metal](docs/screenshots/m6-world-sodium.png)
+Status: **0.0.1, ready for public testing**. All milestones (M1–M14) and the follow-up roadmap (R1–R9) are done; the automated tests pass under Metal API validation on Metal 4 and Metal 3. Still experimental: it has been tested on one Mac so far (see [Test results](#test-results)), and mods that call OpenGL directly will not draw.
 
-Status: **0.0.1, siap diuji publik**. Semua milestone (M1–M14) dan roadmap lanjutan (R1–R9) selesai; uji otomatis dan validasi Metal API lolos di Metal 4 dan Metal 3. Masih eksperimental: baru diuji di satu Mac (lihat [Hasil pengujian](#hasil-pengujian)), dan mod yang memanggil OpenGL langsung tidak akan menggambar.
+The detailed documentation under `docs/` is written in Indonesian; this README covers everything needed to use, build and contribute to the mod.
 
-## Isi
+## Contents
 
-- [Fitur](#fitur)
-- [Persyaratan](#persyaratan)
-- [Instalasi](#instalasi)
-- [Pengaturan di game](#pengaturan-di-game)
-- [Hasil pengujian](#hasil-pengujian)
-- [Cara kerja dan struktur kode](#cara-kerja-dan-struktur-kode)
-- [Dokumentasi](#dokumentasi)
-- [Build, uji, dan debug](#build-uji-dan-debug)
-- [Referensi dan kredit](#referensi-dan-kredit)
-- [Lisensi dan etika](#lisensi-dan-etika)
-- [Batasan yang diketahui](#batasan-yang-diketahui)
-- [Berkontribusi](#berkontribusi)
+- [Features](#features)
+- [Requirements](#requirements)
+- [Installation](#installation)
+- [In-game settings](#in-game-settings)
+- [Test results](#test-results)
+- [How it works and code layout](#how-it-works-and-code-layout)
+- [Documentation](#documentation)
+- [Building, testing and debugging](#building-testing-and-debugging)
+- [References and credits](#references-and-credits)
+- [License and etiquette](#license-and-etiquette)
+- [Known limits](#known-limits)
+- [Contributing](#contributing)
 
-## Fitur
+## Features
 
-- **Backend Metal untuk `renderpearl`**: `GpuBackend`/`GpuDevice` milik Minecraft 26.3 diimplementasikan di atas Metal, dengan shader SPIR-V diterjemahkan ke MSL. Metal 4 (argument table, residency set) di macOS 26 atau lebih baru, Metal 3 di macOS 14–15. Hasil gambarnya nyaris identik piksel dengan OpenGL (≤ 0,2 % piksel berbeda > 8 level di uji otomatis).
-- **Kompatibel dengan Sodium** 0.9.3 (renderer chunk-nya berjalan di atas backend ini) dan dengan renderer chunk vanilla.
-- **Upscaling**: MetalFX Spatial, MetalFX Temporal (dengan motion vector dan reactive mask), AMD FSR 1, dan AMD FSR 3.1. Tangan dan HUD tetap di resolusi penuh.
-- **Frame generation**: MetalFX frame interpolation (macOS 26+) atau AMD FSR 3.1, dipacu ke refresh rate layar lewat `CAMetalDisplayLink`. Ada pengaman: frame gen *standby* saat game sudah mencapai refresh rate sendiri, dan mematikan diri kalau biayanya lebih besar daripada manfaatnya.
-- **HDR (EDR)**: bagian dunia yang paling terang dinaikkan di atas putih SDR pada layar yang mendukung; GUI tetap SDR.
-- **Shader dunia bawaan** (preset Low/Medium/High/Ultra/Custom): G-buffer dari terrain Sodium, bayangan voxel DDA dua tingkat + screen-space, GTAO, awan volumetrik, atmosfer, air dengan refleksi screen-space, bloom, light shafts, tonemap ACES. Detailnya di [docs/metal-shaders.md](docs/metal-shaders.md).
-- **Halaman pengaturan** di Video Settings milik Sodium (atau tombol "Metal Settings..." tanpa Sodium), tersedia dalam bahasa Inggris dan Indonesia.
-- **Paket `.mrpack`** sekali klik untuk Modrinth App dan Prism Launcher.
+- **A Metal backend for `renderpearl`**: Minecraft 26.3's `GpuBackend`/`GpuDevice` SPI implemented on Metal, with the SPIR-V shaders translated to MSL. Metal 4 (argument tables, residency sets) on macOS 26 or later, Metal 3 on macOS 14 and 15. The picture matches OpenGL almost pixel for pixel (≤ 0.2 % of pixels differ by more than 8 levels in the automated tests).
+- **Works with Sodium** 0.9.3 (its chunk renderer runs on this backend) and with the vanilla chunk renderer.
+- **Upscaling**: MetalFX Spatial, MetalFX Temporal (with motion vectors and a reactive mask), AMD FSR 1 and AMD FSR 3.1. The hand and the HUD stay at full resolution.
+- **Frame generation**: MetalFX frame interpolation (macOS 26+) or AMD FSR 3.1, paced to the display's refresh rate through `CAMetalDisplayLink`. A guard puts it on standby while the game reaches the refresh rate by itself, and switches it off when it costs more than it gives.
+- **HDR (EDR)**: the world's highlights go brighter than SDR white on displays that support it; the GUI stays SDR.
+- **Built-in world shaders** (presets Low / Medium / High / Ultra / Custom): a G-buffer filled by Sodium's terrain, two-level voxel DDA plus screen-space shadows, GTAO, volumetric clouds, an atmosphere, water with screen-space reflections, bloom, light shafts, ACES tone mapping. Details in [docs/metal-shaders.md](docs/metal-shaders.md).
+- **A settings page** in Sodium's Video Settings (or a "Metal Settings..." button without Sodium), in English and Indonesian.
+- **A one-click `.mrpack`** for the Modrinth App and Prism Launcher.
 
-## Persyaratan
+## Requirements
 
-- Mac dengan Apple silicon (M1 atau lebih baru); macOS 14 atau lebih baru (Metal 4 butuh macOS 26).
-- Minecraft Java 26.3, Fabric Loader ≥ 0.20.1, Java 25 (bawaan launcher).
-- Disarankan: Sodium `mc26.3-0.9.3-beta.1`. Fabric API tidak diperlukan.
+- A Mac with Apple silicon (M1 or later); macOS 14 or later (Metal 4 needs macOS 26).
+- Minecraft Java 26.3, Fabric Loader ≥ 0.20.1, Java 25 (the launcher's own).
+- Recommended: Sodium `mc26.3-0.9.3-beta.1`. Fabric API is not needed.
 
-Di Mac Intel, macOS lama, atau sistem lain, mod ini tidak melakukan apa-apa: game memakai OpenGL seperti biasa dan layar judul menampilkan alasannya.
+On Intel Macs, older macOS or other systems the mod does nothing: the game uses OpenGL as usual and the title screen says why.
 
-## Instalasi
+## Installation
 
-**Sekali klik (Modrinth App atau Prism Launcher):** buka file `mine2metal-<versi>.mrpack` (dari `./gradlew mrpack`, di `build/distributions/`).
-- Modrinth App: *Add instance* → *Import* → pilih file `.mrpack`.
-- Prism Launcher: *Add Instance* → *Import* → pilih file `.mrpack`.
+**One click (Modrinth App or Prism Launcher):** open `mine2metal-<version>.mrpack` (from the [releases](https://github.com/HoshizoraAkira/Mine2Metal/releases), or `./gradlew mrpack` into `build/distributions/`).
+- Modrinth App: *Add instance* → *Import* → pick the `.mrpack`.
+- Prism Launcher: *Add Instance* → *Import* → pick the `.mrpack`.
 
-Paket ini memasang Minecraft 26.3, Fabric Loader 0.20.1, Sodium 0.9.3 (diunduh launcher dari Modrinth, bukan dibundel), dan mine2metal.
+The pack installs Minecraft 26.3, Fabric Loader 0.20.1, Sodium 0.9.3 (downloaded by the launcher from Modrinth, not bundled) and mine2metal.
 
-**Manual (launcher resmi atau launcher lain):**
-1. Pasang [Fabric Loader](https://fabricmc.net/use/installer/) 0.20.1 atau lebih baru untuk Minecraft 26.3.
-2. Taruh `mine2metal-<versi>.jar` di folder `mods` (bawaan: `~/Library/Application Support/minecraft/mods`).
-3. Disarankan: taruh juga [Sodium](https://modrinth.com/mod/sodium) untuk Minecraft 26.3 di folder yang sama.
-4. Jalankan game. Di Options → Video Settings → Graphics API, biarkan **Default** supaya Metal dipakai. Tekan F3: kolom kanan menampilkan `Metal 4 (mine2metal)` atau `Metal 3 (mine2metal)`.
+**Manual (official launcher or any other):**
+1. Install [Fabric Loader](https://fabricmc.net/use/installer/) 0.20.1 or later for Minecraft 26.3.
+2. Put `mine2metal-<version>.jar` in the `mods` folder (default: `~/Library/Application Support/minecraft/mods`).
+3. Recommended: put [Sodium](https://modrinth.com/mod/sodium) for Minecraft 26.3 in the same folder.
+4. Start the game. In Options → Video Settings → Graphics API, leave **Default** so Metal is used. Press F3: the right column shows `Metal 4 (mine2metal)` or `Metal 3 (mine2metal)`.
 
-## Pengaturan di game
+## In-game settings
 
-- Dengan Sodium: Options → Video Settings → di sidebar kiri "mine2metal" → halaman **Metal** dan **Metal Shaders**.
-- Tanpa Sodium: Options → Video Settings → tombol **Metal Settings...** di bagian bawah.
+- With Sodium: Options → Video Settings → "mine2metal" in the left sidebar → the **Metal** and **Metal Shaders** pages.
+- Without Sodium: Options → Video Settings → the **Metal Settings...** button at the bottom.
 
-| Pengaturan | Isi |
+| Setting | What it does |
 |---|---|
-| Versi Metal | Otomatis / Metal 4 / Metal 3 (berlaku setelah restart) |
-| Upscaling | Mati / MetalFX Spatial / MetalFX Temporal / FSR 1 / FSR 3.1, dengan Render Scale 50–100 % |
-| Pembuatan Frame | Mati / MetalFX / FSR 3.1: satu frame buatan di antara setiap pasang frame, sampai batas refresh rate |
-| HDR | EDR dengan slider Kecerahan HDR (125–400 % putih SDR) |
-| Shader Preset | Off / Low / Medium / High / Ultra / Custom; mengubah preset langsung menggerakkan opsi turunannya (bayangan, GI, AO, refleksi & air, godrays, bloom, lighting scale) |
+| Metal version | Auto / Metal 4 / Metal 3 (takes effect after a restart) |
+| Upscaling | Off / MetalFX Spatial / MetalFX Temporal / FSR 1 / FSR 3.1, with a render scale of 50–100 % |
+| Frame generation | Off / MetalFX / FSR 3.1: one generated frame between each pair the game renders, up to the refresh rate |
+| HDR | EDR output with an HDR brightness slider (125–400 % of SDR white) |
+| Shader preset | Off / Low / Medium / High / Ultra / Custom; changing the preset moves the options under it (shadows, GI, AO, reflections & water, godrays, bloom, lighting scale) |
 
-Perubahan langsung berlaku dan disimpan di `config/mine2metal.properties`. Mematikan Metal: Graphics API → OpenGL (lalu restart), `enabled=false` di file config, atau `-Dmine2metal.enabled=false`.
+Changes apply at once and are saved to `config/mine2metal.properties`. To turn Metal off: Graphics API → OpenGL (then restart), `enabled=false` in the config file, or `-Dmine2metal.enabled=false`.
 
-## Hasil pengujian
+## Test results
 
-Semua angka di bawah diukur pada **satu mesin**: MacBook Air 15" M3 (Mac15,13, 16 GB, tanpa kipas, panel 60 Hz, desktop 1920×1243 point), macOS 27.0.1, listrik AC. Chip lain (M1, M2, M4 dan seterusnya) **belum diukur**; perkiraan untuk M1 ada di [docs/roadmap.md](docs/roadmap.md#optimasi-shader-dunia-dan-jalur-cpu-2026-10-30). MacBook Air memanas selama benchmark, dan waktu GPU per frame bisa naik sampai 2× tanpa perubahan beban, jadi rentang angkanya lebar; angka tertinggi diukur saat thermal state "nominal". Metode dan tabel lengkapnya ada di [docs/roadmap.md](docs/roadmap.md).
+Every number below was measured on **one machine**: a MacBook Air 15" M3 (Mac15,13, 16 GB, fanless, 60 Hz panel, desktop at 1920×1243 points), macOS 27.0.1, on AC power. Other chips (M1, M2, M4 and later) **have not been measured**; an estimate for the M1 is in [docs/roadmap.md](docs/roadmap.md#optimasi-shader-dunia-dan-jalur-cpu-2026-10-30). The MacBook Air heats up during benchmarks and GPU time per frame can double without any change in load, so the ranges are wide; the highest numbers were taken in the "nominal" thermal state. Methods and full tables are in [docs/roadmap.md](docs/roadmap.md).
 
-**Backend saja, tanpa shader** (gametest `./gradlew runClientGameTest`, 2026-10-27; vsync mati, frame rate tanpa batas, FPS rata-rata 10 detik):
+**Backend only, no shaders** (game test `./gradlew runClientGameTest`, 2026-10-27; vsync off, uncapped frame rate, 10-second average FPS):
 
-| Konfigurasi | Ringan: 854×480, melihat ke bawah dari 40 blok | Berat: 1920×1080, render distance 16, horizon |
+| Configuration | Light: 854×480, looking down from 40 blocks | Heavy: 1920×1080, render distance 16, horizon |
 |---|---|---|
 | Metal + Sodium | 2045 – 2772 FPS | 664 – 1528 FPS |
 | OpenGL + Sodium | 321 – 488 FPS | 200 – 273 FPS |
-| Metal tanpa Sodium | 1794 FPS | 416 FPS |
-| OpenGL tanpa Sodium | 224 FPS | 244 FPS |
+| Metal without Sodium | 1794 FPS | 416 FPS |
+| OpenGL without Sodium | 224 FPS | 244 FPS |
 
-Catatan jujur: dunia gametest kecil dan hampir tanpa air. Di dunia survival sungguhan pemain, Metal + Sodium di fullscreen 1920×1243 berjalan sekitar 150–200 FPS, dibatasi CPU dan pekerjaan Minecraft sendiri (profil JFR: kode mine2metal ±10 % waktu render thread). GPU hanya ±0,7–0,9 ms per frame di 1900×1200.
+An honest note: the game test world is small and has almost no water. In the author's real survival worlds, Metal + Sodium in fullscreen at 1920×1243 runs around 150–200 FPS, bound by the CPU and Minecraft's own work (JFR profile: mine2metal's code is about 10 % of the render thread). The GPU takes only about 0.7–0.9 ms per frame at 1900×1200.
 
-**Shader dunia bawaan** (gametest `-Dmine2metal.test.shadersOnly=true`, 2026-10-31, jendela 1600×900, render distance 12, Metal 4 dengan API validation menyala):
+**Built-in world shaders** (game test `-Dmine2metal.test.shadersOnly=true`, 2026-10-31, 1600×900 window, render distance 12, Metal 4 with API validation on):
 
-| Skenario | FPS |
+| Scene | FPS |
 |---|---|
-| Dari atas, shader mati | 1720 |
-| Dari atas, preset High | 360 |
-| Dari atas, preset Ultra | 274 |
-| Di tanah, High, tanpa upscaling | 289 |
-| Di tanah, High, MetalFX Temporal 67 % | 241 |
+| From above, shaders off | 1720 |
+| From above, preset High | 360 |
+| From above, preset Ultra | 274 |
+| On the ground, High, no upscaling | 289 |
+| On the ground, High, MetalFX Temporal at 67 % | 241 |
 
-Waktu GPU per pass shader di 1920×1243 (lighting scale 75 %, adegan sintetis `tools/shaderbench`, median): preset High ±3,7 ms total (air + refleksi 1,35, lighting 0,78, resolve 0,50, salinan air + skyline 0,27, bloom 0,23, awan 0,19, post 0,16, light tiles 0,07), turun dari 5,1 ms sebelum optimasi 2026-10-30 tanpa mengubah hasil gambar (dibandingkan per piksel). Ultra ±3,9 ms, Medium ±3,5 ms, Low (50 %) ±2,4 ms.
+GPU time per shader pass at 1920×1243 (lighting scale 75 %, synthetic scene in `tools/shaderbench`, median): preset High about 3.7 ms in total (water + reflections 1.35, lighting 0.78, resolve 0.50, water copies + skyline 0.27, bloom 0.23, clouds 0.19, post 0.16, light tiles 0.07), down from 5.1 ms before the optimisation of 2026-10-30 without changing the picture (compared per pixel). Ultra about 3.9 ms, Medium about 3.5 ms, Low (50 %) about 2.4 ms.
 
-**Upscaling dan frame generation** (biaya GPU di 1080p–1200p): MetalFX Temporal ±3 ms, FSR 3.1 upscaler ±1,1 ms, MetalFX Spatial ±0,8 ms, FSR 1 ±0,5 ms. Di Minecraft biasa tanpa shader itu lebih mahal daripada seluruh frame, jadi upscaling hanya menguntungkan di Mac yang GPU-bound (misalnya dengan shader Ultra atau resolusi besar). Frame generation menahan game di separuh refresh rate dan baru berguna saat game di bawah refresh rate; pengamannya diuji dengan FPS cap 40 → 59–60 FPS tampil (FSR 3 maupun MetalFX). Kualitas temporal: PSNR 30–35 dB terhadap render asli, turun ±1 dB tepat setelah kamera berputar.
+**Upscaling and frame generation** (GPU cost at 1080p–1200p): MetalFX Temporal about 3 ms, FSR 3.1 upscaler about 1.1 ms, MetalFX Spatial about 0.8 ms, FSR 1 about 0.5 ms. In plain Minecraft without shaders that is more than the whole frame, so upscaling only pays on a GPU-bound Mac (for example with the Ultra shaders or a large window). Frame generation holds the game at half the refresh rate and only helps when the game is below it; its guard was tested with a 40 FPS cap → 59–60 FPS on screen (FSR 3 and MetalFX alike). Temporal quality: 30–35 dB PSNR against the native render, about 1 dB lower right after the camera turns.
 
-**Kebenaran**: gametest lolos di bawah `MTL_DEBUG_LAYER=1` (Metal API validation) untuk Metal 4 dan Metal 3, termasuk shader, HDR, frame gen, Nether dan End; screenshot Metal vs OpenGL berbeda ≤ 0,21 % piksel (> 8 level). Uji manual yang masih terbuka ada di [docs/uji-manual.md](docs/uji-manual.md).
+**Correctness**: the game tests pass under `MTL_DEBUG_LAYER=1` (Metal API validation) on Metal 4 and Metal 3, including the shaders, HDR, frame generation, the Nether and the End; Metal vs OpenGL screenshots differ in ≤ 0.21 % of pixels (> 8 levels). The manual checks still open are listed in [docs/uji-manual.md](docs/uji-manual.md).
 
-## Cara kerja dan struktur kode
+## How it works and code layout
 
-Minecraft 26.3 memisahkan rendernya ke SPI `renderpearl` (`GpuBackend`, `GpuDevice`, `CommandEncoder`, ...). Mod ini menaruh implementasi Metal di urutan pertama backend yang dicoba, menerjemahkan shader SPIR-V Mojang ke MSL saat runtime, dan menjalankan semua perintah GPU lewat dylib Objective-C yang dipanggil dengan Java FFM (tanpa JNI). Sodium memakai SPI yang sama, jadi renderer chunk-nya ikut berjalan di Metal.
+Minecraft 26.3 puts its rendering behind the `renderpearl` SPI (`GpuBackend`, `GpuDevice`, `CommandEncoder`, ...). This mod places a Metal implementation first in the list of backends to try, translates Mojang's SPIR-V shaders to MSL at run time, and issues every GPU command through an Objective-C dylib called with Java's FFM API (no JNI). Sodium uses the same SPI, so its chunk renderer runs on Metal too.
 
-| Path | Isi |
+| Path | Contents |
 |---|---|
-| `src/main/java/dev/mine2metal/metal/MetalBackend.java` | `GpuBackend`: window SDL dengan flag Metal, pembuatan device |
-| `src/main/java/dev/mine2metal/metal/MetalDevice.java` | `GpuDeviceBackend`: info device, buffer, tekstur, sampler, pipeline |
-| `src/main/java/dev/mine2metal/metal/MetalCommandEncoder.java` | Perekaman perintah, submit, fence, cache view texel buffer |
-| `src/main/java/dev/mine2metal/metal/MetalSurface.java` | `CAMetalLayer` dan present |
-| `src/main/java/dev/mine2metal/metal/ShaderTranslator.java` | SPIR-V → MSL dengan SPIRV-Cross (lewat `lwjgl-spvc`) |
-| `src/main/java/dev/mine2metal/metal/MetalRenderPipeline.java` | Library MSL, layout vertex/blend, pipeline state per format |
-| `src/main/java/dev/mine2metal/metal/MetalRenderPass.java` | Binding uniform, scissor, dan semua varian draw |
-| `src/main/java/dev/mine2metal/metal/MetalNative.java` | Binding FFM ke `libmine2metal.dylib` |
-| `src/main/java/dev/mine2metal/frame/` | Alur per frame: upscaling, frame gen, HDR, shader dunia (`WorldShader`, `SodiumTerrain`) |
-| `src/main/java/dev/mine2metal/config/` | Pengaturan, halaman Sodium, layar vanilla |
-| `src/main/java/dev/mine2metal/mixin/` | Mixin: urutan backend, tangkapan proyeksi, G-buffer, tambalan GLSL Sodium |
-| `src/main/native/` | Library Objective-C (C ABI `m2m_*` di `mine2metal.h`): device, render, MetalFX, HDR, FSR, `shaders.m` + `world_shaders.metal` |
-| `src/main/native/fsr/glsl` | Pass FSR yang ditulis ulang untuk GPU Apple, terpisah dari file AMD |
-| `third_party/fidelityfx-1.1.4` | Bagian AMD FidelityFX SDK yang dipakai (MIT), disalin oleh `scripts/vendor-fidelityfx.sh` |
-| `tools/shaderbench` | Benchmark offline per pass shader, tanpa jendela Minecraft |
-| `src/gametest/` | Gametest klien Fabric: screenshot, FPS, PSNR, validasi, mode `shadersOnly`, `hdrOnly`, `walkOnly`, `pacing` |
+| `src/main/java/dev/mine2metal/metal/MetalBackend.java` | `GpuBackend`: the SDL window with the Metal flag, device creation |
+| `src/main/java/dev/mine2metal/metal/MetalDevice.java` | `GpuDeviceBackend`: device info, buffers, textures, samplers, pipelines |
+| `src/main/java/dev/mine2metal/metal/MetalCommandEncoder.java` | Command recording, submission, fences, the texel buffer view cache |
+| `src/main/java/dev/mine2metal/metal/MetalSurface.java` | `CAMetalLayer` and presentation |
+| `src/main/java/dev/mine2metal/metal/ShaderTranslator.java` | SPIR-V → MSL with SPIRV-Cross (through `lwjgl-spvc`) |
+| `src/main/java/dev/mine2metal/metal/MetalRenderPipeline.java` | MSL libraries, vertex/blend layouts, pipeline states per format |
+| `src/main/java/dev/mine2metal/metal/MetalRenderPass.java` | Uniform binding, scissor, every draw variant |
+| `src/main/java/dev/mine2metal/metal/MetalNative.java` | FFM bindings to `libmine2metal.dylib` |
+| `src/main/java/dev/mine2metal/frame/` | The per-frame flow: upscaling, frame generation, HDR, world shaders (`WorldShader`, `SodiumTerrain`) |
+| `src/main/java/dev/mine2metal/config/` | Settings, the Sodium page, the vanilla screen |
+| `src/main/java/dev/mine2metal/mixin/` | Mixins: backend order, projection capture, G-buffer, the GLSL patch for Sodium |
+| `src/main/native/` | The Objective-C library (C ABI `m2m_*` in `mine2metal.h`): device, rendering, MetalFX, HDR, FSR, `shaders.m` + `world_shaders.metal` |
+| `src/main/native/fsr/glsl` | FSR passes rewritten for Apple GPUs, kept apart from AMD's files |
+| `third_party/fidelityfx-1.1.4` | The parts of the AMD FidelityFX SDK that are used (MIT), copied by `scripts/vendor-fidelityfx.sh` |
+| `tools/shaderbench` | Offline per-pass shader benchmark, no Minecraft window needed |
+| `src/gametest/` | Fabric client game tests: screenshots, FPS, PSNR, validation, the `shadersOnly`, `hdrOnly`, `walkOnly` and `pacing` modes |
 
-## Dokumentasi
+## Documentation
 
-Semua dalam bahasa Indonesia, di `docs/`:
+All in Indonesian, under `docs/`:
 
-- [roadmap.md](docs/roadmap.md): milestone M1–M14, R1–R9, hasil uji otomatis, audit performa, optimasi shader, catatan bug dan keputusan berbasis data.
-- [riset-awal.md](docs/riset-awal.md): riset SPI `renderpearl` (diverifikasi dengan `javap` pada `client.jar`), Sodium di atas renderpearl, Metal 3 vs Metal 4, prior art, dan daftar sumber.
-- [metal-shaders.md](docs/metal-shaders.md): rancangan shader dunia bawaan (arsitektur G-buffer, model cahaya, tata letak memori, preset kualitas).
-- [fsr-frame-gen.md](docs/fsr-frame-gen.md): porting FSR 3.1 frame generation dan upscaler AMD ke Metal.
-- [uji-manual.md](docs/uji-manual.md): daftar periksa yang hanya bisa dinilai dengan bermain langsung.
-- [rilis.md](docs/rilis.md): cara membuat file rilis, isi halaman Modrinth/CurseForge.
+- [roadmap.md](docs/roadmap.md): milestones M1–M14 and R1–R9, automated test results, the performance audit, the shader optimisation, bug notes and data-driven decisions.
+- [riset-awal.md](docs/riset-awal.md): research on the `renderpearl` SPI (verified with `javap` on `client.jar`), Sodium on top of renderpearl, Metal 3 vs Metal 4, prior art and the list of sources.
+- [metal-shaders.md](docs/metal-shaders.md): the design of the built-in world shaders (G-buffer architecture, lighting model, memory layout, quality presets).
+- [fsr-frame-gen.md](docs/fsr-frame-gen.md): porting AMD's FSR 3.1 frame generation and upscalers to Metal.
+- [uji-manual.md](docs/uji-manual.md): the checklist of things that can only be judged by playing.
+- [rilis.md](docs/rilis.md): how to build the release files and the Modrinth/CurseForge page text.
 
-## Build, uji, dan debug
+## Building, testing and debugging
 
-Butuh JDK 25 atau lebih baru dan Xcode Command Line Tools (`xcrun clang`). Untuk membangun ulang shader FSR dari GLSL AMD: `glslangValidator` dan `spirv-cross` (keduanya di Homebrew).
+Needs JDK 25 or later and the Xcode Command Line Tools (`xcrun clang`). To rebuild the FSR shaders from AMD's GLSL: `glslangValidator` and `spirv-cross` (both in Homebrew).
 
 ```bash
 JAVA_HOME=/Library/Java/JavaVirtualMachines/openjdk.jdk/Contents/Home ./gradlew build mrpack
@@ -148,67 +148,67 @@ JAVA_HOME=/Library/Java/JavaVirtualMachines/openjdk.jdk/Contents/Home ./gradlew 
 JAVA_HOME=/Library/Java/JavaVirtualMachines/openjdk.jdk/Contents/Home ./gradlew runClient
 ```
 
-Uji otomatis (membuat dunia, mengambil screenshot ke `build/run/clientGameTest/screenshots/`, mencatat FPS di log):
+Automated tests (create a world, take screenshots into `build/run/clientGameTest/screenshots/`, log the FPS):
 
 ```bash
 MTL_DEBUG_LAYER=1 JAVA_HOME=/Library/Java/JavaVirtualMachines/openjdk.jdk/Contents/Home ./gradlew runClientGameTest
 ```
 
-Tambahkan `-PnoSodium` untuk menguji renderer chunk vanilla; `JAVA_TOOL_OPTIONS="-Dmine2metal.enabled=false"` untuk pembanding OpenGL; `-Dmine2metal.metal=3` untuk memaksa Metal 3; `-Dmine2metal.test.shadersOnly=true`, `hdrOnly`, `walkOnly`, atau `pacing` untuk bagian tertentu.
+Add `-PnoSodium` to test the vanilla chunk renderer; `JAVA_TOOL_OPTIONS="-Dmine2metal.enabled=false"` for an OpenGL comparison; `-Dmine2metal.metal=3` to force Metal 3; `-Dmine2metal.test.shadersOnly=true`, `hdrOnly`, `walkOnly` or `pacing` for one part only.
 
-Benchmark shader tanpa Minecraft:
+Shader benchmark without Minecraft:
 
 ```bash
 sh tools/shaderbench/build.sh build/shaderbench && build/shaderbench/shaderbench src/main/native/world_shaders.metal 1920 1243 75 3 60 dump.png
 ```
 
-Debug: `MTL_DEBUG_LAYER=1` (Metal API validation), `MTL_SHADER_VALIDATION=1` (pemeriksaan di dalam shader, lambat), `--renderDebugLabels` (nama encoder untuk Xcode GPU capture). Command buffer yang gagal dicatat sebagai `Metal: Command buffer failed ...` di log.
+Debugging: `MTL_DEBUG_LAYER=1` (Metal API validation), `MTL_SHADER_VALIDATION=1` (checks inside the shaders, slow), `--renderDebugLabels` (encoder names for Xcode GPU capture). A command buffer that fails on the GPU is logged as `Metal: Command buffer failed ...`.
 
-| Properti JVM | Fungsi |
+| JVM property | Effect |
 |---|---|
-| `-Dmine2metal.enabled=false` | Mematikan backend Metal tanpa melepas mod |
-| `-Dmine2metal.metal=3` | Memaksa Metal 3 |
-| `-Dmine2metal.dumpFrame=/path/frame.png` | Menyimpan frame yang dipresentasikan ke PNG |
-| `-Dmine2metal.stats=true` | Log tiap 5 detik: FPS, waktu GPU per frame, waktu CPU menunggu GPU, jumlah encoder, volume transfer |
-| `-Dmine2metal.passTimes=true` | Seperti `stats`, plus waktu GPU per pass (`M2M_SHADER_TIMES=1` untuk pass shader) |
-| `-Dmine2metal.labels=true` | Nama render encoder per pass, untuk Xcode GPU capture atau Instruments |
-| `-Dmine2metal.frameGenerationGuard=false` | Mematikan pengaman frame gen (untuk eksperimen) |
+| `-Dmine2metal.enabled=false` | Turns the Metal backend off without removing the mod |
+| `-Dmine2metal.metal=3` | Forces Metal 3 |
+| `-Dmine2metal.dumpFrame=/path/frame.png` | Saves the presented frame as a PNG |
+| `-Dmine2metal.stats=true` | Logs every 5 s: FPS, GPU time per frame, CPU time waiting for the GPU, encoder counts, transfer volume |
+| `-Dmine2metal.passTimes=true` | Like `stats`, plus GPU time per pass (`M2M_SHADER_TIMES=1` for the shader passes) |
+| `-Dmine2metal.labels=true` | Names render encoders per pass, for Xcode GPU capture or Instruments |
+| `-Dmine2metal.frameGenerationGuard=false` | Disables the frame generation guard (for experiments) |
 
-Saat memakai `runClient`, properti dioper lewat `JAVA_TOOL_OPTIONS`.
+With `runClient`, pass properties through `JAVA_TOOL_OPTIONS`.
 
-## Referensi dan kredit
+## References and credits
 
-Dokumentasi dan sumber yang dipakai selama pengembangan:
+Documentation and sources used during development:
 
-- **Mojang**: `client.jar` Minecraft 26.3 (SPI `renderpearl` diinspeksi dengan `javap`; tidak ada kode Mojang yang disertakan) dan metadata versi dari `piston-meta.mojang.com`.
-- **Apple Developer Documentation**: [Understanding the Metal 4 core API](https://developer.apple.com/documentation/metal/understanding-the-metal-4-core-api), [MTL4CommandQueue](https://developer.apple.com/documentation/metal/mtl4commandqueue), [MTL4ArgumentTable](https://developer.apple.com/documentation/metal/mtl4argumenttable), [MTLResidencySet](https://developer.apple.com/documentation/metal/mtlresidencyset), [MTL4Compiler](https://developer.apple.com/documentation/metal/mtl4compiler), [CAMetalLayer](https://developer.apple.com/documentation/quartzcore/cametallayer), [MTLIndirectCommandBuffer](https://developer.apple.com/documentation/metal/mtlindirectcommandbuffer), serta dokumentasi MetalFX (spatial/temporal scaler, frame interpolation) dan EDR.
-- **AMD FidelityFX SDK v1.1.4** ([GPUOpen-LibrariesAndSDKs/FidelityFX-SDK](https://github.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK), MIT): kode host dan shader GLSL FSR 1, FSR 3.1 upscaler, optical flow, dan frame interpolation. Bagian yang dipakai ada di `third_party/fidelityfx-1.1.4` beserta `LICENSE.txt`-nya, dan lisensinya ikut di dalam jar (`META-INF/licenses`). Pass yang ditulis ulang untuk GPU Apple disimpan terpisah dari file AMD.
-- **Sodium** ([CaffeineMC/sodium](https://github.com/CaffeineMC/sodium), lisensi Polyform Shield 1.0.0): sumbernya dibaca untuk memahami jalur `renderpearl`-nya, API config-nya, dan render list-nya. Sodium **tidak dibundel**; diunduh pemain atau launcher dari Modrinth.
-- **Fabric** (Loader, Loom, Fabric API client gametest; Apache 2.0) dan **Mixin**.
-- **LWJGL 3.4.3** (`lwjgl-sdl`, `lwjgl-spvc`): SDL untuk window dan **SPIRV-Cross** (Khronos, Apache 2.0) untuk SPIR-V → MSL. Shader FSR dibangun dengan **glslang** dan **spirv-cross** dari Homebrew.
-- **Prior art** yang dibaca sebagai pembanding arsitektur sebelum menulis: [noahdunnagan/mcopt](https://github.com/noahdunnagan/mcopt) (Apache 2.0; backend Metal lewat FFM, tanpa Sodium), [Kausik-Velaga/minecraft-metal-renderer](https://github.com/Kausik-Velaga/minecraft-metal-renderer) (MIT), [GaelQuinta/minecraft-metal-shaders](https://github.com/GaelQuinta/minecraft-metal-shaders) (Apache 2.0). Terima kasih kepada para pembuatnya; catatan perbandingannya ada di [docs/riset-awal.md](docs/riset-awal.md#6-prior-art).
-- **Arah visual** shader bawaan terinspirasi dari gaya *Complementary Reimagined* (EminGT); tidak ada kode atau aset shader pack yang dipakai.
-- Teknik yang dipakai di shader adalah teknik umum dari literatur grafika real-time: GTAO, interleaved gradient noise, voxel DDA (Amanatides & Woo), screen-space reflections dengan tabel skyline, bloom dual Kawase, tonemap ACES (fit Stephen Hill/Krzysztof Narkowicz), dan FSR/MetalFX seperti di atas.
+- **Mojang**: Minecraft 26.3's `client.jar` (the `renderpearl` SPI inspected with `javap`; no Mojang code is included) and the version metadata from `piston-meta.mojang.com`.
+- **Apple Developer Documentation**: [Understanding the Metal 4 core API](https://developer.apple.com/documentation/metal/understanding-the-metal-4-core-api), [MTL4CommandQueue](https://developer.apple.com/documentation/metal/mtl4commandqueue), [MTL4ArgumentTable](https://developer.apple.com/documentation/metal/mtl4argumenttable), [MTLResidencySet](https://developer.apple.com/documentation/metal/mtlresidencyset), [MTL4Compiler](https://developer.apple.com/documentation/metal/mtl4compiler), [CAMetalLayer](https://developer.apple.com/documentation/quartzcore/cametallayer), [MTLIndirectCommandBuffer](https://developer.apple.com/documentation/metal/mtlindirectcommandbuffer), and the MetalFX (spatial/temporal scaler, frame interpolation) and EDR documentation.
+- **AMD FidelityFX SDK v1.1.4** ([GPUOpen-LibrariesAndSDKs/FidelityFX-SDK](https://github.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK), MIT): host code and GLSL shaders for FSR 1, the FSR 3.1 upscaler, optical flow and frame interpolation. The parts used are in `third_party/fidelityfx-1.1.4` with their `LICENSE.txt`, and the license ships inside the jar (`META-INF/licenses`). The passes rewritten for Apple GPUs are kept apart from AMD's files.
+- **Sodium** ([CaffeineMC/sodium](https://github.com/CaffeineMC/sodium), Polyform Shield 1.0.0): its source was read to understand its `renderpearl` path, its config API and its render lists. Sodium is **not bundled**; players or launchers download it from Modrinth.
+- **Fabric** (Loader, Loom, the Fabric API client game test framework; Apache 2.0) and **Mixin**.
+- **LWJGL 3.4.3** (`lwjgl-sdl`, `lwjgl-spvc`): SDL for the window and **SPIRV-Cross** (Khronos, Apache 2.0) for SPIR-V → MSL. The FSR shaders are built with **glslang** and **spirv-cross** from Homebrew.
+- **Prior art** read as a comparison before writing this: [noahdunnagan/mcopt](https://github.com/noahdunnagan/mcopt) (Apache 2.0; a Metal backend through FFM, without Sodium), [Kausik-Velaga/minecraft-metal-renderer](https://github.com/Kausik-Velaga/minecraft-metal-renderer) (MIT), [GaelQuinta/minecraft-metal-shaders](https://github.com/GaelQuinta/minecraft-metal-shaders) (Apache 2.0). Thanks to their authors; the comparison notes are in [docs/riset-awal.md](docs/riset-awal.md#6-prior-art).
+- The **visual direction** of the built-in shaders is inspired by the look of *Complementary Reimagined* (EminGT); no shader pack code or assets are used.
+- The shader techniques are standard ones from the real-time graphics literature: GTAO, interleaved gradient noise, voxel DDA (Amanatides & Woo), screen-space reflections with a skyline table, dual Kawase bloom, the ACES tone mapping fit (Stephen Hill / Krzysztof Narkowicz), and FSR/MetalFX as above.
 
-Proyek ini dikembangkan dengan bantuan Claude (Anthropic) sebagai asisten pemrograman; keputusan desain, pengujian di mesin sungguhan, dan tanggung jawab atas kodenya ada pada pemilik proyek. Commit yang dibantu AI membawa trailer `Co-Authored-By`.
+This project was developed with the help of Claude (Anthropic) as a programming assistant; the design decisions, the testing on real hardware and the responsibility for the code are the project owner's.
 
-## Lisensi dan etika
+## License and etiquette
 
-- Kode mine2metal berlisensi **MIT** ([LICENSE](LICENSE)). Kode AMD FidelityFX yang disertakan tetap di bawah lisensi MIT AMD.
-- Minecraft adalah milik Mojang Studios/Microsoft. Proyek ini tidak berafiliasi dengan, dan tidak didukung oleh, Mojang, Microsoft, Apple, AMD, CaffeineMC, atau Fabric. Tidak ada aset atau kode Minecraft yang didistribusikan ulang.
-- Mod ini tidak mengubah mekanika permainan, tidak menyentuh jaringan, dan bersifat klien saja.
-- Kalau memakai bagian dari proyek ini di proyek lain, sertakan pemberitahuan lisensi MIT dan, untuk bagian FidelityFX, lisensi AMD.
+- mine2metal's code is licensed under **MIT** ([LICENSE](LICENSE)). The included AMD FidelityFX code stays under AMD's MIT license.
+- Minecraft is the property of Mojang Studios/Microsoft. This project is not affiliated with, or endorsed by, Mojang, Microsoft, Apple, AMD, CaffeineMC or Fabric. No Minecraft assets or code are redistributed.
+- The mod changes no game mechanics, touches no networking, and is client-side only.
+- If you use parts of this project elsewhere, keep the MIT license notice and, for the FidelityFX parts, AMD's license.
 
-## Batasan yang diketahui
+## Known limits
 
-- Hanya Mac Apple silicon dengan macOS ≥ 14; MetalFX frame interpolation dan Metal 4 butuh macOS 26.
-- Mod yang memanggil OpenGL langsung (bukan lewat `renderpearl`) tidak akan menggambar. Iris dan shader pack GLSL belum didukung; pakai shader bawaan.
-- Minecraft 26.3 di macOS merender di ukuran *point*, bukan piksel Retina penuh (framebuffer fullscreen "1920×1243", bukan 3840×2486).
-- Baru diuji pada M3. Laporan dari chip lain sangat membantu (lihat [Berkontribusi](#berkontribusi)).
-- Sodium hanya diuji dengan `mc26.3-0.9.3-beta.1`; deteksi terrain translucent untuk melewati tahap air membaca internal Sodium dan kembali ke jalur aman kalau internal itu berubah.
+- Apple silicon Macs with macOS ≥ 14 only; MetalFX frame interpolation and Metal 4 need macOS 26.
+- Mods that call OpenGL directly (not through `renderpearl`) will not draw. Iris and GLSL shader packs are not supported yet; use the built-in shaders.
+- Minecraft 26.3 on macOS renders at point size, not at full Retina pixel size (a fullscreen framebuffer is "1920×1243", not 3840×2486).
+- Tested on the M3 only. Reports from other chips help a lot (see [Contributing](#contributing)).
+- Sodium has only been tested with `mc26.3-0.9.3-beta.1`; the translucent-terrain check that skips the water stage reads Sodium internals and falls back to the safe path if they change.
 
-## Berkontribusi
+## Contributing
 
-Laporan bug dan pull request diterima di [HoshizoraAkira/Mine2Metal](https://github.com/HoshizoraAkira/Mine2Metal). Untuk laporan bug, sertakan: model Mac dan versi macOS, versi Minecraft/Fabric/Sodium, baris F3 kolom kanan (`Metal 3/4 (mine2metal)`), `logs/latest.log`, dan kalau bisa screenshot atau frame dari `-Dmine2metal.dumpFrame`. Angka FPS paling berguna bersama `-Dmine2metal.stats=true` dan keterangan ukuran jendela serta render distance.
+Bug reports and pull requests are welcome at [HoshizoraAkira/Mine2Metal](https://github.com/HoshizoraAkira/Mine2Metal). For a bug report, include: your Mac model and macOS version, the Minecraft/Fabric/Sodium versions, the F3 line in the right column (`Metal 3/4 (mine2metal)`), `logs/latest.log`, and if possible a screenshot or a frame from `-Dmine2metal.dumpFrame`. FPS numbers are most useful together with `-Dmine2metal.stats=true` and the window size and render distance.
 
-Sebelum mengirim PR: `./gradlew build` dan `MTL_DEBUG_LAYER=1 ./gradlew runClientGameTest` harus lolos; perubahan pada shader sebaiknya disertai angka `tools/shaderbench` dan perbandingan per piksel seperti di [docs/roadmap.md](docs/roadmap.md).
+Before sending a PR: `./gradlew build` and `MTL_DEBUG_LAYER=1 ./gradlew runClientGameTest` must pass; shader changes should come with `tools/shaderbench` numbers and a per-pixel comparison as in [docs/roadmap.md](docs/roadmap.md).
