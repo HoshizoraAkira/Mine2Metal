@@ -5,8 +5,13 @@
 	"name": "mine2metal",
 	"description": "Renders Minecraft with Apple Metal on Macs with Apple silicon, alongside Sodium, for higher frame rates than OpenGL. Adds MetalFX and AMD FSR upscaling, MetalFX and FSR 3.1 frame generation, and HDR (EDR) output.",
 	"authors": [
-		"Ahmad Naufal"
+		"HoshizoraAkira"
 	],
+	"contact": {
+		"homepage": "https://github.com/HoshizoraAkira/Mine2Metal",
+		"sources": "https://github.com/HoshizoraAkira/Mine2Metal",
+		"issues": "https://github.com/HoshizoraAkira/Mine2Metal/issues"
+	},
 	"license": "MIT",
 	"icon": "assets/mine2metal/icon.png",
 	"environment": "client",

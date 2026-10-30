@@ -42,4 +42,4 @@ Deskripsi (bahasa Inggris, untuk halaman proyek):
 ## Belum dilakukan (butuh tindakan pemilik)
 
 - Membuat proyek di Modrinth/CurseForge dan mengunggah file. Butuh akun dan token pemilik.
-- Tautan halaman, sumber kode, dan laporan bug di `fabric.mod.json`. Dikosongkan sampai ada repo publik.
+- Tautan halaman, sumber kode, dan laporan bug di `fabric.mod.json` sudah menunjuk https://github.com/HoshizoraAkira/Mine2Metal.
