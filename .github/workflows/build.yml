@@ -1,0 +1,144 @@
+# Builds the mod, native library included, from this repository's source on GitHub's macOS runners.
+# A pushed tag v<version> also publishes that build: a GitHub Release with a build provenance attestation and, once
+# MODRINTH_TOKEN (secret) and MODRINTH_PROJECT_ID (variable) are set, the same jar on Modrinth. Release files are only
+# ever made here, never on a developer's machine (docs/en/rilis.md).
+name: Build
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    # Apple silicon, macOS 26. The Xcode is pinned below so a rebuild can use the same compiler and SDK.
+    runs-on: macos-26
+    permissions:
+      contents: write # the GitHub Release
+      id-token: write # the provenance attestation
+      attestations: write
+    env:
+      XCODE_APP: /Applications/Xcode_26.6.app
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Select Xcode
+        run: sudo xcode-select -s "$XCODE_APP"
+
+      - uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
+        with:
+          distribution: temurin
+          java-version: 25
+
+      # Also checks gradle/wrapper/gradle-wrapper.jar against Gradle's published checksums.
+      - uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
+        with:
+          validate-wrappers: true
+
+      # glslangValidator and spirv-cross translate AMD's FSR shaders to Metal source (scripts/build-fsr-shaders.sh).
+      - name: Install shader tools
+        run: brew install glslang spirv-cross
+
+      - name: Build
+        run: ./gradlew build mrpack
+
+      - name: Record checksums and toolchain
+        run: |
+          set -eu
+          version="$(sed -n 's/^version=//p' gradle.properties)"
+          jar="build/libs/mine2metal-$version.jar"
+          mrpack="build/distributions/mine2metal-$version.mrpack"
+          # The dylib in the jar must be the one this run just compiled.
+          unzip -p "$jar" natives/macos-arm64/libmine2metal.dylib > "$RUNNER_TEMP/jar-dylib"
+          cmp "$RUNNER_TEMP/jar-dylib" build/native/libmine2metal.dylib
+          mkdir -p build/release
+          cp "$jar" "$mrpack" build/release/
+          {
+            echo "Built by $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID from commit $GITHUB_SHA"
+            echo
+            echo "SHA-256:"
+            (cd build/release && shasum -a 256 "mine2metal-$version.jar" "mine2metal-$version.mrpack")
+            (cd build/native && shasum -a 256 libmine2metal.dylib | sed 's|  |  (in the jar) natives/macos-arm64/|')
+            echo
+            echo "Toolchain:"
+            xcodebuild -version | tr '\n' ' '; echo
+            echo "macOS SDK $(xcrun --show-sdk-version)"
+            xcrun clang --version | head -1
+            echo "glslang $(brew list --versions glslang | cut -d' ' -f2), spirv-cross $(brew list --versions spirv-cross | cut -d' ' -f2)"
+            java -version 2>&1 | head -1
+          } > build/release/BUILD-INFO.txt
+          cat build/release/BUILD-INFO.txt
+          { echo '```'; cat build/release/BUILD-INFO.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: mine2metal-${{ env.VERSION }}
+          path: build/release/
+
+      - name: Check the tag matches the version
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          if [ "$GITHUB_REF_NAME" != "v$VERSION" ]; then
+            echo "Tag $GITHUB_REF_NAME does not match version=$VERSION in gradle.properties"
+            exit 1
+          fi
+
+      # Anyone can check a downloaded file came from this workflow:
+      #   gh attestation verify mine2metal-<version>.jar --repo HoshizoraAkira/Mine2Metal
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        if: startsWith(github.ref, 'refs/tags/v')
+        with:
+          subject-path: |
+            build/release/mine2metal-*.jar
+            build/release/mine2metal-*.mrpack
+            build/native/libmine2metal.dylib
+
+      - name: GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          cd build/release
+          shasum -a 256 mine2metal-* > SHA256SUMS.txt
+          { echo '```'; cat BUILD-INFO.txt; echo '```'; } > "$RUNNER_TEMP/notes.md"
+          gh release create "$GITHUB_REF_NAME" --verify-tag --title "mine2metal $VERSION" \
+            --generate-notes --notes-file "$RUNNER_TEMP/notes.md" \
+            "mine2metal-$VERSION.jar" "mine2metal-$VERSION.mrpack" SHA256SUMS.txt BUILD-INFO.txt
+
+      # The jar uploaded to Modrinth is the file attested and released above, byte for byte.
+      - name: Modrinth
+        if: startsWith(github.ref, 'refs/tags/v') && vars.MODRINTH_PROJECT_ID != ''
+        env:
+          MODRINTH_TOKEN: ${{ secrets.MODRINTH_TOKEN }}
+          MODRINTH_PROJECT_ID: ${{ vars.MODRINTH_PROJECT_ID }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          [ -n "$MODRINTH_TOKEN" ] || { echo "MODRINTH_TOKEN is not set"; exit 1; }
+          case "$VERSION" in
+            *alpha*) type=alpha ;;
+            *beta*) type=beta ;;
+            *) type=release ;;
+          esac
+          minecraft="$(sed -n 's/^minecraft_version=//p' gradle.properties)"
+          changelog="$(gh release view "$GITHUB_REF_NAME" --json body --jq .body)"
+          # Sodium (AANobbMI) is optional, as in fabric.mod.json's "suggests".
+          jq -n --arg project "$MODRINTH_PROJECT_ID" --arg version "$VERSION" --arg type "$type" \
+            --arg minecraft "$minecraft" --arg changelog "$changelog" '{
+              project_id: $project, name: ("mine2metal " + $version), version_number: $version,
+              version_type: $type, changelog: $changelog, game_versions: [$minecraft], loaders: ["fabric"],
+              dependencies: [{project_id: "AANobbMI", dependency_type: "optional"}],
+              featured: true, file_parts: ["jar"], primary_file: "jar"
+            }' > "$RUNNER_TEMP/modrinth.json"
+          curl -fsS https://api.modrinth.com/v2/version \
+            -H "Authorization: $MODRINTH_TOKEN" \
+            -H "User-Agent: $GITHUB_REPOSITORY (GitHub Actions)" \
+            -F "data=<$RUNNER_TEMP/modrinth.json;type=application/json" \
+            -F "jar=@build/release/mine2metal-$VERSION.jar;type=application/java-archive"

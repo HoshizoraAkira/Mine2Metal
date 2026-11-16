@@ -4,6 +4,19 @@
 
 ## Building the release files
 
+Release files come only from GitHub Actions (`.github/workflows/build.yml`), never from a local build, so anyone can check that what is on GitHub and Modrinth was built from this repository's source. Every push and pull request runs the same build; a tag publishes it:
+
+1. Set `version` in `gradle.properties`, commit, and push.
+2. `git tag v<version> && git push origin v<version>`. The workflow fails if the tag and `version` differ.
+3. The workflow builds on a `macos-26` runner (Apple silicon, Xcode 26.6 pinned in the workflow, glslang and spirv-cross from Homebrew), checks that the dylib in the jar is the one it just compiled, attests build provenance for the jar, the .mrpack and the dylib, and creates the GitHub Release with `SHA256SUMS.txt` and `BUILD-INFO.txt` (checksums, commit, run link and toolchain versions).
+4. If the `MODRINTH_PROJECT_ID` repository variable and the `MODRINTH_TOKEN` secret (a Modrinth personal access token with the "Create versions" scope) are set, the same jar is uploaded to Modrinth as a new version. Without them, upload the jar from the GitHub Release by hand, unchanged.
+
+Checking a downloaded file: `gh attestation verify mine2metal-<version>.jar --repo HoshizoraAkira/Mine2Metal`.
+
+The native library builds byte for byte the same from the same source and toolchain, wherever the checkout is: no absolute paths or timestamps end up in it. Rebuilding with the Xcode, glslang and spirv-cross versions in `BUILD-INFO.txt` gives the same `libmine2metal.dylib` SHA-256.
+
+For a local build to test with:
+
 ```bash
 ./gradlew build mrpack
 ```
@@ -44,5 +57,6 @@ Description (for the project page):
 ## Release state (2026-10-31)
 
 - Public repository: https://github.com/HoshizoraAkira/Mine2Metal. The homepage, source and issue links in `fabric.mod.json` point there.
-- GitHub Release `v0.0.1` holds `mine2metal-0.0.1.jar` and `mine2metal-0.0.1.mrpack` with SHA-256 checksums.
+- GitHub Release `v0.0.1` holds `mine2metal-0.0.1.jar` and `mine2metal-0.0.1.mrpack` with SHA-256 checksums. It was built locally, before the release workflow; releases from here on come from GitHub Actions.
+- Modrinth asked for source and transparent build automation for the native library (2026-11-16); the release workflow is the answer.
 - The Modrinth page is being created by the owner with the text above; CurseForge not yet. Both need the owner's accounts.

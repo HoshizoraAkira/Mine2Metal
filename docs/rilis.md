@@ -2,6 +2,19 @@
 
 ## Membuat file rilis
 
+File rilis hanya dibuat oleh GitHub Actions (`.github/workflows/build.yml`), tidak pernah dari build lokal, supaya siapa pun bisa memeriksa bahwa yang ada di GitHub dan Modrinth dibangun dari kode sumber repo ini. Setiap push dan pull request menjalankan build yang sama; sebuah tag menerbitkannya:
+
+1. Atur `version` di `gradle.properties`, commit, lalu push.
+2. `git tag v<versi> && git push origin v<versi>`. Workflow gagal kalau tag dan `version` berbeda.
+3. Workflow membangun di runner `macos-26` (Apple silicon, Xcode 26.6 yang dipatok di workflow, glslang dan spirv-cross dari Homebrew), memeriksa bahwa dylib di dalam jar adalah yang baru saja dikompilasinya, membuat atestasi asal build (build provenance) untuk jar, .mrpack, dan dylib, lalu membuat GitHub Release beserta `SHA256SUMS.txt` dan `BUILD-INFO.txt` (checksum, commit, tautan run, dan versi toolchain).
+4. Kalau variabel repo `MODRINTH_PROJECT_ID` dan secret `MODRINTH_TOKEN` (personal access token Modrinth dengan scope "Create versions") sudah diatur, jar yang sama diunggah ke Modrinth sebagai versi baru. Tanpa keduanya, unggah jar dari GitHub Release secara manual, tanpa diubah.
+
+Memeriksa file yang diunduh: `gh attestation verify mine2metal-<versi>.jar --repo HoshizoraAkira/Mine2Metal`.
+
+Library native dibangun sama persis, byte demi byte, dari kode sumber dan toolchain yang sama, di mana pun checkout-nya: tidak ada path absolut atau timestamp yang masuk. Membangun ulang dengan versi Xcode, glslang, dan spirv-cross di `BUILD-INFO.txt` menghasilkan SHA-256 `libmine2metal.dylib` yang sama.
+
+Untuk build lokal (untuk diuji):
+
 ```bash
 ./gradlew build mrpack
 ```
@@ -42,5 +55,6 @@ Deskripsi (bahasa Inggris, untuk halaman proyek):
 ## Keadaan rilis (2026-10-31)
 
 - Repo publik: https://github.com/HoshizoraAkira/Mine2Metal. Tautan homepage, sumber, dan issues di `fabric.mod.json` menunjuk ke sana.
-- GitHub Release `v0.0.1` berisi `mine2metal-0.0.1.jar` dan `mine2metal-0.0.1.mrpack` beserta checksum SHA-256.
+- GitHub Release `v0.0.1` berisi `mine2metal-0.0.1.jar` dan `mine2metal-0.0.1.mrpack` beserta checksum SHA-256. Rilis ini dibangun lokal, sebelum ada workflow rilis; rilis berikutnya dibuat oleh GitHub Actions.
+- Modrinth meminta kode sumber dan otomasi build yang transparan untuk library native (2026-11-16); workflow rilis adalah jawabannya.
 - Halaman Modrinth sedang dibuat pemilik dengan teks di atas; CurseForge belum. Keduanya butuh akun pemilik.
