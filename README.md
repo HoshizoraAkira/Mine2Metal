@@ -4,7 +4,7 @@ A Fabric mod that renders Minecraft Java with **Apple Metal** on Macs with Apple
 
 ![Minecraft 26.3 with Sodium, rendered with Metal](docs/screenshots/m6-world-sodium.png)
 
-Status: **0.0.1, ready for public testing**. All milestones (M1–M14) and the follow-up roadmap (R1–R9) are done; the automated tests pass under Metal API validation on Metal 4 and Metal 3. Still experimental: it has been tested on one Mac so far (see [Test results](#test-results)), and mods that call OpenGL directly will not draw.
+Status: **0.0.2, ready for public testing**. All milestones (M1–M14) and the follow-up roadmap (R1–R9) are done; the automated tests pass under Metal API validation on Metal 4 and Metal 3. Still experimental: it has been tested on one Mac so far (see [Test results](#test-results)), and mods that call OpenGL directly will not draw.
 
 [Versi bahasa Indonesia](README.id.md) · The documentation under `docs/` is available in Indonesian and in English (`docs/en/`).
 

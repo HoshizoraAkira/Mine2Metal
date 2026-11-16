@@ -17,7 +17,7 @@ Add `JAVA_TOOL_OPTIONS="-Dmine2metal.stats=true"` to log FPS and GPU time every 
 Official launcher:
 
 1. Install Fabric Loader ≥ 0.20.1 for Minecraft 26.3 with the [Fabric installer](https://fabricmc.net/use/installer/) and make a separate profile.
-2. Copy `build/libs/mine2metal-0.0.1.jar` into that profile's `mods` folder (default: `~/Library/Application Support/minecraft/mods`). Sodium may come along; Fabric API is not required.
+2. Copy `build/libs/mine2metal-0.0.2.jar` into that profile's `mods` folder (default: `~/Library/Application Support/minecraft/mods`). Sodium may come along; Fabric API is not required.
 3. Run the profile. Press F3: the right column must show `Metal 3 (mine2metal)`.
 
 ## Checklist

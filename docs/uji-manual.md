@@ -15,7 +15,7 @@ Tambahkan `JAVA_TOOL_OPTIONS="-Dmine2metal.stats=true"` untuk mencatat FPS dan w
 Launcher resmi:
 
 1. Pasang Fabric Loader ≥ 0.20.1 untuk Minecraft 26.3 lewat [installer Fabric](https://fabricmc.net/use/installer/), dan buat profil terpisah.
-2. Salin `build/libs/mine2metal-0.0.1.jar` ke folder `mods` profil itu (bawaan: `~/Library/Application Support/minecraft/mods`). Sodium boleh ikut, Fabric API tidak wajib.
+2. Salin `build/libs/mine2metal-0.0.2.jar` ke folder `mods` profil itu (bawaan: `~/Library/Application Support/minecraft/mods`). Sodium boleh ikut, Fabric API tidak wajib.
 3. Jalankan profilnya. Tekan F3: kolom kanan harus menampilkan `Metal 3 (mine2metal)`.
 
 ## Daftar periksa

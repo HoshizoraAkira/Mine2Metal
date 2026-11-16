@@ -6,7 +6,7 @@ Mod Fabric yang merender Minecraft Java dengan **Apple Metal** di Mac Apple sili
 
 ![Dunia Minecraft 26.3 dengan Sodium, dirender dengan Metal](docs/screenshots/m6-world-sodium.png)
 
-Status: **0.0.1, siap diuji publik**. Semua milestone (M1–M14) dan roadmap lanjutan (R1–R9) selesai; uji otomatis dan validasi Metal API lolos di Metal 4 dan Metal 3. Masih eksperimental: baru diuji di satu Mac (lihat [Hasil pengujian](#hasil-pengujian)), dan mod yang memanggil OpenGL langsung tidak akan menggambar.
+Status: **0.0.2, siap diuji publik**. Semua milestone (M1–M14) dan roadmap lanjutan (R1–R9) selesai; uji otomatis dan validasi Metal API lolos di Metal 4 dan Metal 3. Masih eksperimental: baru diuji di satu Mac (lihat [Hasil pengujian](#hasil-pengujian)), dan mod yang memanggil OpenGL langsung tidak akan menggambar.
 
 ## Isi
 

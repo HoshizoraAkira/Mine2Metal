@@ -58,5 +58,6 @@ Description (for the project page):
 
 - Public repository: https://github.com/HoshizoraAkira/Mine2Metal. The homepage, source and issue links in `fabric.mod.json` point there.
 - GitHub Release `v0.0.1` holds `mine2metal-0.0.1.jar` and `mine2metal-0.0.1.mrpack` with SHA-256 checksums. It was built locally, before the release workflow; releases from here on come from GitHub Actions.
+- GitHub Release `v0.0.2` is the first one built by the release workflow.
 - Modrinth asked for source and transparent build automation for the native library (2026-11-16); the release workflow is the answer.
 - The Modrinth page is being created by the owner with the text above; CurseForge not yet. Both need the owner's accounts.

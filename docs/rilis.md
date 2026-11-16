@@ -56,5 +56,6 @@ Deskripsi (bahasa Inggris, untuk halaman proyek):
 
 - Repo publik: https://github.com/HoshizoraAkira/Mine2Metal. Tautan homepage, sumber, dan issues di `fabric.mod.json` menunjuk ke sana.
 - GitHub Release `v0.0.1` berisi `mine2metal-0.0.1.jar` dan `mine2metal-0.0.1.mrpack` beserta checksum SHA-256. Rilis ini dibangun lokal, sebelum ada workflow rilis; rilis berikutnya dibuat oleh GitHub Actions.
+- GitHub Release `v0.0.2` adalah rilis pertama yang dibangun oleh workflow rilis.
 - Modrinth meminta kode sumber dan otomasi build yang transparan untuk library native (2026-11-16); workflow rilis adalah jawabannya.
 - Halaman Modrinth sedang dibuat pemilik dengan teks di atas; CurseForge belum. Keduanya butuh akun pemilik.
